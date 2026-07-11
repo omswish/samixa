@@ -50,6 +50,12 @@ interface DashboardState {
     storageUsage: number;
     historyCpu: number[];
     historyMem: number[];
+    physicalMemoryUsage?: number;
+    logicalMemoryUsage?: number;
+    storageUsedTib?: number;
+    storageCapacityTib?: number;
+    memoryUsedGib?: number;
+    memoryCapacityGib?: number;
   };
   symphony: {
     openIncidents: number;
@@ -146,6 +152,13 @@ export default function Dashboard() {
     }
   };
 
+  const getThresholdColor = (pct: number) => {
+    if (pct >= 95) return '#c62828'; // red (>= 95)
+    if (pct >= 90) return '#ff9100'; // orange (>= 90)
+    if (pct >= 80) return '#f57f17'; // yellow (>= 80)
+    return '#2e7d32'; // green (< 80)
+  };
+
   if (!data) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', justifyContent: 'center', alignItems: 'center', gap: '16px' }}>
@@ -204,26 +217,77 @@ export default function Dashboard() {
                 <Database size={20} style={{ color: 'var(--primary)' }} />
                 <h2 style={{ fontSize: '1.2rem' }}>Nutanix HCI Cluster Health</h2>
               </div>
-              <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>Uptime: {data.nutanix.uptime}</span>
+              {/* Horizontal Node Indicators (Right Aligned) */}
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 1 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 1 status">N1</div>
+                <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 2 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 2 status">N2</div>
+                <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 3 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 3 status">N3</div>
+              </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-              {/* Nodes info */}
-              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)' }}>
-                <span style={{ fontSize: '0.75rem', opacity: 0.7, display: 'block' }}>NODES</span>
-                <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{data.nutanix.nodesCount} Online</span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1.5fr', gap: '16px' }}>
+              {/* Cluster CPU info */}
+              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px' }}>
+                <div>
+                  <span style={{ fontSize: '0.7rem', opacity: 0.7, display: 'block', fontWeight: 650 }}>CLUSTER CPU</span>
+                  <span style={{ fontSize: '1.4rem', fontWeight: 700 }}>
+                    {data.nutanix.historyCpu.length ? `${data.nutanix.historyCpu[data.nutanix.historyCpu.length - 1]}%` : '0%'}
+                  </span>
+                </div>
+                {/* CPU Sparkline */}
+                <div style={{ height: '22px', width: '100%', marginTop: '4px' }}>
+                  <UptimeChart history={data.nutanix.historyCpu || []} color="#2e7d32" />
+                </div>
               </div>
+
               {/* Storage */}
-              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)' }}>
-                <span style={{ fontSize: '0.75rem', opacity: 0.7, display: 'block' }}>STORAGE USED</span>
-                <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{data.nutanix.storageUsage}%</span>
+              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: '0.7rem', opacity: 0.7, fontWeight: 650 }}>LOGICAL STORAGE</span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: getThresholdColor(data.nutanix.storageUsage) }}>
+                      {data.nutanix.storageUsage}%
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.8, marginTop: '4px', fontWeight: 500 }}>
+                    {data.nutanix.storageUsedTib || 0} TiB / {data.nutanix.storageCapacityTib || 0} TiB
+                  </div>
+                </div>
+                
+                {/* Bar style progress bar */}
+                <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ 
+                    width: `${data.nutanix.storageUsage}%`, 
+                    height: '100%', 
+                    backgroundColor: getThresholdColor(data.nutanix.storageUsage),
+                    transition: 'width 0.5s ease-in-out'
+                  }} />
+                </div>
               </div>
-              {/* Avg CPU */}
-              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)' }}>
-                <span style={{ fontSize: '0.75rem', opacity: 0.7, display: 'block' }}>AVG CLUSTER CPU</span>
-                <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>
-                  {data.nutanix.historyCpu.length ? `${data.nutanix.historyCpu[data.nutanix.historyCpu.length - 1]}%` : '0%'}
-                </span>
+
+              {/* Logical Memory */}
+              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontSize: '0.7rem', opacity: 0.7, fontWeight: 650 }}>LOGICAL MEMORY</span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: getThresholdColor(data.nutanix.logicalMemoryUsage || 0) }}>
+                      {data.nutanix.logicalMemoryUsage || 0}%
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.8, marginTop: '4px', fontWeight: 500 }}>
+                    {data.nutanix.memoryUsedGib || 0} GiB / {data.nutanix.memoryCapacityGib || 0} GiB
+                  </div>
+                </div>
+
+                {/* Bar style progress bar */}
+                <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ 
+                    width: `${data.nutanix.logicalMemoryUsage || 0}%`, 
+                    height: '100%', 
+                    backgroundColor: getThresholdColor(data.nutanix.logicalMemoryUsage || 0),
+                    transition: 'width 0.5s ease-in-out'
+                  }} />
+                </div>
               </div>
             </div>
           </div>

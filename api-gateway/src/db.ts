@@ -18,6 +18,12 @@ export interface DbSchema {
     storageUsage: number;
     historyCpu: number[];
     historyMem: number[];
+    physicalMemoryUsage?: number;
+    logicalMemoryUsage?: number;
+    storageUsedTib?: number;
+    storageCapacityTib?: number;
+    memoryUsedGib?: number;
+    memoryCapacityGib?: number;
   };
   symphony: {
     openIncidents: number;
@@ -41,21 +47,21 @@ export interface DbSchema {
 const defaultState: DbSchema = {
   servers: [
     { id: 'sw-srv-1', name: 'HIL-HIDDOR-AV01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-2', name: 'HIL-HIDDOR-BK01', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-3', name: 'HIL-HIDDOR-CSCTS1', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-4', name: 'HIL-HIDDOR-CSCTS2', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-5', name: 'HILHIDDORDT0320', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-2', name: 'HIL-HIDDOR-BK01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-3', name: 'HIL-HIDDOR-CSCTS1.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-4', name: 'HIL-HIDDOR-CSCTS2.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-5', name: 'HILHIDDORDT0320.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
     { id: 'sw-srv-6', name: 'HIL-HIDDOR-FS01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
     { id: 'sw-srv-7', name: 'HILHIDDORILMSAP', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
     { id: 'sw-srv-8', name: 'HILHIDDORILMSDB', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
     { id: 'sw-srv-9', name: 'HIL-HIDDOR-PIMW.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
     { id: 'sw-srv-10', name: 'HIL-HIDDOR-PSDM.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-11', name: 'HIL-HIDDOR-US01', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-12', name: 'HIL-HIDDOR-US02', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-13', name: 'HIL-HIDDOR-US03', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-14', name: 'HIL-HIDDOR-US04', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-15', name: 'HIL-HIDDOR-US05', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-16', name: 'HIL-HIDDOR-US06', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] }
+    { id: 'sw-srv-11', name: 'HIL-HIDDOR-US01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-12', name: 'HIL-HIDDOR-US02.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-13', name: 'HIL-HIDDOR-US03.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-14', name: 'HIL-HIDDOR-US04.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-15', name: 'HIL-HIDDOR-US05.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+    { id: 'sw-srv-16', name: 'HIL-HIDDOR-US06.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] }
   ],
   networks: [
     { id: 'sw-net-1', provider: 'RJIO (ISP1)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] },
@@ -68,7 +74,13 @@ const defaultState: DbSchema = {
     nodesCount: 0,
     storageUsage: 0,
     historyCpu: [],
-    historyMem: []
+    historyMem: [],
+    physicalMemoryUsage: 0,
+    logicalMemoryUsage: 0,
+    storageUsedTib: 0,
+    storageCapacityTib: 0,
+    memoryUsedGib: 0,
+    memoryCapacityGib: 0
   },
   symphony: {
     openIncidents: 0,
@@ -91,11 +103,31 @@ const defaultState: DbSchema = {
 // Memory cache of DB state
 let state: DbSchema = defaultState;
 
+// Helper to check if a server is Windows based on name
+function isWindowsServer(name: string): boolean {
+  const lowercase = name.toLowerCase();
+  return !lowercase.includes('ilmsap') && !lowercase.includes('ilmsdb');
+}
+
 // Load initial state if file exists
 if (fs.existsSync(dbPath)) {
   try {
     const raw = fs.readFileSync(dbPath, 'utf-8');
     state = JSON.parse(raw);
+    
+    // Auto-migrate server names to add .abgplanet.abg.com suffix for Windows servers
+    let mutated = false;
+    if (state.servers) {
+      for (const s of state.servers) {
+        if (isWindowsServer(s.name) && !s.name.toLowerCase().endsWith('.abgplanet.abg.com')) {
+          s.name = `${s.name}.abgplanet.abg.com`;
+          mutated = true;
+        }
+      }
+    }
+    if (mutated) {
+      saveStateAtomically();
+    }
   } catch (err) {
     console.error('Failed to load db.json, using default state:', err);
     state = defaultState;
@@ -127,17 +159,35 @@ export function getDashboardState(): DbSchema {
   return state;
 }
 
+function cleanHostname(name: string): string {
+  return name.toLowerCase()
+    .replace('.abgplanet.abg.com', '')
+    .trim();
+}
+
 export function updateNutanix(data: {
   uptime?: string;
   nodesCount?: number;
   storageUsage?: number;
   cpuUsage?: number;
   memoryUsage?: number;
-  vms?: Array<{ name: string; diskUsage?: string; backupStatus?: string }>;
+  physicalMemoryUsage?: number;
+  logicalMemoryUsage?: number;
+  storageUsedTib?: number;
+  storageCapacityTib?: number;
+  memoryUsedGib?: number;
+  memoryCapacityGib?: number;
+  vms?: Array<{ name: string; diskUsage?: string; backupStatus?: string; cpu?: number; memory?: number; status?: string }>;
 }) {
   if (data.uptime !== undefined) state.nutanix.uptime = data.uptime;
   if (data.nodesCount !== undefined) state.nutanix.nodesCount = data.nodesCount;
   if (data.storageUsage !== undefined) state.nutanix.storageUsage = data.storageUsage;
+  if (data.physicalMemoryUsage !== undefined) state.nutanix.physicalMemoryUsage = data.physicalMemoryUsage;
+  if (data.logicalMemoryUsage !== undefined) state.nutanix.logicalMemoryUsage = data.logicalMemoryUsage;
+  if (data.storageUsedTib !== undefined) state.nutanix.storageUsedTib = data.storageUsedTib;
+  if (data.storageCapacityTib !== undefined) state.nutanix.storageCapacityTib = data.storageCapacityTib;
+  if (data.memoryUsedGib !== undefined) state.nutanix.memoryUsedGib = data.memoryUsedGib;
+  if (data.memoryCapacityGib !== undefined) state.nutanix.memoryCapacityGib = data.memoryCapacityGib;
   
   if (data.cpuUsage !== undefined) {
     state.nutanix.historyCpu = pushToHistory(state.nutanix.historyCpu || [], data.cpuUsage);
@@ -149,12 +199,17 @@ export function updateNutanix(data: {
   if (data.vms) {
     for (const vm of data.vms) {
       const server = state.servers.find(
-        s => s.name.toLowerCase().includes(vm.name.toLowerCase()) || 
-             vm.name.toLowerCase().includes(s.name.toLowerCase())
+        s => cleanHostname(s.name) === cleanHostname(vm.name)
       );
       if (server) {
         if (vm.diskUsage !== undefined) server.disk = vm.diskUsage;
         if (vm.backupStatus !== undefined) server.backupStatus = vm.backupStatus;
+        if (vm.cpu !== undefined) {
+          server.cpu = vm.cpu;
+          server.history = pushToHistory(server.history || [], vm.cpu);
+        }
+        if (vm.memory !== undefined) server.memory = vm.memory;
+        if (vm.status !== undefined) server.status = vm.status;
       }
     }
   }
@@ -170,8 +225,7 @@ export function updateSolarWinds(data: {
   if (data.servers) {
     for (const s of data.servers) {
       const server = state.servers.find(
-        srv => srv.name.toLowerCase().includes(s.name.toLowerCase()) || 
-               s.name.toLowerCase().includes(srv.name.toLowerCase())
+        srv => cleanHostname(srv.name) === cleanHostname(s.name)
       );
       if (server) {
         if (s.cpu !== undefined) {
