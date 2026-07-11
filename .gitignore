@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.env
+edge-profile/
+collectors/symphony/edge-profile/
+collectors/solarwinds/edge-profile/
+*.png
+*.html
+dist/
+build/
+.DS_Store
+itdash.db

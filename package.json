@@ -1,0 +1,15 @@
+{
+  "name": "utkal-it-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "api-gateway",
+    "collectors/nutanix",
+    "collectors/solarwinds",
+    "collectors/symphony",
+    "dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present"
+  }
+}
