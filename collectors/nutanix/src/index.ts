@@ -10,12 +10,49 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const API_URL = process.env.API_URL || 'http://localhost:4000/api/update';
 const NUTANIX_HOST = process.env.NUTANIX_HOST || '10.23.50.27';
 const NUTANIX_PORT = process.env.NUTANIX_PORT || '9440';
-const NUTANIX_USER = process.env.NUTANIX_USER || 'hildoritdashboard';
-const NUTANIX_PASS = process.env.NUTANIX_PASS || 'ItDa$(1857';
+function requireEnv(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new Error(`Missing ${name}. Set ${name} in the environment.`);
+  }
+
+  return value;
+}
+
+const NUTANIX_USER = requireEnv('NUTANIX_USER', process.env.NUTANIX_USER);
+const NUTANIX_PASS = requireEnv('NUTANIX_PASS', process.env.NUTANIX_PASS);
 const POLL_INTERVAL = 30000; // 30 seconds
 
+async function postUpdate(payload: object) {
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+async function reportFailure(attemptedAt: string, error: string) {
+  try {
+    await postUpdate({
+      nutanix: {
+        meta: {
+          ok: false,
+          attemptedAt,
+          error
+        }
+      }
+    });
+  } catch (reportErr: any) {
+    console.error(`[${new Date().toISOString()}] Failed to report Nutanix collector failure to gateway:`, reportErr.message);
+  }
+}
+
 async function collectNutanixData() {
-  console.log(`[${new Date().toISOString()}] Starting Nutanix metrics collection...`);
+  const attemptedAt = new Date().toISOString();
+  console.log(`[${attemptedAt}] Starting Nutanix metrics collection...`);
   
   const auth = Buffer.from(`${NUTANIX_USER}:${NUTANIX_PASS}`).toString('base64');
   const headers = {
@@ -75,22 +112,21 @@ async function collectNutanixData() {
           }
 
           // Calculate Disk usage
-          const diskUsed = entity.usageStats?.['storage.usage_bytes'] || 0;
-          const diskCap = entity.diskCapacityInBytes || 1;
-          let diskPercent = Number(((diskUsed / diskCap) * 100).toFixed(2));
-          if (diskPercent <= 0) {
-            // Default baseline if stats are not returned for the disk
-            diskPercent = Number((30 + (Math.random() * 25)).toFixed(2));
-          }
+          const hasDiskUsage = entity.usageStats?.['storage.usage_bytes'] !== undefined && entity.diskCapacityInBytes;
+          const diskUsed = hasDiskUsage ? entity.usageStats['storage.usage_bytes'] : 0;
+          const diskCap = hasDiskUsage ? entity.diskCapacityInBytes : 0;
+          const diskPercent = hasDiskUsage && diskCap > 0
+            ? Number(((diskUsed / diskCap) * 100).toFixed(2))
+            : undefined;
 
           const isPoweredOn = entity.powerState?.toLowerCase() === 'on' || entity.powerState?.toLowerCase() === 'poweredon';
-          const status = isPoweredOn ? 'operational' : 'critical';
+          const status = isPoweredOn ? 'operational' : 'down';
 
           return {
             name: entity.vmName || entity.name,
             cpu,
             memory,
-            diskUsage: `${diskPercent}%`,
+            diskUsage: diskPercent !== undefined ? `${diskPercent}%` : undefined,
             status,
             backupStatus: entity.protectionDomainName ? 'successful' : 'N/A'
           };
@@ -124,6 +160,10 @@ async function collectNutanixData() {
 
     const payload = {
       nutanix: {
+        meta: {
+          ok: true,
+          attemptedAt
+        },
         uptime: 'Up',
         nodesCount,
         storageUsage,
@@ -140,19 +180,11 @@ async function collectNutanixData() {
     };
 
     // Post to API Gateway
-    const postRes = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    if (postRes.ok) {
-      console.log(`[${new Date().toISOString()}] Nutanix metrics posted successfully.`);
-    } else {
-      console.error(`[${new Date().toISOString()}] Failed to post Nutanix metrics:`, await postRes.text());
-    }
+    await postUpdate(payload);
+    console.log(`[${new Date().toISOString()}] Nutanix metrics posted successfully.`);
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}] Error in Nutanix collector:`, err.message);
+    await reportFailure(attemptedAt, err.message);
   }
 }
 

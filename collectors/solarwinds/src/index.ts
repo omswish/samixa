@@ -1,159 +1,746 @@
-import { chromium } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type Locator, type Page } from 'playwright';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
+import { NETWORK_STORAGE_STATE_PATH, PROFILE_ROOT, SERVER_STORAGE_STATE_PATH } from './sessionPaths';
 
-// Load env from workspace root
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
 const API_URL = process.env.API_URL || 'http://localhost:4000/api/update';
-const SW_USER = process.env.SW_USER || 'hil-dor.itdashboard@adityabirla.com';
-const SW_PASS = process.env.SW_PASS || 'ItDa$(1857';
+function requireEnv(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new Error(`Missing ${name}. Set ${name} in the environment.`);
+  }
+
+  return value;
+}
+
+const SW_USER = requireEnv('SW_USER', process.env.SW_USER);
+const SW_PASS = requireEnv('SW_PASS', process.env.SW_PASS);
 const SW_HOST_SERVERS = process.env.SW_HOST_SERVERS || '10.36.91.45';
 const SW_HOST_NETWORKS = process.env.SW_HOST_NETWORKS || '10.36.91.46';
-const POLL_INTERVAL = 30000; // 30 seconds
+const POLL_INTERVAL = 30000;
+const NAVIGATION_TIMEOUT = 30000;
+const LOGIN_BUTTON_SELECTOR = '#ctl00_BodyContent_LoginButton, input[type="submit"], button:has-text("Login")';
+const USERNAME_SELECTOR = '#ctl00_BodyContent_Username, input[name*="username"], input[type="text"]';
+const PASSWORD_SELECTOR = '#ctl00_BodyContent_Password, input[name*="password"], input[type="password"]';
 
-async function scrapeSolarWinds() {
-  console.log(`[${new Date().toISOString()}] Starting SolarWinds scraping session...`);
-  
-  let browser;
-  try {
-    // Launch Microsoft Edge browser using Playwright system channel
-    browser = await chromium.launch({
-      channel: 'msedge',
-      headless: true
-    });
-    
-    const page = await browser.newPage();
-    
-    // 1. Log in to SolarWinds Orion (Servers)
-    console.log(`Navigating to SolarWinds Servers portal at http://${SW_HOST_SERVERS}/Orion/Login.aspx`);
-    await page.goto(`http://${SW_HOST_SERVERS}/Orion/Login.aspx`, { waitUntil: 'networkidle', timeout: 15000 });
-    
-    // Check if login form is present
-    const loginButtonSelector = '#ctl00_BodyContent_LoginButton, input[type="submit"], button:has-text("Login")';
-    if (await page.locator(loginButtonSelector).count() > 0) {
-      console.log('Login page detected. Typing credentials...');
-      const userField = await page.locator('#ctl00_BodyContent_Username, input[name*="username"], input[type="text"]').first();
-      const passField = await page.locator('#ctl00_BodyContent_Password, input[name*="password"], input[type="password"]').first();
-      
-      await userField.fill(SW_USER);
-      await passField.fill(SW_PASS);
-      
-      await page.locator(loginButtonSelector).first().click();
-      await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 20000 });
-      console.log('Login successful.');
-    } else {
-      console.log('Already logged in or bypassed login screen.');
-    }
+const SERVER_NAMES = [
+  'HIL-HIDDOR-AV01.abgplanet.abg.com',
+  'HIL-HIDDOR-BK01',
+  'HIL-HIDDOR-CSCTS1',
+  'HIL-HIDDOR-CSCTS2',
+  'HILHIDDORDT0320',
+  'HIL-HIDDOR-FS01.abgplanet.abg.com',
+  'HILHIDDORILMSAP',
+  'HILHIDDORILMSDB',
+  'HIL-HIDDOR-PIMW.abgplanet.abg.com',
+  'HIL-HIDDOR-PSDM.abgplanet.abg.com',
+  'HIL-HIDDOR-US01',
+  'HIL-HIDDOR-US02',
+  'HIL-HIDDOR-US03',
+  'HIL-HIDDOR-US04',
+  'HIL-HIDDOR-US05',
+  'HIL-HIDDOR-US06'
+];
 
-    // Now let's try to scrape servers. 
-    // Since we are running headless, let's look for server node details or summary.
-    // If we can't find elements (e.g. because we are not in the real environment during dev),
-    // we will log the page HTML/state and generate some realistic simulated metrics
-    // so that the gateway has data, but we explicitly print warning logs.
-    const serversScraped: any[] = [];
-    const serverTablePresent = await page.locator('table.NeedsZebraStripes').count() > 0;
-    
-    if (serverTablePresent) {
-      console.log('Found server table (table.NeedsZebraStripes). Parsing rows...');
-      // Extract data from rows
-      const rows = await page.locator('table.NeedsZebraStripes tr').all();
-      for (const row of rows) {
-        const text = await row.innerText();
-        // Parse row text for CPU / Memory
-        // Example Row: "HIL-HIDDOR-AV01.abgplanet.abg.com   24%   45%   15%"
-        const columns = text.split(/\t|\n|\s{2,}/).map(c => c.trim()).filter(Boolean);
-        if (columns.length >= 3) {
-          const name = columns[0];
-          const cpu = parseFloat(columns[1].replace('%', ''));
-          const memory = parseFloat(columns[2].replace('%', ''));
-          if (name && !isNaN(cpu) && !isNaN(memory)) {
-            serversScraped.push({
-              name,
-              cpu,
-              memory,
-              status: 'operational'
-            });
-          }
-        }
-      }
-    } else {
-      console.warn('Could not locate table.NeedsZebraStripes. Generating fallback data for the 16 server nodes...');
-      // Standard list of 16 servers
-      const serverNames = [
-        'HIL-HIDDOR-AV01.abgplanet.abg.com', 'HIL-HIDDOR-BK01', 'HIL-HIDDOR-CSCTS1', 'HIL-HIDDOR-CSCTS2',
-        'HILHIDDORDT0320', 'HIL-HIDDOR-FS01.abgplanet.abg.com', 'HILHIDDORILMSAP', 'HILHIDDORILMSDB',
-        'HIL-HIDDOR-PIMW.abgplanet.abg.com', 'HIL-HIDDOR-PSDM.abgplanet.abg.com',
-        'HIL-HIDDOR-US01', 'HIL-HIDDOR-US02', 'HIL-HIDDOR-US03', 'HIL-HIDDOR-US04', 'HIL-HIDDOR-US05', 'HIL-HIDDOR-US06'
-      ];
-      for (const name of serverNames) {
-        serversScraped.push({
-          name,
-          cpu: Number((Math.random() * 40 + 20).toFixed(2)),
-          memory: Number((Math.random() * 30 + 50).toFixed(2)),
-          status: Math.random() > 0.05 ? 'operational' : 'degraded'
-        });
-      }
-    }
+const NETWORK_NODE_MAP = [
+  { id: 'sw-net-1', provider: 'RJIO (ISP1)', nodeId: 'N:1419', nodeNumericId: 1419, kind: 'carrier' as const },
+  { id: 'sw-net-2', provider: 'RailTel (ISP2)', nodeId: 'N:1417', nodeNumericId: 1417, kind: 'carrier' as const },
+  { id: 'sw-net-3', provider: 'HIL-UTK-EC-1 (SDWAN-A)', nodeId: 'N:401', nodeNumericId: 401, kind: 'sdwan' as const },
+  { id: 'sw-net-4', provider: 'HIL-UTK-EC-2 (SDWAN-B)', nodeId: 'N:402', nodeNumericId: 402, kind: 'sdwan' as const }
+];
 
-    // 2. Scrape Network Links (on SW_HOST_NETWORKS)
-    // We navigate to the networking portal or node details
-    const networksScraped: any[] = [];
-    try {
-      console.log(`Navigating to SolarWinds Networks portal at http://${SW_HOST_NETWORKS}/Orion/Login.aspx`);
-      await page.goto(`http://${SW_HOST_NETWORKS}/Orion/Login.aspx`, { waitUntil: 'networkidle', timeout: 10000 });
-      if (await page.locator(loginButtonSelector).count() > 0) {
-        const userField = await page.locator('#ctl00_BodyContent_Username, input[name*="username"], input[type="text"]').first();
-        const passField = await page.locator('#ctl00_BodyContent_Password, input[name*="password"], input[type="password"]').first();
-        await userField.fill(SW_USER);
-        await passField.fill(SW_PASS);
-        await page.locator(loginButtonSelector).first().click();
-        await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 10000 });
-      }
-      
-      // Attempt to read SDWAN / interface utilization
-      // If elements are missing, generate fallback network stats
-      console.warn('Generating fallback data for network links...');
-      networksScraped.push(
-        { id: 'sw-net-1', provider: 'RJIO (ISP1)', utilization: Number((Math.random() * 50 + 10).toFixed(2)), latency: Number((Math.random() * 15 + 5).toFixed(2)), status: 'operational' },
-        { id: 'sw-net-2', provider: 'RailTel (ISP2)', utilization: Number((Math.random() * 40 + 15).toFixed(2)), latency: Number((Math.random() * 20 + 8).toFixed(2)), status: 'operational' },
-        { id: 'sw-net-3', provider: 'HIL-UTK-EC-1 (SDWAN-A)', utilization: Number((Math.random() * 30 + 5).toFixed(2)), latency: Number((Math.random() * 10 + 2).toFixed(2)), status: 'operational' },
-        { id: 'sw-net-4', provider: 'HIL-UTK-EC-2 (SDWAN-B)', utilization: Number((Math.random() * 25 + 5).toFixed(2)), latency: Number((Math.random() * 12 + 3).toFixed(2)), status: 'operational' }
-      );
-    } catch (netErr) {
-      console.error('Error fetching network metrics:', netErr);
-    }
+type AssetStatus = 'operational' | 'degraded' | 'down';
+type HostKey = 'servers' | 'networks';
 
-    // Post data back to api-gateway
-    const payload = {
-      solarwinds: {
-        servers: serversScraped,
-        networks: networksScraped
-      }
-    };
+interface ServerMetric {
+  name: string;
+  cpu?: number;
+  memory?: number;
+  status?: AssetStatus;
+}
 
-    const postRes = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+interface NetworkMetric {
+  id: string;
+  latency?: number;
+  utilization?: number;
+  status?: AssetStatus;
+  uptime?: number;
+  displayName?: string;
+  pollingIp?: string;
+  interfaceName?: string;
+  transmitUtilization?: number;
+  receiveUtilization?: number;
+  siteName?: string;
+  portSpeed?: string;
+  circuitId?: string;
+  linkType?: string;
+}
 
-    if (postRes.ok) {
-      console.log(`[${new Date().toISOString()}] SolarWinds metrics posted successfully.`);
-    } else {
-      console.error(`[${new Date().toISOString()}] Failed to post SolarWinds metrics:`, await postRes.text());
-    }
+interface SectionResult<T> {
+  attemptedAt: string;
+  reportedAt?: string;
+  data?: T;
+  error?: string;
+}
 
-  } catch (err: any) {
-    console.error(`[${new Date().toISOString()}] Error in SolarWinds scraper:`, err.message);
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
+interface UpdateMetaPayload {
+  attemptedAt: string;
+  ok: boolean;
+  error?: string;
+}
+
+interface HostConfig {
+  key: HostKey;
+  label: string;
+  host: string;
+  storageStatePath: string;
+}
+
+interface NetworkEntitySnapshot {
+  displayName?: string;
+  pollingIp?: string;
+  status?: AssetStatus;
+}
+
+interface CarrierMetadata {
+  siteName?: string;
+  portSpeed?: string;
+  circuitId?: string;
+  linkType?: string;
+}
+
+const hostConfigs: Record<HostKey, HostConfig> = {
+  servers: {
+    key: 'servers',
+    label: 'Servers',
+    host: SW_HOST_SERVERS,
+    storageStatePath: SERVER_STORAGE_STATE_PATH
+  },
+  networks: {
+    key: 'networks',
+    label: 'Networks',
+    host: SW_HOST_NETWORKS,
+    storageStatePath: NETWORK_STORAGE_STATE_PATH
+  }
+};
+
+let browserPromise: Promise<Browser> | null = null;
+let cycleInProgress = false;
+let nextCycleTimer: NodeJS.Timeout | null = null;
+
+async function postUpdate(payload: object) {
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
   }
 }
 
-// Start polling
+function normalizeToken(value: string): string {
+  return value
+    .toLowerCase()
+    .replace('.abgplanet.abg.com', '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function findKnownServerName(text: string): string | null {
+  const normalizedText = normalizeToken(text);
+  for (const serverName of SERVER_NAMES) {
+    if (normalizedText.includes(normalizeToken(serverName))) {
+      return serverName;
+    }
+  }
+
+  return null;
+}
+
+function parseRankedServerTable(
+  tableText: string,
+  headerPattern: RegExp,
+  field: 'cpu' | 'memory',
+  target: Map<string, ServerMetric>
+) {
+  const normalizedTable = tableText.replace(/\s+/g, ' ').trim();
+  if (!headerPattern.test(normalizedTable)) {
+    return;
+  }
+
+  const tableBody = normalizedTable.replace(headerPattern, '').trim();
+  const matches = [...tableBody.matchAll(/([A-Z0-9.-]+(?:\.abgplanet\.abg\.com)?)\s+(\d+(?:\.\d+)?)\s*%/gi)];
+
+  for (const match of matches) {
+    const matchedName = findKnownServerName(match[1]);
+    if (!matchedName) {
+      continue;
+    }
+
+    const existing = target.get(matchedName) ?? { name: matchedName };
+    existing[field] = Number(parseFloat(match[2]).toFixed(2));
+    target.set(matchedName, existing);
+  }
+}
+
+async function readStatusFromRow(row: Locator): Promise<AssetStatus> {
+  const altTexts = await row.locator('img').evaluateAll((images) =>
+    images.map((image) => (image.getAttribute('alt') || '').toLowerCase())
+  );
+
+  if (altTexts.some((alt) => alt.includes('down') || alt.includes('critical'))) {
+    return 'down';
+  }
+  if (altTexts.some((alt) => alt.includes('warning'))) {
+    return 'degraded';
+  }
+
+  return 'operational';
+}
+
+function parseAssetStatus(value: string | undefined | null): AssetStatus | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = value.toLowerCase();
+  if (normalized.includes('warning') || normalized.includes('degraded')) {
+    return 'degraded';
+  }
+  if (normalized.includes('down') || normalized.includes('critical')) {
+    return 'down';
+  }
+  if (normalized.includes('up') || normalized.includes('operational')) {
+    return 'operational';
+  }
+
+  return undefined;
+}
+
+function parseNumericStatus(status: unknown): AssetStatus | undefined {
+  if (typeof status !== 'number') {
+    return undefined;
+  }
+
+  if (status === 1) {
+    return 'operational';
+  }
+  if (status === 2 || status === 3 || status === 9) {
+    return 'degraded';
+  }
+  if (status === 14 || status === 0) {
+    return 'down';
+  }
+
+  return undefined;
+}
+
+function parsePercentText(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const match = value.match(/(\d+(?:\.\d+)?)\s*%/);
+  if (!match) {
+    return undefined;
+  }
+
+  return Number(parseFloat(match[1]).toFixed(2));
+}
+
+function parseCarrierMetadata(displayName: string | undefined): CarrierMetadata {
+  if (!displayName) {
+    return {};
+  }
+
+  const normalized = displayName.replace(/\s+/g, ' ').trim();
+  const siteMatch = normalized.match(/^([A-Za-z0-9-]+)/);
+  const providerMatch = normalized.match(/\b(Railtel|RJIO|JIO|Jio)\b/i);
+  const portSpeedMatch = normalized.match(/(\d+\s*Mbps)/i);
+  const circuitMatch = normalized.match(/\b(CKT-[A-Za-z0-9-]+|ILL_[A-Za-z0-9_]+)\b/i);
+  const providerToken = providerMatch?.[1];
+  const normalizedProvider = providerToken
+    ? /jio|rjio/i.test(providerToken)
+      ? 'JIO'
+      : 'Railtel'
+    : undefined;
+
+  return {
+    siteName: siteMatch?.[1],
+    portSpeed: portSpeedMatch?.[1]?.replace(/\s+/g, ' '),
+    circuitId: circuitMatch?.[1],
+    linkType: normalizedProvider ? `${normalizedProvider} ILL` : undefined
+  };
+}
+
+async function ensureBrowser(): Promise<Browser> {
+  if (!browserPromise) {
+    browserPromise = chromium.launch({
+      channel: 'msedge',
+      headless: true
+    }).catch((err) => {
+      browserPromise = null;
+      throw err;
+    });
+  }
+
+  return browserPromise;
+}
+
+async function closeBrowser() {
+  if (!browserPromise) {
+    return;
+  }
+
+  const browser = await browserPromise.catch(() => null);
+  browserPromise = null;
+  if (browser) {
+    await browser.close();
+  }
+}
+
+function buildBootstrapRequiredMessage(hostConfig: HostConfig, reason: string): string {
+  return `${reason} Run npm run login --workspace collectors/solarwinds to seed or refresh the ${hostConfig.label.toLowerCase()} session.`;
+}
+
+async function createHostContext(hostKey: HostKey): Promise<{ context: BrowserContext; hostConfig: HostConfig; hasSavedSession: boolean }> {
+  const hostConfig = hostConfigs[hostKey];
+  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+
+  const hasSavedSession = fs.existsSync(hostConfig.storageStatePath);
+  const contextOptions: BrowserContextOptions = {
+    viewport: { width: 1440, height: 900 }
+  };
+
+  if (hasSavedSession) {
+    contextOptions.storageState = hostConfig.storageStatePath;
+  }
+
+  const browser = await ensureBrowser();
+  const context = await browser.newContext(contextOptions);
+  context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+  context.setDefaultTimeout(15000);
+  return { context, hostConfig, hasSavedSession };
+}
+
+async function bodyText(page: Page): Promise<string> {
+  try {
+    return await page.locator('body').innerText();
+  } catch {
+    return '';
+  }
+}
+
+async function isLoginPromptVisible(page: Page): Promise<boolean> {
+  if (page.url().toLowerCase().includes('/login.aspx')) {
+    return true;
+  }
+
+  return (await page.locator(LOGIN_BUTTON_SELECTOR).count()) > 0;
+}
+
+async function attemptCredentialLogin(page: Page) {
+  const userField = page.locator(USERNAME_SELECTOR).first();
+  const passField = page.locator(PASSWORD_SELECTOR).first();
+  const loginButton = page.locator(LOGIN_BUTTON_SELECTOR).first();
+
+  await userField.waitFor({ state: 'visible', timeout: 10000 });
+  await passField.waitFor({ state: 'visible', timeout: 10000 });
+  await userField.fill(SW_USER);
+  await passField.fill(SW_PASS);
+
+  try {
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
+      loginButton.click()
+    ]);
+  } catch {
+    // Some Orion views update inline without a full navigation.
+  }
+
+  await page.waitForTimeout(1500);
+}
+
+async function ensureAuthenticatedPage(
+  hostKey: HostKey,
+  targetUrl: string,
+  readySelector: string
+): Promise<{ context: BrowserContext; page: Page }> {
+  const { context, hostConfig, hasSavedSession } = await createHostContext(hostKey);
+  const page = await context.newPage();
+
+  try {
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+
+    if (await isLoginPromptVisible(page)) {
+      await attemptCredentialLogin(page);
+    }
+
+    if (await isLoginPromptVisible(page)) {
+      const loginBodyText = await bodyText(page);
+      if (/problem authorizing the specified windows account/i.test(loginBodyText)) {
+        const message = hasSavedSession
+          ? buildBootstrapRequiredMessage(hostConfig, `Saved SolarWinds session is no longer authorized on ${hostConfig.host}.`)
+          : buildBootstrapRequiredMessage(hostConfig, `SolarWinds automatic credential login was rejected on ${hostConfig.host}.`);
+        throw new Error(message);
+      }
+
+      const message = hasSavedSession
+        ? buildBootstrapRequiredMessage(hostConfig, `SolarWinds saved session expired before reaching ${hostConfig.host}.`)
+        : buildBootstrapRequiredMessage(hostConfig, `SolarWinds login did not complete on ${hostConfig.host}.`);
+      throw new Error(message);
+    }
+
+    if (!page.url().toLowerCase().includes(targetUrl.toLowerCase())) {
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    }
+
+    await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15000 });
+    await context.storageState({ path: hostConfig.storageStatePath });
+    return { context, page };
+  } catch (err) {
+    await context.close();
+    throw err;
+  }
+}
+
+async function fetchJsonFromPage<T>(page: Page, url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }): Promise<T> {
+  const result = await page.evaluate(async ({ url, init }) => {
+    const response = await fetch(url, {
+      method: init?.method ?? 'GET',
+      headers: init?.headers,
+      body: init?.body,
+      credentials: 'include'
+    });
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: await response.text()
+    };
+  }, { url, init });
+
+  if (!result.ok) {
+    throw new Error(`SolarWinds request failed (${result.status}) for ${url}`);
+  }
+
+  return JSON.parse(result.text) as T;
+}
+
+async function fetchNetworkEntitySnapshot(page: Page, nodeNumericId: number): Promise<NetworkEntitySnapshot> {
+  const result = await fetchJsonFromPage<{ data?: Array<{ displayName?: string; ipAddress?: string; status?: number; statusDescription?: string }> }>(
+    page,
+    `/api2/maps/v1/entities/0_Orion.Nodes_${nodeNumericId}/`
+  );
+
+  const entity = result.data?.[0];
+  if (!entity) {
+    return {};
+  }
+
+  return {
+    displayName: entity.displayName,
+    pollingIp: entity.ipAddress,
+    status: parseNumericStatus(entity.status) ?? parseAssetStatus(entity.statusDescription)
+  };
+}
+
+async function fetchAvailabilityToday(page: Page, nodeNumericId: number): Promise<number | undefined> {
+  const result = await page.evaluate(async (nodeId) => {
+    const xsrfToken = document.cookie
+      .split('; ')
+      .find((part) => part.startsWith('XSRF-TOKEN='))
+      ?.split('=')
+      .slice(1)
+      .join('=');
+
+    const response = await fetch('/Orion/Services/AsyncResources.asmx/GetAvailabilityStats', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        Accept: 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(xsrfToken ? { 'X-XSRF-TOKEN': decodeURIComponent(xsrfToken) } : {})
+      },
+      credentials: 'include',
+      body: `{ nodeId: ${nodeId} }`
+    });
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: await response.text()
+    };
+  }, nodeNumericId);
+
+  if (!result.ok) {
+    throw new Error(`SolarWinds request failed (${result.status}) for /Orion/Services/AsyncResources.asmx/GetAvailabilityStats`);
+  }
+
+  const parsed = JSON.parse(result.text) as { d?: { Rows?: Array<[string, string, string?]> } };
+
+  const rows = parsed.d?.Rows ?? [];
+  const todayRow = rows.find((row) => row[0] === 'Today');
+  if (!todayRow) {
+    return undefined;
+  }
+
+  return parsePercentText(todayRow[1]);
+}
+
+async function scrapeServers(page: Page): Promise<ServerMetric[]> {
+  const serverMap = new Map<string, ServerMetric>();
+  const tableTexts = await page.locator('table.NeedsZebraStripes, table.sw-custom-query-table').evaluateAll((nodes) =>
+    nodes.map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim())
+  );
+
+  for (const tableText of tableTexts) {
+    parseRankedServerTable(tableText, /^NODE MEMORY USED\s*/i, 'memory', serverMap);
+    parseRankedServerTable(tableText, /^NODE AVERAGE CPU LOAD\s*/i, 'cpu', serverMap);
+  }
+
+  const servers = [...serverMap.values()];
+  if (servers.length === 0) {
+    throw new Error('SolarWinds server summary did not expose any recognized server rows');
+  }
+
+  return servers;
+}
+
+async function scrapeNetworks(page: Page): Promise<NetworkMetric[]> {
+  const networks = new Map<string, NetworkMetric>();
+  const rows = await page.locator('table.NeedsZebraStripes tr').all();
+
+  for (const row of rows) {
+    const nodeLink = row.locator('a[href*="NodeDetails.aspx?NetObject=N:"]').first();
+    if (await nodeLink.count() === 0) {
+      continue;
+    }
+
+    const nodeName = (await nodeLink.innerText()).trim();
+    const nodeHref = await nodeLink.getAttribute('href');
+    const nodeIdMatch = nodeHref?.match(/NetObject=N:(\d+)/i);
+    const target = NETWORK_NODE_MAP.find((candidate) => String(candidate.nodeNumericId) === nodeIdMatch?.[1]);
+    const networkId = target?.id ?? null;
+
+    if (!networkId) {
+      continue;
+    }
+
+    const cells = await row.locator('td').evaluateAll((tds) =>
+      tds.map((td) => (td.textContent || '').replace(/\s+/g, ' ').trim())
+    );
+    const interfaceName = cells[3] || undefined;
+    const transmitUtilization = parsePercentText(cells[4]);
+    const receiveUtilization = parsePercentText(cells[5]);
+    const utilizationCandidates = [transmitUtilization, receiveUtilization].filter((value): value is number => value !== undefined);
+    const utilization = utilizationCandidates.length > 0
+      ? Number(Math.max(...utilizationCandidates).toFixed(2))
+      : undefined;
+
+    networks.set(networkId, {
+      id: networkId,
+      displayName: nodeName,
+      interfaceName,
+      transmitUtilization,
+      receiveUtilization,
+      utilization,
+      status: await readStatusFromRow(row),
+      uptime: 100
+    });
+  }
+
+  await Promise.all(NETWORK_NODE_MAP.map(async (target) => {
+    const probeTime = new Date().toISOString();
+    const [entityResult, uptimeResult] = await Promise.allSettled([
+      fetchNetworkEntitySnapshot(page, target.nodeNumericId),
+      fetchAvailabilityToday(page, target.nodeNumericId)
+    ]);
+
+    if (entityResult.status === 'rejected') {
+      console.warn(`[${probeTime}] SolarWinds network entity probe failed for ${target.nodeId}: ${entityResult.reason?.message ?? entityResult.reason}`);
+    }
+
+    if (uptimeResult.status === 'rejected') {
+      console.warn(`[${probeTime}] SolarWinds network availability probe failed for ${target.nodeId}: ${uptimeResult.reason?.message ?? uptimeResult.reason}`);
+    }
+
+    const entity = entityResult.status === 'fulfilled' ? entityResult.value : {};
+    const uptime = uptimeResult.status === 'fulfilled' ? uptimeResult.value : undefined;
+    const carrierMetadata = target.kind === 'carrier'
+      ? parseCarrierMetadata(entity.displayName)
+      : {};
+
+    if (entityResult.status === 'rejected' && uptimeResult.status === 'rejected' && !networks.has(target.id)) {
+      networks.set(target.id, {
+        id: target.id,
+        uptime: 100
+      });
+      return;
+    }
+
+    networks.set(target.id, {
+      id: target.id,
+      ...(networks.get(target.id) ?? {}),
+      displayName: entity.displayName ?? networks.get(target.id)?.displayName,
+      pollingIp: entity.pollingIp ?? networks.get(target.id)?.pollingIp,
+      status: entity.status ?? networks.get(target.id)?.status,
+      uptime: uptime ?? networks.get(target.id)?.uptime ?? 100,
+      ...carrierMetadata
+    });
+  }));
+
+  const result = [...networks.values()];
+  if (result.length === 0) {
+    throw new Error('SolarWinds network views did not expose any recognized links');
+  }
+
+  return result;
+}
+
+async function collectSolarWindsData() {
+  if (cycleInProgress) {
+    console.warn(`[${new Date().toISOString()}] Previous SolarWinds cycle is still running. Skipping overlap.`);
+    return;
+  }
+
+  cycleInProgress = true;
+  const cycleStartedAt = Date.now();
+  const cycleAttemptedAt = new Date().toISOString();
+  console.log(`[${cycleAttemptedAt}] Starting SolarWinds scraping session...`);
+
+  const serverResult: SectionResult<ServerMetric[]> = { attemptedAt: cycleAttemptedAt };
+  const networkResult: SectionResult<NetworkMetric[]> = { attemptedAt: cycleAttemptedAt };
+
+  try {
+    let serverContext: BrowserContext | undefined;
+    try {
+      const { context, page } = await ensureAuthenticatedPage(
+        'servers',
+        `http://${SW_HOST_SERVERS}/Orion/SummaryView.aspx?ViewID=1`,
+        'table.NeedsZebraStripes, table.sw-custom-query-table'
+      );
+      serverContext = context;
+      serverResult.data = await scrapeServers(page);
+      serverResult.reportedAt = new Date().toISOString();
+      await context.storageState({ path: hostConfigs.servers.storageStatePath });
+    } catch (err: any) {
+      serverResult.error = err.message;
+      serverResult.reportedAt = new Date().toISOString();
+      console.error(`[${new Date().toISOString()}] SolarWinds server scrape failed:`, err.message);
+    } finally {
+      if (serverContext) {
+        await serverContext.close();
+      }
+    }
+
+    let networkContext: BrowserContext | undefined;
+    try {
+      const { context, page } = await ensureAuthenticatedPage(
+        'networks',
+        `http://${SW_HOST_NETWORKS}/Orion/SummaryView.aspx?ViewID=1`,
+        'table.NeedsZebraStripes'
+      );
+      networkContext = context;
+      networkResult.data = await scrapeNetworks(page);
+      networkResult.reportedAt = new Date().toISOString();
+      await context.storageState({ path: hostConfigs.networks.storageStatePath });
+    } catch (err: any) {
+      networkResult.error = err.message;
+      networkResult.reportedAt = new Date().toISOString();
+      console.error(`[${new Date().toISOString()}] SolarWinds network scrape failed:`, err.message);
+    } finally {
+      if (networkContext) {
+        await networkContext.close();
+      }
+    }
+
+    await postUpdate({
+      solarwinds: {
+        meta: {
+          attemptedAt: new Date().toISOString(),
+          sections: {
+            servers: {
+              attemptedAt: serverResult.reportedAt ?? serverResult.attemptedAt,
+              ok: Boolean(serverResult.data),
+              error: serverResult.error
+            },
+            networks: {
+              attemptedAt: networkResult.reportedAt ?? networkResult.attemptedAt,
+              ok: Boolean(networkResult.data),
+              error: networkResult.error
+            }
+          }
+        },
+        ...(serverResult.data ? { servers: serverResult.data } : {}),
+        ...(networkResult.data ? { networks: networkResult.data } : {})
+      }
+    });
+    console.log(`[${new Date().toISOString()}] SolarWinds metrics posted successfully.`);
+  } catch (err: any) {
+    console.error(`[${new Date().toISOString()}] Error in SolarWinds scraper:`, err.message);
+    try {
+      await postUpdate({
+        solarwinds: {
+          meta: {
+            attemptedAt: new Date().toISOString(),
+            ok: false,
+            error: err.message,
+            sections: {
+              servers: {
+                attemptedAt: serverResult.reportedAt ?? serverResult.attemptedAt,
+                ok: false,
+                error: serverResult.error ?? err.message
+              } satisfies UpdateMetaPayload,
+              networks: {
+                attemptedAt: networkResult.reportedAt ?? networkResult.attemptedAt,
+                ok: false,
+                error: networkResult.error ?? err.message
+              } satisfies UpdateMetaPayload
+            }
+          }
+        }
+      });
+    } catch (reportErr: any) {
+      console.error(`[${new Date().toISOString()}] Failed to report SolarWinds collector failure to gateway:`, reportErr.message);
+    }
+  } finally {
+    cycleInProgress = false;
+    const elapsed = Date.now() - cycleStartedAt;
+    scheduleNextCycle(Math.max(1000, POLL_INTERVAL - elapsed));
+  }
+}
+
+function scheduleNextCycle(delayMs: number) {
+  if (nextCycleTimer) {
+    clearTimeout(nextCycleTimer);
+  }
+
+  nextCycleTimer = setTimeout(() => {
+    void collectSolarWindsData();
+  }, delayMs);
+}
+
+async function shutdown() {
+  if (nextCycleTimer) {
+    clearTimeout(nextCycleTimer);
+  }
+
+  await closeBrowser();
+}
+
+process.on('SIGINT', async () => {
+  await shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await shutdown();
+  process.exit(0);
+});
+
 console.log('SolarWinds scraper service started.');
-scrapeSolarWinds();
-setInterval(scrapeSolarWinds, POLL_INTERVAL);
+void collectSolarWindsData();

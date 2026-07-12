@@ -4,6 +4,9 @@ node_modules/
 edge-profile/
 collectors/symphony/edge-profile/
 collectors/solarwinds/edge-profile/
+collectors/solarwinds/runtime/
+api-gateway/data/
+runtime_logs/
 *.png
 *.html
 dist/

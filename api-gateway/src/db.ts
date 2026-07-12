@@ -1,162 +1,419 @@
-import path from 'path';
+import Database from 'better-sqlite3';
 import fs from 'fs';
+import path from 'path';
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/db.json');
+type CollectorSource = 'nutanix' | 'solarwinds' | 'symphony';
+type SectionKey = 'nutanix' | 'servers' | 'networks' | 'symphony';
+type SectionStatus = 'ok' | 'stale' | 'error' | 'never';
+type SourceStatus = SectionStatus | 'partial';
+type AssetStatus = 'operational' | 'degraded' | 'down';
 
-// Ensure db directory exists
+interface ServerNode {
+  id: string;
+  name: string;
+  location: string;
+  status: AssetStatus;
+  cpu: number | null;
+  memory: number | null;
+  disk: string | null;
+  backupStatus: 'successful' | 'failed' | 'N/A';
+  history: number[];
+}
+
+interface NetworkLink {
+  id: string;
+  provider: string;
+  status: AssetStatus;
+  uptime: number;
+  latency: number | null;
+  utilization: number | null;
+  displayName?: string;
+  pollingIp?: string;
+  interfaceName?: string;
+  transmitUtilization?: number | null;
+  receiveUtilization?: number | null;
+  siteName?: string;
+  portSpeed?: string;
+  circuitId?: string;
+  linkType?: string;
+  history: number[];
+}
+
+interface NutanixState {
+  uptime: string;
+  nodesCount: number;
+  storageUsage: number;
+  historyCpu: number[];
+  historyMem: number[];
+  physicalMemoryUsage: number;
+  logicalMemoryUsage: number;
+  storageUsedTib: number;
+  storageCapacityTib: number;
+  memoryUsedGib: number;
+  memoryCapacityGib: number;
+}
+
+interface TicketBreakdown {
+  new: number;
+  assigned: number;
+  inProgress: number;
+  pending: number;
+}
+
+interface SymphonyState {
+  openIncidents: number;
+  openIncidentsBreakdown: TicketBreakdown;
+  serviceRequests: number;
+  serviceRequestsBreakdown: TicketBreakdown;
+  workOrders: number;
+  workOrdersBreakdown: TicketBreakdown;
+  changeRecords: number;
+  changeRecordsBreakdown: TicketBreakdown;
+  serviceRequestsSla: number;
+  incidentsResponseSla: number;
+  incidentsResolutionSla: number;
+  requestsResponseSla: number;
+  requestsResolutionSla: number;
+}
+
+interface StoredSectionState {
+  key: SectionKey;
+  label: string;
+  source: CollectorSource;
+  pollIntervalMs: number;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+}
+
+interface SectionHealth extends StoredSectionState {
+  status: SectionStatus;
+}
+
+interface SourceHealth {
+  source: CollectorSource;
+  label: string;
+  sectionKeys: SectionKey[];
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  status: SourceStatus;
+}
+
+interface StoredDbSchema {
+  servers: ServerNode[];
+  networks: NetworkLink[];
+  nutanix: NutanixState;
+  symphony: SymphonyState;
+  sections: Record<SectionKey, StoredSectionState>;
+  lastUpdate: string;
+}
+
+export interface DbSchema extends Omit<StoredDbSchema, 'sections'> {
+  sections: Record<SectionKey, SectionHealth>;
+  sources: Record<CollectorSource, SourceHealth>;
+}
+
+interface UpdateMeta {
+  attemptedAt?: string;
+  ok?: boolean;
+  error?: string;
+}
+
+const STATE_KEY = 'dashboard_state';
+const SECTION_KEYS: SectionKey[] = ['nutanix', 'servers', 'networks', 'symphony'];
+const SOURCE_SECTION_KEYS: Record<CollectorSource, SectionKey[]> = {
+  nutanix: ['nutanix'],
+  solarwinds: ['servers', 'networks'],
+  symphony: ['symphony']
+};
+
+const DEFAULT_SERVERS: ServerNode[] = [
+  { id: 'sw-srv-1', name: 'HIL-HIDDOR-AV01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-2', name: 'HIL-HIDDOR-BK01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-3', name: 'HIL-HIDDOR-CSCTS1.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-4', name: 'HIL-HIDDOR-CSCTS2.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-5', name: 'HILHIDDORDT0320.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-6', name: 'HIL-HIDDOR-FS01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-7', name: 'HILHIDDORILMSAP', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-8', name: 'HILHIDDORILMSDB', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-9', name: 'HIL-HIDDOR-PIMW.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-10', name: 'HIL-HIDDOR-PSDM.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-11', name: 'HIL-HIDDOR-US01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-12', name: 'HIL-HIDDOR-US02.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-13', name: 'HIL-HIDDOR-US03.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-14', name: 'HIL-HIDDOR-US04.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-15', name: 'HIL-HIDDOR-US05.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
+  { id: 'sw-srv-16', name: 'HIL-HIDDOR-US06.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] }
+];
+
+const DEFAULT_NETWORKS: NetworkLink[] = [
+  { id: 'sw-net-1', provider: 'RJIO (ISP1)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] },
+  { id: 'sw-net-2', provider: 'RailTel (ISP2)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] },
+  { id: 'sw-net-3', provider: 'HIL-UTK-EC-1 (SDWAN-A)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] },
+  { id: 'sw-net-4', provider: 'HIL-UTK-EC-2 (SDWAN-B)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] }
+];
+
+const SOURCE_LABELS: Record<CollectorSource, string> = {
+  nutanix: 'Nutanix API',
+  solarwinds: 'SolarWinds Collector',
+  symphony: 'Symphony Collector'
+};
+
+const SECTION_TEMPLATES: Record<SectionKey, Omit<StoredSectionState, 'lastAttemptAt' | 'lastSuccessAt' | 'lastError'>> = {
+  nutanix: { key: 'nutanix', label: 'Nutanix HCI Cluster Health', source: 'nutanix', pollIntervalMs: 30000 },
+  servers: { key: 'servers', label: 'Server Nodes', source: 'solarwinds', pollIntervalMs: 30000 },
+  networks: { key: 'networks', label: 'ISP Gateways & SDWAN', source: 'solarwinds', pollIntervalMs: 30000 },
+  symphony: { key: 'symphony', label: 'Hindalco Service Desk', source: 'symphony', pollIntervalMs: 60000 }
+};
+
+const dbPath = resolveDbPath();
 const dbDir = path.dirname(dbPath);
+const seedState = loadSeedState(dbPath);
+
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
-export interface DbSchema {
-  servers: any[];
-  networks: any[];
-  nutanix: {
-    uptime: string;
-    nodesCount: number;
-    storageUsage: number;
-    historyCpu: number[];
-    historyMem: number[];
-    physicalMemoryUsage?: number;
-    logicalMemoryUsage?: number;
-    storageUsedTib?: number;
-    storageCapacityTib?: number;
-    memoryUsedGib?: number;
-    memoryCapacityGib?: number;
-  };
-  symphony: {
-    openIncidents: number;
-    openIncidentsBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
-    serviceRequests: number;
-    serviceRequestsBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
-    workOrders: number;
-    workOrdersBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
-    changeRecords: number;
-    changeRecordsBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
-    serviceRequestsSla: number;
-    incidentsResponseSla: number;
-    incidentsResolutionSla: number;
-    requestsResponseSla: number;
-    requestsResolutionSla: number;
-  };
-  lastUpdate: string;
+const db = new Database(dbPath);
+db.pragma('journal_mode = WAL');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_state (
+    state_key TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`);
+
+const selectStateStmt = db.prepare('SELECT state_json FROM app_state WHERE state_key = ?');
+const upsertStateStmt = db.prepare(`
+  INSERT INTO app_state (state_key, state_json, updated_at)
+  VALUES (@state_key, @state_json, @updated_at)
+  ON CONFLICT(state_key) DO UPDATE SET
+    state_json = excluded.state_json,
+    updated_at = excluded.updated_at
+`);
+
+let state = loadState();
+
+function resolveDbPath(): string {
+  const configuredPath = process.env.DB_PATH;
+  if (!configuredPath) {
+    return path.resolve(__dirname, '../data/itdash.db');
+  }
+
+  return path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.resolve(__dirname, configuredPath);
 }
 
-// Default state pre-populated with servers and networks
-const defaultState: DbSchema = {
-  servers: [
-    { id: 'sw-srv-1', name: 'HIL-HIDDOR-AV01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-2', name: 'HIL-HIDDOR-BK01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-3', name: 'HIL-HIDDOR-CSCTS1.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-4', name: 'HIL-HIDDOR-CSCTS2.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-5', name: 'HILHIDDORDT0320.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-6', name: 'HIL-HIDDOR-FS01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-7', name: 'HILHIDDORILMSAP', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-8', name: 'HILHIDDORILMSDB', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-9', name: 'HIL-HIDDOR-PIMW.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-10', name: 'HIL-HIDDOR-PSDM.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-11', name: 'HIL-HIDDOR-US01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-12', name: 'HIL-HIDDOR-US02.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-13', name: 'HIL-HIDDOR-US03.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-14', name: 'HIL-HIDDOR-US04.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-15', name: 'HIL-HIDDOR-US05.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-    { id: 'sw-srv-16', name: 'HIL-HIDDOR-US06.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] }
-  ],
-  networks: [
-    { id: 'sw-net-1', provider: 'RJIO (ISP1)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] },
-    { id: 'sw-net-2', provider: 'RailTel (ISP2)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] },
-    { id: 'sw-net-3', provider: 'HIL-UTK-EC-1 (SDWAN-A)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] },
-    { id: 'sw-net-4', provider: 'HIL-UTK-EC-2 (SDWAN-B)', status: 'operational', uptime: 100, latency: null, utilization: null, history: [] }
-  ],
-  nutanix: {
-    uptime: 'N/A',
-    nodesCount: 0,
-    storageUsage: 0,
-    historyCpu: [],
-    historyMem: [],
-    physicalMemoryUsage: 0,
-    logicalMemoryUsage: 0,
-    storageUsedTib: 0,
-    storageCapacityTib: 0,
-    memoryUsedGib: 0,
-    memoryCapacityGib: 0
-  },
-  symphony: {
-    openIncidents: 0,
-    openIncidentsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
-    serviceRequests: 0,
-    serviceRequestsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
-    workOrders: 0,
-    workOrdersBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
-    changeRecords: 0,
-    changeRecordsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
-    serviceRequestsSla: 100,
-    incidentsResponseSla: 100,
-    incidentsResolutionSla: 100,
-    requestsResponseSla: 100,
-    requestsResolutionSla: 100
-  },
-  lastUpdate: new Date().toISOString()
-};
+function loadSeedState(targetDbPath: string): StoredDbSchema | null {
+  const targetKind = detectFileKind(targetDbPath);
+  if (targetKind === 'sqlite') {
+    return null;
+  }
 
-// Memory cache of DB state
-let state: DbSchema = defaultState;
+  if (targetKind === 'json') {
+    const migrated = readJsonState(targetDbPath);
+    const backupPath = `${targetDbPath}.legacy-json.bak`;
+    fs.copyFileSync(targetDbPath, backupPath);
+    fs.unlinkSync(targetDbPath);
+    return migrated;
+  }
 
-// Helper to check if a server is Windows based on name
-function isWindowsServer(name: string): boolean {
-  const lowercase = name.toLowerCase();
-  return !lowercase.includes('ilmsap') && !lowercase.includes('ilmsdb');
+  if (targetKind === 'unknown') {
+    throw new Error(`Unsupported DB file format at ${targetDbPath}`);
+  }
+
+  const legacyJsonPath = path.join(path.dirname(targetDbPath), 'db.json');
+  if (legacyJsonPath !== targetDbPath && detectFileKind(legacyJsonPath) === 'json') {
+    return readJsonState(legacyJsonPath);
+  }
+
+  return null;
 }
 
-// Load initial state if file exists
-if (fs.existsSync(dbPath)) {
-  try {
-    const raw = fs.readFileSync(dbPath, 'utf-8');
-    state = JSON.parse(raw);
-    
-    // Auto-migrate server names to add .abgplanet.abg.com suffix for Windows servers
-    let mutated = false;
-    if (state.servers) {
-      for (const s of state.servers) {
-        if (isWindowsServer(s.name) && !s.name.toLowerCase().endsWith('.abgplanet.abg.com')) {
-          s.name = `${s.name}.abgplanet.abg.com`;
-          mutated = true;
-        }
+function detectFileKind(filePath: string): 'missing' | 'sqlite' | 'json' | 'unknown' {
+  if (!fs.existsSync(filePath)) {
+    return 'missing';
+  }
+
+  const header = fs.readFileSync(filePath, { encoding: null }).subarray(0, 16).toString('utf8');
+  if (header.startsWith('SQLite format 3')) {
+    return 'sqlite';
+  }
+
+  const raw = fs.readFileSync(filePath, 'utf8').trim();
+  if (raw.startsWith('{')) {
+    return 'json';
+  }
+
+  return 'unknown';
+}
+
+function readJsonState(filePath: string): StoredDbSchema {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  return normalizeState(JSON.parse(raw));
+}
+
+function createDefaultSections(): Record<SectionKey, StoredSectionState> {
+  return {
+    nutanix: { ...SECTION_TEMPLATES.nutanix, lastAttemptAt: null, lastSuccessAt: null, lastError: null },
+    servers: { ...SECTION_TEMPLATES.servers, lastAttemptAt: null, lastSuccessAt: null, lastError: null },
+    networks: { ...SECTION_TEMPLATES.networks, lastAttemptAt: null, lastSuccessAt: null, lastError: null },
+    symphony: { ...SECTION_TEMPLATES.symphony, lastAttemptAt: null, lastSuccessAt: null, lastError: null }
+  };
+}
+
+function createDefaultState(): StoredDbSchema {
+  return {
+    servers: clone(DEFAULT_SERVERS),
+    networks: clone(DEFAULT_NETWORKS),
+    nutanix: {
+      uptime: 'N/A',
+      nodesCount: 0,
+      storageUsage: 0,
+      historyCpu: [],
+      historyMem: [],
+      physicalMemoryUsage: 0,
+      logicalMemoryUsage: 0,
+      storageUsedTib: 0,
+      storageCapacityTib: 0,
+      memoryUsedGib: 0,
+      memoryCapacityGib: 0
+    },
+    symphony: {
+      openIncidents: 0,
+      openIncidentsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
+      serviceRequests: 0,
+      serviceRequestsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
+      workOrders: 0,
+      workOrdersBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
+      changeRecords: 0,
+      changeRecordsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
+      serviceRequestsSla: 100,
+      incidentsResponseSla: 100,
+      incidentsResolutionSla: 100,
+      requestsResponseSla: 100,
+      requestsResolutionSla: 100
+    },
+    sections: createDefaultSections(),
+    lastUpdate: new Date().toISOString()
+  };
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalizeState(raw: any): StoredDbSchema {
+  const base = createDefaultState();
+
+  if (Array.isArray(raw?.servers)) {
+    base.servers = mergeServers(raw.servers);
+  }
+
+  if (Array.isArray(raw?.networks)) {
+    base.networks = mergeNetworks(raw.networks);
+  }
+
+  base.nutanix = {
+    ...base.nutanix,
+    ...(raw?.nutanix ?? {}),
+    historyCpu: Array.isArray(raw?.nutanix?.historyCpu) ? raw.nutanix.historyCpu : base.nutanix.historyCpu,
+    historyMem: Array.isArray(raw?.nutanix?.historyMem) ? raw.nutanix.historyMem : base.nutanix.historyMem
+  };
+
+  base.symphony = {
+    ...base.symphony,
+    ...(raw?.symphony ?? {})
+  };
+
+  if (raw?.sections) {
+    for (const key of SECTION_KEYS) {
+      const incoming = raw.sections[key];
+      if (!incoming) {
+        continue;
       }
+
+      base.sections[key] = {
+        ...base.sections[key],
+        lastAttemptAt: incoming.lastAttemptAt ?? base.sections[key].lastAttemptAt,
+        lastSuccessAt: incoming.lastSuccessAt ?? base.sections[key].lastSuccessAt,
+        lastError: incoming.lastError ?? base.sections[key].lastError
+      };
     }
-    if (mutated) {
-      saveStateAtomically();
-    }
-  } catch (err) {
-    console.error('Failed to load db.json, using default state:', err);
-    state = defaultState;
   }
-} else {
-  saveStateAtomically();
+
+  base.lastUpdate = typeof raw?.lastUpdate === 'string' ? raw.lastUpdate : base.lastUpdate;
+  return base;
 }
 
-function saveStateAtomically() {
-  try {
-    const tempPath = `${dbPath}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), 'utf-8');
-    fs.renameSync(tempPath, dbPath);
-  } catch (err) {
-    console.error('Error writing DB file atomically:', err);
+function mergeServers(incomingServers: any[]): ServerNode[] {
+  const merged = clone(DEFAULT_SERVERS);
+  const byId = new Map(merged.map((server) => [server.id, server]));
+  const byName = new Map(merged.map((server) => [cleanHostname(server.name), server]));
+
+  for (const incoming of incomingServers) {
+    const target = byId.get(incoming.id) ?? byName.get(cleanHostname(incoming.name ?? ''));
+    if (!target) {
+      continue;
+    }
+
+    Object.assign(target, incoming);
+    target.name = normalizeServerName(target.name);
+    target.status = normalizeAssetStatus(target.status) ?? target.status;
+    target.history = Array.isArray(target.history) ? target.history : [];
+    target.backupStatus = target.backupStatus === 'failed' || target.backupStatus === 'successful' ? target.backupStatus : 'N/A';
   }
+
+  return merged;
 }
 
-// Add value to sliding history window of max 20 items
+function mergeNetworks(incomingNetworks: any[]): NetworkLink[] {
+  const merged = clone(DEFAULT_NETWORKS);
+  const byId = new Map(merged.map((network) => [network.id, network]));
+
+  for (const incoming of incomingNetworks) {
+    const target = byId.get(incoming.id);
+    if (!target) {
+      continue;
+    }
+
+    Object.assign(target, incoming);
+    target.status = normalizeAssetStatus(target.status) ?? target.status;
+    target.history = Array.isArray(target.history) ? target.history : [];
+  }
+
+  return merged;
+}
+
+function loadState(): StoredDbSchema {
+  const row = selectStateStmt.get(STATE_KEY) as { state_json: string } | undefined;
+  if (!row) {
+    const initialState = seedState ?? createDefaultState();
+    saveState(initialState);
+    return initialState;
+  }
+
+  return normalizeState(JSON.parse(row.state_json));
+}
+
+function saveState(nextState: StoredDbSchema): void {
+  upsertStateStmt.run({
+    state_key: STATE_KEY,
+    state_json: JSON.stringify(nextState),
+    updated_at: new Date().toISOString()
+  });
+}
+
+function persist(): void {
+  saveState(state);
+}
+
 function pushToHistory(history: number[], value: number): number[] {
-  const newHistory = [...history, value];
-  if (newHistory.length > 20) {
-    return newHistory.slice(newHistory.length - 20);
-  }
-  return newHistory;
-}
-
-export function getDashboardState(): DbSchema {
-  return state;
+  const nextHistory = [...history, value];
+  return nextHistory.length > 20 ? nextHistory.slice(nextHistory.length - 20) : nextHistory;
 }
 
 function cleanHostname(name: string): string {
@@ -165,7 +422,162 @@ function cleanHostname(name: string): string {
     .trim();
 }
 
+function isWindowsServer(name: string): boolean {
+  const lowercase = name.toLowerCase();
+  return !lowercase.includes('ilmsap') && !lowercase.includes('ilmsdb');
+}
+
+function normalizeServerName(name: string): string {
+  if (!name) {
+    return name;
+  }
+
+  if (isWindowsServer(name) && !name.toLowerCase().endsWith('.abgplanet.abg.com')) {
+    return `${name}.abgplanet.abg.com`;
+  }
+
+  return name;
+}
+
+function normalizeAssetStatus(status?: string | null): AssetStatus | undefined {
+  if (!status) {
+    return undefined;
+  }
+
+  const normalized = status.toLowerCase();
+  if (normalized === 'ok' || normalized === 'up' || normalized === 'operational') {
+    return 'operational';
+  }
+  if (normalized === 'warning' || normalized === 'degraded') {
+    return 'degraded';
+  }
+  if (normalized === 'critical' || normalized === 'down') {
+    return 'down';
+  }
+
+  return undefined;
+}
+
+function markSectionAttempt(sectionKey: SectionKey, attemptedAt: string): void {
+  state.sections[sectionKey].lastAttemptAt = attemptedAt;
+}
+
+function markSectionSuccess(sectionKey: SectionKey, attemptedAt: string): void {
+  state.sections[sectionKey].lastAttemptAt = attemptedAt;
+  state.sections[sectionKey].lastSuccessAt = attemptedAt;
+  state.sections[sectionKey].lastError = null;
+}
+
+function markSectionError(sectionKey: SectionKey, attemptedAt: string, error: string): void {
+  state.sections[sectionKey].lastAttemptAt = attemptedAt;
+  state.sections[sectionKey].lastError = error;
+}
+
+function maybeUpdateLastSync(timestamp: string): void {
+  if (!state.lastUpdate || new Date(timestamp).getTime() >= new Date(state.lastUpdate).getTime()) {
+    state.lastUpdate = timestamp;
+  }
+}
+
+function deriveSectionStatus(section: StoredSectionState): SectionStatus {
+  if (!section.lastAttemptAt && !section.lastSuccessAt) {
+    return 'never';
+  }
+
+  const lastAttemptAt = section.lastAttemptAt ? new Date(section.lastAttemptAt).getTime() : 0;
+  const lastSuccessAt = section.lastSuccessAt ? new Date(section.lastSuccessAt).getTime() : 0;
+  if (section.lastError && lastAttemptAt >= lastSuccessAt) {
+    return 'error';
+  }
+
+  if (!section.lastSuccessAt) {
+    return 'never';
+  }
+
+  const ageMs = Date.now() - lastSuccessAt;
+  if (ageMs > section.pollIntervalMs * 2.5) {
+    return 'stale';
+  }
+
+  return 'ok';
+}
+
+function deriveSources(sections: Record<SectionKey, SectionHealth>): Record<CollectorSource, SourceHealth> {
+  const result = {} as Record<CollectorSource, SourceHealth>;
+
+  (Object.keys(SOURCE_SECTION_KEYS) as CollectorSource[]).forEach((source) => {
+    const sectionKeys = SOURCE_SECTION_KEYS[source];
+    const sourceSections = sectionKeys.map((key) => sections[key]);
+    const statuses = sourceSections.map((section) => section.status);
+    const hasOk = statuses.includes('ok');
+    const hasNonOk = statuses.some((status) => status !== 'ok');
+
+    let status: SourceStatus;
+    if (statuses.every((value) => value === 'never')) {
+      status = 'never';
+    } else if (statuses.every((value) => value === 'ok')) {
+      status = 'ok';
+    } else if (hasOk && hasNonOk) {
+      status = 'partial';
+    } else if (statuses.includes('error')) {
+      status = 'error';
+    } else if (statuses.includes('stale')) {
+      status = 'stale';
+    } else {
+      status = statuses[0];
+    }
+
+    const lastAttemptAt = sourceSections
+      .map((section) => section.lastAttemptAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null;
+    const lastSuccessAt = sourceSections
+      .map((section) => section.lastSuccessAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null;
+    const lastError = sourceSections.find((section) => section.status === 'error' && section.lastError)?.lastError ?? null;
+
+    result[source] = {
+      source,
+      label: SOURCE_LABELS[source],
+      sectionKeys,
+      lastAttemptAt,
+      lastSuccessAt,
+      lastError,
+      status
+    };
+  });
+
+  return result;
+}
+
+function currentTimestamp(meta?: UpdateMeta): string {
+  return meta?.attemptedAt ?? new Date().toISOString();
+}
+
+export function getDashboardState(): DbSchema {
+  const snapshot = normalizeState(state);
+  const sections = {} as Record<SectionKey, SectionHealth>;
+
+  for (const key of SECTION_KEYS) {
+    sections[key] = {
+      ...snapshot.sections[key],
+      status: deriveSectionStatus(snapshot.sections[key])
+    };
+  }
+
+  const { sections: _storedSections, ...rest } = snapshot;
+  return {
+    ...rest,
+    sections,
+    sources: deriveSources(sections)
+  };
+}
+
 export function updateNutanix(data: {
+  meta?: UpdateMeta;
   uptime?: string;
   nodesCount?: number;
   storageUsage?: number;
@@ -177,8 +589,37 @@ export function updateNutanix(data: {
   storageCapacityTib?: number;
   memoryUsedGib?: number;
   memoryCapacityGib?: number;
-  vms?: Array<{ name: string; diskUsage?: string; backupStatus?: string; cpu?: number; memory?: number; status?: string }>;
-}) {
+  vms?: Array<{ name: string; diskUsage?: string; backupStatus?: 'successful' | 'failed' | 'N/A'; cpu?: number; memory?: number; status?: string }>;
+}): void {
+  const attemptedAt = currentTimestamp(data.meta);
+  markSectionAttempt('nutanix', attemptedAt);
+
+  if (data.meta?.ok === false) {
+    markSectionError('nutanix', attemptedAt, data.meta.error ?? 'Nutanix collector failed');
+    persist();
+    return;
+  }
+
+  const hasPayload = [
+    data.uptime,
+    data.nodesCount,
+    data.storageUsage,
+    data.cpuUsage,
+    data.memoryUsage,
+    data.physicalMemoryUsage,
+    data.logicalMemoryUsage,
+    data.storageUsedTib,
+    data.storageCapacityTib,
+    data.memoryUsedGib,
+    data.memoryCapacityGib
+  ].some((value) => value !== undefined) || Array.isArray(data.vms);
+
+  if (!hasPayload) {
+    markSectionError('nutanix', attemptedAt, data.meta?.error ?? 'Nutanix collector returned no usable payload');
+    persist();
+    return;
+  }
+
   if (data.uptime !== undefined) state.nutanix.uptime = data.uptime;
   if (data.nodesCount !== undefined) state.nutanix.nodesCount = data.nodesCount;
   if (data.storageUsage !== undefined) state.nutanix.storageUsage = data.storageUsage;
@@ -188,89 +629,219 @@ export function updateNutanix(data: {
   if (data.storageCapacityTib !== undefined) state.nutanix.storageCapacityTib = data.storageCapacityTib;
   if (data.memoryUsedGib !== undefined) state.nutanix.memoryUsedGib = data.memoryUsedGib;
   if (data.memoryCapacityGib !== undefined) state.nutanix.memoryCapacityGib = data.memoryCapacityGib;
-  
+
   if (data.cpuUsage !== undefined) {
-    state.nutanix.historyCpu = pushToHistory(state.nutanix.historyCpu || [], data.cpuUsage);
+    state.nutanix.historyCpu = pushToHistory(state.nutanix.historyCpu, data.cpuUsage);
   }
   if (data.memoryUsage !== undefined) {
-    state.nutanix.historyMem = pushToHistory(state.nutanix.historyMem || [], data.memoryUsage);
+    state.nutanix.historyMem = pushToHistory(state.nutanix.historyMem, data.memoryUsage);
   }
 
   if (data.vms) {
     for (const vm of data.vms) {
-      const server = state.servers.find(
-        s => cleanHostname(s.name) === cleanHostname(vm.name)
-      );
-      if (server) {
-        if (vm.diskUsage !== undefined) server.disk = vm.diskUsage;
-        if (vm.backupStatus !== undefined) server.backupStatus = vm.backupStatus;
-        if (vm.cpu !== undefined) {
-          server.cpu = vm.cpu;
-          server.history = pushToHistory(server.history || [], vm.cpu);
-        }
-        if (vm.memory !== undefined) server.memory = vm.memory;
-        if (vm.status !== undefined) server.status = vm.status;
+      const server = state.servers.find((candidate) => cleanHostname(candidate.name) === cleanHostname(vm.name));
+      if (!server) {
+        continue;
+      }
+
+      if (vm.diskUsage !== undefined) {
+        server.disk = vm.diskUsage;
+      }
+      if (vm.backupStatus !== undefined) {
+        server.backupStatus = vm.backupStatus;
+      }
+      if (vm.cpu !== undefined) {
+        server.cpu = vm.cpu;
+        server.history = pushToHistory(server.history, vm.cpu);
+      }
+      if (vm.memory !== undefined) {
+        server.memory = vm.memory;
+      }
+      if (vm.status !== undefined) {
+        server.status = normalizeAssetStatus(vm.status) ?? server.status;
       }
     }
   }
 
-  state.lastUpdate = new Date().toISOString();
-  saveStateAtomically();
+  markSectionSuccess('nutanix', attemptedAt);
+  maybeUpdateLastSync(attemptedAt);
+  persist();
 }
 
 export function updateSolarWinds(data: {
+  meta?: UpdateMeta & {
+    sections?: {
+      servers?: UpdateMeta;
+      networks?: UpdateMeta;
+    };
+  };
   servers?: Array<{ name: string; cpu?: number; memory?: number; status?: string }>;
-  networks?: Array<{ id: string; latency?: number; utilization?: number; status?: string }>;
-}) {
-  if (data.servers) {
-    for (const s of data.servers) {
-      const server = state.servers.find(
-        srv => cleanHostname(srv.name) === cleanHostname(s.name)
-      );
-      if (server) {
-        if (s.cpu !== undefined) {
-          server.cpu = s.cpu;
-          server.history = pushToHistory(server.history || [], s.cpu);
-        }
-        if (s.memory !== undefined) server.memory = s.memory;
-        if (s.status !== undefined) server.status = s.status;
-      }
-    }
+  networks?: Array<{
+    id: string;
+    latency?: number;
+    utilization?: number;
+    status?: string;
+    uptime?: number;
+    displayName?: string;
+    pollingIp?: string;
+    interfaceName?: string;
+    transmitUtilization?: number;
+    receiveUtilization?: number;
+    siteName?: string;
+    portSpeed?: string;
+    circuitId?: string;
+    linkType?: string;
+  }>;
+}): void {
+  const attemptedAt = currentTimestamp(data.meta);
+  const serverMeta = data.meta?.sections?.servers;
+  const networkMeta = data.meta?.sections?.networks;
+
+  const sectionAttempts: Array<{ key: SectionKey; meta?: UpdateMeta }> = [
+    { key: 'servers', meta: serverMeta ?? data.meta },
+    { key: 'networks', meta: networkMeta ?? data.meta }
+  ];
+
+  for (const section of sectionAttempts) {
+    markSectionAttempt(section.key, currentTimestamp(section.meta));
   }
 
-  if (data.networks) {
-    for (const n of data.networks) {
-      const network = state.networks.find(net => net.id === n.id);
-      if (network) {
-        if (n.latency !== undefined) network.latency = n.latency;
-        if (n.utilization !== undefined) {
-          network.utilization = n.utilization;
-          network.history = pushToHistory(network.history || [], n.utilization);
-        }
-        if (n.status !== undefined) network.status = n.status;
+  let anySuccess = false;
+
+  if (serverMeta?.ok === false || (data.meta?.ok === false && !serverMeta && !data.servers)) {
+    markSectionError('servers', currentTimestamp(serverMeta ?? data.meta), serverMeta?.error ?? data.meta?.error ?? 'SolarWinds server scrape failed');
+  } else if (Array.isArray(data.servers) && data.servers.length > 0) {
+    for (const incoming of data.servers) {
+      const server = state.servers.find((candidate) => cleanHostname(candidate.name) === cleanHostname(incoming.name));
+      if (!server) {
+        continue;
+      }
+
+      if (incoming.cpu !== undefined) {
+        server.cpu = incoming.cpu;
+        server.history = pushToHistory(server.history, incoming.cpu);
+      }
+      if (incoming.memory !== undefined) {
+        server.memory = incoming.memory;
+      }
+      if (incoming.status !== undefined) {
+        server.status = normalizeAssetStatus(incoming.status) ?? server.status;
       }
     }
+
+    markSectionSuccess('servers', currentTimestamp(serverMeta ?? data.meta));
+    anySuccess = true;
+  } else if (serverMeta) {
+    markSectionError('servers', currentTimestamp(serverMeta), serverMeta.error ?? 'SolarWinds server scrape returned no usable rows');
   }
 
-  state.lastUpdate = new Date().toISOString();
-  saveStateAtomically();
+  if (networkMeta?.ok === false || (data.meta?.ok === false && !networkMeta && !data.networks)) {
+    markSectionError('networks', currentTimestamp(networkMeta ?? data.meta), networkMeta?.error ?? data.meta?.error ?? 'SolarWinds network scrape failed');
+  } else if (Array.isArray(data.networks) && data.networks.length > 0) {
+    for (const incoming of data.networks) {
+      const network = state.networks.find((candidate) => candidate.id === incoming.id);
+      if (!network) {
+        continue;
+      }
+
+      if (incoming.latency !== undefined) {
+        network.latency = incoming.latency;
+      }
+      if (incoming.utilization !== undefined) {
+        network.utilization = incoming.utilization;
+        network.history = pushToHistory(network.history, incoming.utilization);
+      }
+      if (incoming.displayName !== undefined) {
+        network.displayName = incoming.displayName;
+      }
+      if (incoming.pollingIp !== undefined) {
+        network.pollingIp = incoming.pollingIp;
+      }
+      if (incoming.interfaceName !== undefined) {
+        network.interfaceName = incoming.interfaceName;
+      }
+      if (incoming.transmitUtilization !== undefined) {
+        network.transmitUtilization = incoming.transmitUtilization;
+      }
+      if (incoming.receiveUtilization !== undefined) {
+        network.receiveUtilization = incoming.receiveUtilization;
+      }
+      if (incoming.siteName !== undefined) {
+        network.siteName = incoming.siteName;
+      }
+      if (incoming.portSpeed !== undefined) {
+        network.portSpeed = incoming.portSpeed;
+      }
+      if (incoming.circuitId !== undefined) {
+        network.circuitId = incoming.circuitId;
+      }
+      if (incoming.linkType !== undefined) {
+        network.linkType = incoming.linkType;
+      }
+      if (incoming.status !== undefined) {
+        network.status = normalizeAssetStatus(incoming.status) ?? network.status;
+      }
+      if (incoming.uptime !== undefined) {
+        network.uptime = incoming.uptime;
+      }
+    }
+
+    markSectionSuccess('networks', currentTimestamp(networkMeta ?? data.meta));
+    anySuccess = true;
+  } else if (networkMeta) {
+    markSectionError('networks', currentTimestamp(networkMeta), networkMeta.error ?? 'SolarWinds network scrape returned no usable rows');
+  }
+
+  if (anySuccess) {
+    maybeUpdateLastSync(attemptedAt);
+  }
+
+  persist();
 }
 
 export function updateSymphony(data: {
+  meta?: UpdateMeta;
   openIncidents?: number;
-  openIncidentsBreakdown?: { new: number; assigned: number; inProgress: number; pending: number };
+  openIncidentsBreakdown?: TicketBreakdown;
   serviceRequests?: number;
-  serviceRequestsBreakdown?: { new: number; assigned: number; inProgress: number; pending: number };
+  serviceRequestsBreakdown?: TicketBreakdown;
   workOrders?: number;
-  workOrdersBreakdown?: { new: number; assigned: number; inProgress: number; pending: number };
+  workOrdersBreakdown?: TicketBreakdown;
   changeRecords?: number;
-  changeRecordsBreakdown?: { new: number; assigned: number; inProgress: number; pending: number };
+  changeRecordsBreakdown?: TicketBreakdown;
   serviceRequestsSla?: number;
   incidentsResponseSla?: number;
   incidentsResolutionSla?: number;
   requestsResponseSla?: number;
   requestsResolutionSla?: number;
-}) {
+}): void {
+  const attemptedAt = currentTimestamp(data.meta);
+  markSectionAttempt('symphony', attemptedAt);
+
+  if (data.meta?.ok === false) {
+    markSectionError('symphony', attemptedAt, data.meta.error ?? 'Symphony collector failed');
+    persist();
+    return;
+  }
+
+  const hasPayload = [
+    data.openIncidents,
+    data.serviceRequests,
+    data.workOrders,
+    data.changeRecords,
+    data.serviceRequestsSla,
+    data.incidentsResponseSla,
+    data.incidentsResolutionSla,
+    data.requestsResponseSla,
+    data.requestsResolutionSla
+  ].some((value) => value !== undefined);
+
+  if (!hasPayload) {
+    markSectionError('symphony', attemptedAt, data.meta?.error ?? 'Symphony collector returned no usable payload');
+    persist();
+    return;
+  }
+
   if (data.openIncidents !== undefined) state.symphony.openIncidents = data.openIncidents;
   if (data.openIncidentsBreakdown) state.symphony.openIncidentsBreakdown = data.openIncidentsBreakdown;
   if (data.serviceRequests !== undefined) state.symphony.serviceRequests = data.serviceRequests;
@@ -279,13 +850,13 @@ export function updateSymphony(data: {
   if (data.workOrdersBreakdown) state.symphony.workOrdersBreakdown = data.workOrdersBreakdown;
   if (data.changeRecords !== undefined) state.symphony.changeRecords = data.changeRecords;
   if (data.changeRecordsBreakdown) state.symphony.changeRecordsBreakdown = data.changeRecordsBreakdown;
-  
   if (data.serviceRequestsSla !== undefined) state.symphony.serviceRequestsSla = data.serviceRequestsSla;
   if (data.incidentsResponseSla !== undefined) state.symphony.incidentsResponseSla = data.incidentsResponseSla;
   if (data.incidentsResolutionSla !== undefined) state.symphony.incidentsResolutionSla = data.incidentsResolutionSla;
   if (data.requestsResponseSla !== undefined) state.symphony.requestsResponseSla = data.requestsResponseSla;
   if (data.requestsResolutionSla !== undefined) state.symphony.requestsResolutionSla = data.requestsResolutionSla;
 
-  state.lastUpdate = new Date().toISOString();
-  saveStateAtomically();
+  markSectionSuccess('symphony', attemptedAt);
+  maybeUpdateLastSync(attemptedAt);
+  persist();
 }

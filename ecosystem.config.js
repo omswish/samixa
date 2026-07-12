@@ -33,10 +33,11 @@ module.exports = {
     {
       name: 'dashboard-ui',
       script: '../node_modules/next/dist/bin/next',
-      args: 'dev',
+      args: 'start',
       cwd: './dashboard',
       env: {
         PORT: 3000,
+        NODE_ENV: 'production',
         NEXT_PUBLIC_API_URL: 'http://localhost:4000'
       }
     }

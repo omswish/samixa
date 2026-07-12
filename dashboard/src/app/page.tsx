@@ -38,7 +38,40 @@ interface NetworkLink {
   uptime: number;
   latency: number | null;
   utilization: number | null;
+  displayName?: string;
+  pollingIp?: string;
+  interfaceName?: string;
+  transmitUtilization?: number | null;
+  receiveUtilization?: number | null;
+  siteName?: string;
+  portSpeed?: string;
+  circuitId?: string;
+  linkType?: string;
   history: number[];
+}
+
+type SectionStatus = 'ok' | 'stale' | 'error' | 'never';
+type SourceStatus = SectionStatus | 'partial';
+
+interface SectionHealth {
+  key: 'nutanix' | 'servers' | 'networks' | 'symphony';
+  label: string;
+  source: 'nutanix' | 'solarwinds' | 'symphony';
+  pollIntervalMs: number;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  status: SectionStatus;
+}
+
+interface SourceHealth {
+  source: 'nutanix' | 'solarwinds' | 'symphony';
+  label: string;
+  sectionKeys: Array<'nutanix' | 'servers' | 'networks' | 'symphony'>;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  status: SourceStatus;
 }
 
 interface DashboardState {
@@ -72,7 +105,111 @@ interface DashboardState {
     requestsResponseSla: number;
     requestsResolutionSla: number;
   };
+  sections: {
+    nutanix: SectionHealth;
+    servers: SectionHealth;
+    networks: SectionHealth;
+    symphony: SectionHealth;
+  };
+  sources: {
+    nutanix: SourceHealth;
+    solarwinds: SourceHealth;
+    symphony: SourceHealth;
+  };
   lastUpdate: string;
+}
+
+function formatSyncTime(timestamp: string | null) {
+  if (!timestamp) {
+    return 'Never';
+  }
+
+  return new Date(timestamp).toLocaleTimeString('en-US', { hour12: false });
+}
+
+function getHealthText(status: SourceStatus | SectionStatus) {
+  switch (status) {
+    case 'ok': return 'Live';
+    case 'partial': return 'Partial';
+    case 'stale': return 'Stale';
+    case 'error': return 'Error';
+    default: return 'Waiting';
+  }
+}
+
+function getHealthBadgeStyle(status: SourceStatus | SectionStatus) {
+  switch (status) {
+    case 'ok':
+      return { background: '#e8f5e9', color: '#2e7d32' };
+    case 'partial':
+      return { background: '#fff8e1', color: '#f57f17' };
+    case 'stale':
+      return { background: '#fff3e0', color: '#ef6c00' };
+    case 'error':
+      return { background: '#ffebee', color: '#c62828' };
+    default:
+      return { background: '#eceff1', color: '#546e7a' };
+  }
+}
+
+function getHealthPulseClass(status: SourceStatus | SectionStatus) {
+  switch (status) {
+    case 'ok': return 'ok';
+    case 'partial':
+    case 'stale': return 'warning';
+    case 'error': return 'critical';
+    default: return '';
+  }
+}
+
+function getSystemStatusText(data: DashboardState) {
+  const statuses = Object.values(data.sources).map((source) => source.status);
+  if (statuses.every((status) => status === 'ok')) {
+    return 'ALL SOURCES HEALTHY';
+  }
+  if (statuses.some((status) => status === 'error')) {
+    return 'SOURCE FAILURE';
+  }
+  if (statuses.some((status) => status === 'partial')) {
+    return 'PARTIAL SOURCE COVERAGE';
+  }
+  if (statuses.some((status) => status === 'stale')) {
+    return 'STALE DATA';
+  }
+  return 'WAITING FOR FIRST SYNC';
+}
+
+function SectionHealthMeta({ health }: { health: SectionHealth }) {
+  const badgeStyle = getHealthBadgeStyle(health.status);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', textAlign: 'right' }}>
+      <span
+        style={{
+          ...badgeStyle,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '3px 8px',
+          borderRadius: '999px',
+          fontSize: '0.75rem',
+          fontWeight: 700
+        }}
+        title={health.lastError || undefined}
+      >
+        <span className={`pulse-dot ${getHealthPulseClass(health.status)}`} />
+        {getHealthText(health.status).toUpperCase()}
+      </span>
+      <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>
+        Last synced: {formatSyncTime(health.lastSuccessAt)}
+      </span>
+      {health.status === 'error' && health.lastError ? (
+        <span style={{ fontSize: '0.72rem', color: '#c62828', maxWidth: '260px' }}>
+          {health.lastError}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export default function Dashboard() {
@@ -136,22 +273,6 @@ export default function Dashboard() {
     };
   }, []);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'operational': return 'var(--status-ok)';
-      case 'degraded': return 'var(--status-warning)';
-      default: return 'var(--status-critical)';
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'operational': return <CheckCircle size={16} style={{ color: 'var(--status-ok)' }} />;
-      case 'degraded': return <AlertTriangle size={16} style={{ color: 'var(--status-warning)' }} />;
-      default: return <XCircle size={16} style={{ color: 'var(--status-critical)' }} />;
-    }
-  };
-
   const getThresholdColor = (pct: number) => {
     if (pct >= 95) return '#c62828'; // red (>= 95)
     if (pct >= 90) return '#ff9100'; // orange (>= 90)
@@ -168,9 +289,7 @@ export default function Dashboard() {
     );
   }
 
-  // Filter servers into Windows vs Linux
-  const windowsServers = data.servers.filter(s => s.name.toLowerCase().includes('.abgplanet') || s.name.toLowerCase().includes('-us') || s.name.toLowerCase().includes('-fs'));
-  const linuxServers = data.servers.filter(s => !windowsServers.includes(s));
+  const overallSystemStatus = getSystemStatusText(data);
 
   return (
     <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', minHeight: '100vh' }}>
@@ -217,11 +336,13 @@ export default function Dashboard() {
                 <Database size={20} style={{ color: 'var(--primary)' }} />
                 <h2 style={{ fontSize: '1.2rem' }}>Nutanix HCI Cluster Health</h2>
               </div>
-              {/* Horizontal Node Indicators (Right Aligned) */}
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 1 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 1 status">N1</div>
-                <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 2 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 2 status">N2</div>
-                <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 3 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 3 status">N3</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 1 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 1 status">N1</div>
+                  <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 2 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 2 status">N2</div>
+                  <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 3 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 3 status">N3</div>
+                </div>
+                <SectionHealthMeta health={data.sections.nutanix} />
               </div>
             </div>
 
@@ -293,7 +414,7 @@ export default function Dashboard() {
           </div>
 
           {/* Unified Network links card */}
-          <UnifiedNetworkCard links={data.networks} />
+          <UnifiedNetworkCard links={data.networks} sectionHealth={data.sections.networks} />
 
           {/* Symphony Ticket Summary Card */}
           <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -302,13 +423,16 @@ export default function Dashboard() {
                 <Ticket size={20} style={{ color: 'var(--primary)' }} />
                 <h2 style={{ fontSize: '1.2rem' }}>Hindalco Service Desk (Symphony)</h2>
               </div>
-              <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem' }}>
-                <span style={{ padding: '2px 6px', background: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontWeight: 500 }}>
-                  Inc SLA: {data.symphony.incidentsResolutionSla}%
-                </span>
-                <span style={{ padding: '2px 6px', background: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontWeight: 500 }}>
-                  Req SLA: {data.symphony.requestsResolutionSla}%
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem' }}>
+                  <span style={{ padding: '2px 6px', background: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontWeight: 500 }}>
+                    Inc SLA: {data.symphony.incidentsResolutionSla}%
+                  </span>
+                  <span style={{ padding: '2px 6px', background: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontWeight: 500 }}>
+                    Req SLA: {data.symphony.requestsResolutionSla}%
+                  </span>
+                </div>
+                <SectionHealthMeta health={data.sections.symphony} />
               </div>
             </div>
 
@@ -352,7 +476,7 @@ export default function Dashboard() {
               <Layers size={20} style={{ color: 'var(--primary)' }} />
               <h2 style={{ fontSize: '1.25rem' }}>Server Nodes (16 Monitored)</h2>
             </div>
-            <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>Last sync: {data.lastUpdate ? new Date(data.lastUpdate).toLocaleTimeString() : 'N/A'}</span>
+            <SectionHealthMeta health={data.sections.servers} />
           </div>
 
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
@@ -415,11 +539,29 @@ export default function Dashboard() {
 
       {/* Footer */}
       <footer className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px', fontSize: '0.75rem', opacity: 0.8 }}>
-        <div>SYSTEM STATUS: ALL OPERATIONAL</div>
-        <div style={{ display: 'flex', gap: '16px' }}>
-          <span>Nutanix API: active</span>
-          <span>SolarWinds Edge Scraper: active</span>
-          <span>Symphony Edge Scraper: active</span>
+        <div>SYSTEM STATUS: {overallSystemStatus}</div>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {Object.values(data.sources).map((source) => {
+            const badgeStyle = getHealthBadgeStyle(source.status);
+            return (
+              <span
+                key={source.source}
+                style={{
+                  ...badgeStyle,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '4px 8px',
+                  borderRadius: '999px',
+                  fontWeight: 600
+                }}
+                title={source.lastError || undefined}
+              >
+                <span className={`pulse-dot ${getHealthPulseClass(source.status)}`} />
+                {source.label}: {getHealthText(source.status)} · {formatSyncTime(source.lastSuccessAt)}
+              </span>
+            );
+          })}
         </div>
       </footer>
 

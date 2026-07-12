@@ -285,10 +285,10 @@ interface SymphonyMetrics {
 
 ### Credentials (from .env)
 ```
-SOLARWINDS_USER=hil-dor.itdashboard@adityabirla.com
-SOLARWINDS_PASSWORD=ItDa$(1857
-NUTANIX_USER=hildoritdashboard
-NUTANIX_PASSWORD=ItDa$(1857
+SOLARWINDS_USER=your-solarwinds-user
+SOLARWINDS_PASSWORD=your-solarwinds-password
+NUTANIX_USER=your-nutanix-user
+NUTANIX_PASSWORD=your-nutanix-password
 ```
 
 ---
@@ -362,7 +362,7 @@ graph TB
 ### 11.1 Nutanix Prism REST API v2
 
 **Base URL**: `https://10.23.50.27:9440/PrismGateway/services/rest/v2.0/`
-**Auth**: HTTP Basic Auth (`hildoritdashboard:ItDa$(1857`)
+**Auth**: HTTP Basic Auth (`$NUTANIX_USER:$NUTANIX_PASS`)
 
 | Current Scraping Target | API Replacement |
 |---|---|
@@ -376,7 +376,7 @@ graph TB
 
 ```typescript
 // Example: Fetch cluster CPU/Memory/Storage
-const auth = Buffer.from('hildoritdashboard:ItDa$(1857').toString('base64');
+const auth = Buffer.from(`${process.env.NUTANIX_USER}:${process.env.NUTANIX_PASS}`).toString('base64');
 
 async function getClusterStats() {
   const res = await fetch(
@@ -752,7 +752,7 @@ npm install next react react-dom recharts lucide-react
 > [!IMPORTANT]
 > **Before starting Phase 2**, confirm the Nutanix Prism REST API is accessible by running a test `curl` command from the LAN server:
 > ```bash
-> curl -k -u hildoritdashboard:password https://10.23.50.27:9440/PrismGateway/services/rest/v2.0/cluster/
+> curl -k -u "$NUTANIX_USER:$NUTANIX_PASS" https://10.23.50.27:9440/PrismGateway/services/rest/v2.0/cluster/
 > ```
 > Similarly, test SolarWinds SWIS access before Phase 3.
 
