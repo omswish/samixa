@@ -86,11 +86,11 @@ h1, h2, h3, h4, h5, h6 {
 
 .dashboard-wall-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.58fr) minmax(470px, 0.92fr);
-  grid-template-rows: minmax(0, 1.18fr) minmax(0, 0.82fr);
+  grid-template-columns: minmax(0, 1.42fr) minmax(520px, 0.98fr);
+  grid-template-rows: minmax(0, 1.02fr) minmax(0, 0.98fr);
   grid-template-areas:
-    "hsd network"
-    "servers servers";
+    "hsd servers"
+    "network servers";
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
@@ -146,8 +146,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .network-detail-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   min-height: 0;
 }
@@ -197,12 +197,20 @@ h1, h2, h3, h4, h5, h6 {
   gap: 8px;
 }
 
-.server-platform-grid {
+.server-fleet-summary-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  min-height: 0;
+}
+
+.server-table-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 .server-platform-card__content {
@@ -218,7 +226,7 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .dashboard-wall-grid {
-    grid-template-columns: minmax(0, 1.45fr) minmax(420px, 0.95fr);
+    grid-template-columns: minmax(0, 1.3fr) minmax(480px, 1fr);
   }
 
   .hsd-modern-grid {
@@ -235,11 +243,11 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .network-link-top-grid {
-    grid-template-columns: 1fr;
+  .server-fleet-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .server-platform-card__content {
+  .network-link-top-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -278,7 +286,8 @@ h1, h2, h3, h4, h5, h6 {
   .hsd-sla-grid,
   .network-detail-metrics,
   .network-overview-grid,
-  .network-carrier-strip {
+  .network-carrier-strip,
+  .server-fleet-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -286,15 +295,11 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-columns: 1fr;
   }
 
-  .server-platform-grid,
-  .server-platform-card__content {
-    grid-template-columns: 1fr;
-  }
-
   .network-link-split,
   .network-bar-grid,
   .network-link-top-grid,
-  .network-link-header-metrics {
+  .network-link-header-metrics,
+  .network-detail-list {
     grid-template-columns: 1fr;
   }
 }
@@ -308,7 +313,12 @@ h1, h2, h3, h4, h5, h6 {
   .network-link-header-metrics,
   .network-carrier-strip,
   .dashboard-hci-strip,
-  .server-summary-grid {
+  .server-summary-grid,
+  .server-fleet-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .network-detail-list {
     grid-template-columns: 1fr;
   }
 }

@@ -91,6 +91,8 @@ const HSD_STATUS_COLORS = {
   pending: '#7b8794'
 } as const;
 
+const SERVER_TABLE_COLUMNS = 'minmax(0, 1.95fr) minmax(72px, 0.8fr) minmax(72px, 0.8fr) minmax(72px, 0.8fr) 76px 90px';
+
 interface SectionHealth {
   key: 'nutanix' | 'servers' | 'networks' | 'symphony';
   label: string;
@@ -877,6 +879,356 @@ function CompactMetaPill({
   );
 }
 
+function FleetSummaryChip({
+  label,
+  value,
+  accent,
+  background,
+  border
+}: {
+  label: string;
+  value: number;
+  accent: string;
+  background: string;
+  border: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '8px',
+        minWidth: 0,
+        padding: '5px 8px',
+        borderRadius: '12px',
+        background,
+        border: `1px solid ${border}`
+      }}
+    >
+      <span style={{ fontSize: '0.5rem', fontWeight: 800, letterSpacing: '0.08em', color: accent, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {label}
+      </span>
+      <span style={{ fontSize: '0.92rem', fontWeight: 800, color: accent, lineHeight: 1 }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ServerTableHeaderCell({ label, align = 'left' }: { label: string; align?: 'left' | 'center' | 'right' }) {
+  return (
+    <div
+      style={{
+        fontSize: '0.56rem',
+        fontWeight: 800,
+        letterSpacing: '0.1em',
+        opacity: 0.56,
+        textAlign: align
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function ServerTableMetricBar({
+  value,
+  tone
+}: {
+  value: number | null;
+  tone: VisualTone;
+}) {
+  const palette = getTonePalette(tone);
+  const fill = value === null ? 0 : Math.max(0, Math.min(100, value));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+      <div style={{ fontSize: '0.66rem', fontWeight: 800, color: palette.text, lineHeight: 1, textAlign: 'center' }}>
+        {value === null ? 'N/A' : `${formatSmallNumber(value)}%`}
+      </div>
+      <div style={{ width: '100%', height: '5px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
+        <div style={{ width: `${fill}%`, height: '100%', borderRadius: '999px', background: palette.fill }} />
+      </div>
+    </div>
+  );
+}
+
+function ServerFleetTableRow({ server }: { server: ServerNode }) {
+  const visual = getServerVisualState(server);
+  const palette = getTonePalette(visual.tone);
+  const sourceChip = getServerSourceChip(server);
+  const categoryPalette = getServerCategoryPalette(server);
+  const bootLabel = formatServerBootLabel(server.lastBoot)?.replace('BOOT ', '');
+  const tertiaryMetric = server.disk !== null
+    ? { value: visual.diskPct, tone: getMetricTone(visual.diskPct), label: 'DSK' }
+    : { value: server.availabilityToday ?? null, tone: getAvailabilityTone(server.availabilityToday), label: 'AVL' };
+  const backupMeta =
+    server.backupStatus === 'successful'
+      ? { label: 'BKP OK', accent: '#1b5e20', background: 'rgba(46,125,50,0.12)', border: 'rgba(46,125,50,0.18)' }
+      : server.backupStatus === 'failed'
+        ? { label: 'BKP FAIL', accent: '#b71c1c', background: 'rgba(198,40,40,0.12)', border: 'rgba(198,40,40,0.18)' }
+        : { label: 'SW45', accent: '#8d6e63', background: 'rgba(141,110,99,0.10)', border: 'rgba(141,110,99,0.16)' };
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: SERVER_TABLE_COLUMNS,
+        alignItems: 'center',
+        gap: '10px',
+        padding: '5px 8px',
+        borderRadius: '12px',
+        background: 'rgba(255,255,255,0.52)',
+        border: `1px solid ${palette.border}`,
+        boxShadow: `inset 4px 0 0 ${palette.fill}`
+      }}
+    >
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', minWidth: 0 }}>
+          <span style={{ fontSize: '0.7rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
+            {formatServerName(server.name)}
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          <CompactMetaPill label={categoryPalette.label} color={categoryPalette.accent} background={categoryPalette.background} border={categoryPalette.border} />
+          <CompactMetaPill label={sourceChip.label} color={sourceChip.color} background={sourceChip.background} border={sourceChip.border} />
+          {bootLabel ? (
+            <CompactMetaPill label={bootLabel} color="#6d4c41" background="rgba(109,76,65,0.08)" border="rgba(109,76,65,0.14)" />
+          ) : null}
+        </div>
+      </div>
+
+      <ServerTableMetricBar value={visual.cpuPct} tone={getMetricTone(visual.cpuPct)} />
+      <ServerTableMetricBar value={visual.memoryPct} tone={getMetricTone(visual.memoryPct)} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+        <div style={{ fontSize: '0.44rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.56, textAlign: 'center' }}>
+          {tertiaryMetric.label}
+        </div>
+        <ServerTableMetricBar value={tertiaryMetric.value} tone={tertiaryMetric.tone} />
+      </div>
+
+      <div style={{ width: '100%', height: '18px' }}>
+        <UptimeChart history={server.history || []} color={palette.fill} hideNoDataText />
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'stretch' }}>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '3px 5px',
+            borderRadius: '999px',
+            background: palette.bg,
+            border: `1px solid ${palette.border}`,
+            fontSize: '0.46rem',
+            fontWeight: 800,
+            letterSpacing: '0.08em',
+            color: palette.text
+          }}
+        >
+          {visual.label.toUpperCase()}
+        </span>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '3px 5px',
+            borderRadius: '999px',
+            background: backupMeta.background,
+            border: `1px solid ${backupMeta.border}`,
+            fontSize: '0.46rem',
+            fontWeight: 800,
+            letterSpacing: '0.08em',
+            color: backupMeta.accent
+          }}
+        >
+          {backupMeta.label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function getServerCategoryPalette(server: ServerNode) {
+  const platform = getServerPlatform(server);
+  const os = getServerOsFamily(server);
+
+  if (platform === 'HCI VM' && os === 'Windows') {
+    return {
+      label: 'HCI-WIN',
+      accent: '#1565c0',
+      background: 'rgba(21,101,192,0.08)',
+      border: 'rgba(21,101,192,0.18)'
+    };
+  }
+
+  if (platform === 'HCI VM' && os === 'Linux') {
+    return {
+      label: 'HCI-LNX',
+      accent: '#2e7d32',
+      background: 'rgba(46,125,50,0.08)',
+      border: 'rgba(46,125,50,0.18)'
+    };
+  }
+
+  if (platform === 'On Prem' && os === 'Windows') {
+    return {
+      label: 'ONP-WIN',
+      accent: '#ef6c00',
+      background: 'rgba(239,108,0,0.08)',
+      border: 'rgba(239,108,0,0.18)'
+    };
+  }
+
+  return {
+    label: 'ONP-LNX',
+    accent: '#546e7a',
+    background: 'rgba(84,110,122,0.08)',
+    border: 'rgba(84,110,122,0.18)'
+  };
+}
+
+function DenseMetricCell({
+  label,
+  value,
+  tone,
+  suffix = ''
+}: {
+  label: string;
+  value: number | null;
+  tone: VisualTone;
+  suffix?: string;
+}) {
+  const palette = getTonePalette(tone);
+  const fill = value === null ? 0 : Math.max(0, Math.min(100, value));
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        minWidth: 0,
+        padding: '4px 6px',
+        borderRadius: '10px',
+        background: palette.bg,
+        border: `1px solid ${palette.border}`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '4px' }}>
+        <span style={{ fontSize: '0.48rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.62 }}>{label}</span>
+        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: palette.text }}>
+          {value === null ? 'N/A' : `${formatSmallNumber(value)}${suffix}`}
+        </span>
+      </div>
+      <div style={{ width: '100%', height: '3px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
+        <div style={{ width: `${fill}%`, height: '100%', background: palette.fill }} />
+      </div>
+    </div>
+  );
+}
+
+function FleetServerTile({ server }: { server: ServerNode }) {
+  const visual = getServerVisualState(server);
+  const palette = getTonePalette(visual.tone);
+  const sourceChip = getServerSourceChip(server);
+  const categoryPalette = getServerCategoryPalette(server);
+  const platformShort = getServerPlatform(server) === 'HCI VM' ? 'HCI' : 'ONP';
+  const osShort = getServerOsFamily(server) === 'Windows' ? 'WIN' : 'LNX';
+  const bootLabel = formatServerBootLabel(server.lastBoot)?.replace('BOOT ', '');
+  const backupMeta =
+    server.backupStatus === 'successful'
+      ? { label: 'BKP', accent: '#1b5e20', background: 'rgba(46,125,50,0.12)', border: 'rgba(46,125,50,0.18)' }
+      : server.backupStatus === 'failed'
+        ? { label: 'FAIL', accent: '#b71c1c', background: 'rgba(198,40,40,0.12)', border: 'rgba(198,40,40,0.18)' }
+        : { label: 'SW45', accent: '#8d6e63', background: 'rgba(141,110,99,0.10)', border: 'rgba(141,110,99,0.16)' };
+  const tertiaryMetric = server.disk !== null
+    ? { label: 'DSK', value: visual.diskPct, tone: getMetricTone(visual.diskPct), suffix: '%' }
+    : { label: 'AVL', value: server.availabilityToday ?? null, tone: getAvailabilityTone(server.availabilityToday), suffix: '%' };
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) 58px',
+        gap: '8px',
+        height: '100%',
+        minHeight: '84px',
+        padding: '9px 10px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.54)',
+        border: `1px solid ${palette.border}`,
+        boxShadow: `inset 0 1px 0 0 ${palette.soft}`
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: '0 0 auto 0',
+          height: '4px',
+          background: palette.fill
+        }}
+      />
+
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.74rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
+              {formatServerName(server.name)}
+            </div>
+          </div>
+          <span style={{ fontSize: '0.5rem', fontWeight: 800, letterSpacing: '0.08em', color: palette.text, whiteSpace: 'nowrap' }}>
+            {visual.label.toUpperCase()}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+          <CompactMetaPill label={categoryPalette.label} color={categoryPalette.accent} background={categoryPalette.background} border={categoryPalette.border} />
+          <CompactMetaPill label={platformShort} color="#455a64" background="rgba(84,110,122,0.10)" border="rgba(84,110,122,0.16)" />
+          <CompactMetaPill label={osShort} color={osShort === 'WIN' ? '#1565c0' : '#2e7d32'} background={osShort === 'WIN' ? 'rgba(21,101,192,0.08)' : 'rgba(46,125,50,0.08)'} border={osShort === 'WIN' ? 'rgba(21,101,192,0.16)' : 'rgba(46,125,50,0.16)'} />
+          <CompactMetaPill label={sourceChip.label} color={sourceChip.color} background={sourceChip.background} border={sourceChip.border} />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px' }}>
+          <DenseMetricCell label="CPU" value={visual.cpuPct} tone={getMetricTone(visual.cpuPct)} suffix="%" />
+          <DenseMetricCell label="RAM" value={visual.memoryPct} tone={getMetricTone(visual.memoryPct)} suffix="%" />
+          <DenseMetricCell label={tertiaryMetric.label} value={tertiaryMetric.value} tone={tertiaryMetric.tone} suffix={tertiaryMetric.suffix} />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', alignItems: 'stretch', minWidth: 0 }}>
+        <div style={{ width: '100%', height: '20px' }}>
+          <UptimeChart history={server.history || []} color={palette.fill} hideNoDataText />
+        </div>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '3px 4px',
+            borderRadius: '10px',
+            fontSize: '0.48rem',
+            fontWeight: 800,
+            letterSpacing: '0.08em',
+            color: backupMeta.accent,
+            background: backupMeta.background,
+            border: `1px solid ${backupMeta.border}`
+          }}
+        >
+          {backupMeta.label}
+        </span>
+        <span style={{ fontSize: '0.46rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.58, textAlign: 'right', whiteSpace: 'nowrap' }}>
+          {bootLabel || '--'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function CompactServerRow({ server }: { server: ServerNode }) {
   const visual = getServerVisualState(server);
   const palette = getTonePalette(visual.tone);
@@ -1570,6 +1922,43 @@ export default function Dashboard() {
     linuxHci: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|HCI VM')),
     linuxOnPrem: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|On Prem'))
   };
+  const serverFleetOrdered = [
+    ...groupedServers.windowsHci,
+    ...groupedServers.linuxHci,
+    ...groupedServers.windowsOnPrem,
+    ...groupedServers.linuxOnPrem
+  ];
+  const serverSummaryChips = [
+    {
+      label: 'NORMAL',
+      value: serverSummary.normal,
+      accent: getTonePalette('normal').text,
+      background: getTonePalette('normal').bg,
+      border: getTonePalette('normal').border
+    },
+    {
+      label: 'WARNING',
+      value: serverSummary.warning,
+      accent: getTonePalette('warning').text,
+      background: getTonePalette('warning').bg,
+      border: getTonePalette('warning').border
+    },
+    {
+      label: 'CRITICAL',
+      value: serverSummary.critical,
+      accent: getTonePalette('critical').text,
+      background: getTonePalette('critical').bg,
+      border: getTonePalette('critical').border
+    },
+    {
+      label: 'OFFLINE',
+      value: serverSummary.offline,
+      accent: getTonePalette('offline').text,
+      background: getTonePalette('offline').bg,
+      border: getTonePalette('offline').border
+    }
+  ];
+  const serverCategorySummary = `HCI-WIN ${groupedServers.windowsHci.length} | HCI-LNX ${groupedServers.linuxHci.length} | ONP-WIN ${groupedServers.windowsOnPrem.length} | ONP-LNX ${groupedServers.linuxOnPrem.length}`;
 
   const ticketCards: Array<{
     label: string;
@@ -1738,7 +2127,7 @@ export default function Dashboard() {
         <UnifiedNetworkCard links={data.networks} sectionHealth={data.sections.networks} />
 
         <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.9fr) minmax(0, 1fr) auto', alignItems: 'start', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.8fr) minmax(0, 1.4fr) auto', alignItems: 'start', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
               <div
                 style={{
@@ -1756,36 +2145,51 @@ export default function Dashboard() {
               </div>
               <div style={{ minWidth: 0 }}>
                 <h2 style={{ fontSize: '1.1rem' }}>Server Fleet</h2>
-                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>HCI VM / ON PREM | WINDOWS / LINUX</div>
+                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE SERVER TABLE</div>
                 <div style={{ fontSize: '0.72rem', opacity: 0.72, marginTop: '6px' }}>
-                  {serverTopologySummary.windows} Windows | {serverTopologySummary.linux} Linux | {serverTopologySummary.hciVm} HCI VM | {serverTopologySummary.onPrem} On Prem
+                  {data.servers.length} nodes | grouped by row tags instead of separate boxes
+                </div>
+                <div style={{ fontSize: '0.62rem', opacity: 0.64, marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {serverCategorySummary}
                 </div>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', minWidth: 0 }}>
-              <ServerSummaryDonut label="NORMAL" count={serverSummary.normal} total={data.servers.length} accent={getTonePalette('normal').fill} />
-              <ServerSummaryDonut label="WARNING" count={serverSummary.warning} total={data.servers.length} accent={getTonePalette('warning').fill} />
-              <ServerSummaryDonut label="CRITICAL" count={serverSummary.critical} total={data.servers.length} accent={getTonePalette('critical').fill} />
-              <ServerSummaryDonut label="OFFLINE" count={serverSummary.offline} total={data.servers.length} accent={getTonePalette('offline').fill} />
+            <div className="server-fleet-summary-grid">
+              {serverSummaryChips.map((chip) => (
+                <FleetSummaryChip
+                  key={chip.label}
+                  label={chip.label}
+                  value={chip.value}
+                  accent={chip.accent}
+                  background={chip.background}
+                  border={chip.border}
+                />
+              ))}
             </div>
             <SectionHealthMeta health={data.sections.servers} />
           </div>
 
-          <div className="server-platform-grid">
-            <ServerPlatformCard
-              title="HCI VM"
-              subtitle="Nutanix-backed virtual estate"
-              accent="#1565c0"
-              windowsServers={groupedServers.windowsHci}
-              linuxServers={groupedServers.linuxHci}
-            />
-            <ServerPlatformCard
-              title="ON PREM"
-              subtitle="SolarWinds-backed non-HCI estate"
-              accent="#8d6e63"
-              windowsServers={groupedServers.windowsOnPrem}
-              linuxServers={groupedServers.linuxOnPrem}
-            />
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: SERVER_TABLE_COLUMNS,
+              gap: '10px',
+              padding: '0 10px',
+              alignItems: 'center'
+            }}
+          >
+            <ServerTableHeaderCell label="SERVER / TAGS" />
+            <ServerTableHeaderCell label="CPU" align="center" />
+            <ServerTableHeaderCell label="RAM" align="center" />
+            <ServerTableHeaderCell label="DSK / AVL" align="center" />
+            <ServerTableHeaderCell label="TREND" align="center" />
+            <ServerTableHeaderCell label="STATE" align="center" />
+          </div>
+
+          <div className="server-table-list">
+            {serverFleetOrdered.map((server) => (
+              <ServerFleetTableRow key={server.id} server={server} />
+            ))}
           </div>
         </section>
       </main>
