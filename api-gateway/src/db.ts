@@ -98,6 +98,10 @@ interface SymphonyState {
   workOrdersBreakdown: TicketBreakdown;
   changeRecords: number;
   changeRecordsBreakdown: TicketBreakdown;
+  priority1Incidents: number;
+  priority2Incidents: number;
+  onboardingRequests: number;
+  securityRequests: number;
   serviceRequestsSla: number;
   incidentsResponseSla: number;
   incidentsResolutionSla: number;
@@ -369,6 +373,10 @@ function createDefaultState(): StoredDbSchema {
       workOrdersBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
       changeRecords: 0,
       changeRecordsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
+      priority1Incidents: 0,
+      priority2Incidents: 0,
+      onboardingRequests: 0,
+      securityRequests: 0,
       serviceRequestsSla: 100,
       incidentsResponseSla: 100,
       incidentsResolutionSla: 100,
@@ -1033,6 +1041,10 @@ export function updateSymphony(data: {
   workOrdersBreakdown?: TicketBreakdown;
   changeRecords?: number;
   changeRecordsBreakdown?: TicketBreakdown;
+  priority1Incidents?: number;
+  priority2Incidents?: number;
+  onboardingRequests?: number;
+  securityRequests?: number;
   serviceRequestsSla?: number;
   incidentsResponseSla?: number;
   incidentsResolutionSla?: number;
@@ -1053,6 +1065,10 @@ export function updateSymphony(data: {
     data.serviceRequests,
     data.workOrders,
     data.changeRecords,
+    data.priority1Incidents,
+    data.priority2Incidents,
+    data.onboardingRequests,
+    data.securityRequests,
     data.serviceRequestsSla,
     data.incidentsResponseSla,
     data.incidentsResolutionSla,
@@ -1074,6 +1090,10 @@ export function updateSymphony(data: {
   if (data.workOrdersBreakdown) state.symphony.workOrdersBreakdown = data.workOrdersBreakdown;
   if (data.changeRecords !== undefined) state.symphony.changeRecords = data.changeRecords;
   if (data.changeRecordsBreakdown) state.symphony.changeRecordsBreakdown = data.changeRecordsBreakdown;
+  if (data.priority1Incidents !== undefined) state.symphony.priority1Incidents = data.priority1Incidents;
+  if (data.priority2Incidents !== undefined) state.symphony.priority2Incidents = data.priority2Incidents;
+  if (data.onboardingRequests !== undefined) state.symphony.onboardingRequests = data.onboardingRequests;
+  if (data.securityRequests !== undefined) state.symphony.securityRequests = data.securityRequests;
   if (data.serviceRequestsSla !== undefined) state.symphony.serviceRequestsSla = data.serviceRequestsSla;
   if (data.incidentsResponseSla !== undefined) state.symphony.incidentsResponseSla = data.incidentsResponseSla;
   if (data.incidentsResolutionSla !== undefined) state.symphony.incidentsResolutionSla = data.incidentsResolutionSla;

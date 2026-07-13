@@ -18,6 +18,23 @@ const USERNAME_SELECTOR = '#i0116, input[type="email"], input[name="loginfmt"]';
 const PASSWORD_SELECTOR = '#i0118, input[type="password"], input[name="passwd"]';
 const SUBMIT_SELECTOR = '#idSIButton9, input[type="submit"]';
 const DASHBOARD_READY_SELECTOR = 'span[ng-bind="INCIDENT.MyWorkgroupCount"], span[ng-bind="REQUEST.MyWorkgroupCount"], span[ng-bind="WORKORDER.MyWorkgroupCount"], span[ng-bind="CR.MyWorkgroupCount"]';
+const GRID_READY_SELECTOR = '#divRecords, #BodyContentPlaceHolder_gvMyTickets, #BodyContentPlaceHolder_gvChangeRequests';
+
+type TicketBreakdown = {
+  new: number;
+  assigned: number;
+  inProgress: number;
+  pending: number;
+};
+
+type SpecialQueueCounts = {
+  priority1Incidents: number;
+  priority2Incidents: number;
+  onboardingRequests: number;
+  securityRequests: number;
+};
+
+type GridRow = Record<string, string>;
 
 let browserPromise: Promise<Browser> | null = null;
 let cycleInProgress = false;
@@ -229,6 +246,164 @@ async function getCount(page: Page, selector: string): Promise<number | null> {
   return Number.isNaN(val) ? null : val;
 }
 
+async function parseChartBuckets(page: Page, selector: string, labels: string[]): Promise<Record<string, number>> {
+  const locator = page.locator(selector).first();
+  await locator.waitFor({ state: 'visible', timeout: 30000 });
+
+  const counts = await locator.evaluate((element, expectedLabels) => {
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
+    const labelSet = new Set(expectedLabels.map(normalize));
+    const texts = Array.from(element.querySelectorAll('svg text'))
+      .map((textNode) => {
+        const text = (textNode.textContent || '').replace(/\s+/g, ' ').trim();
+        const x = parseFloat(textNode.getAttribute('x') || '0');
+        return { text, normalized: normalize(text), x };
+      })
+      .filter((entry) => entry.text);
+
+    const labelNodes = texts.filter((entry) => labelSet.has(entry.normalized));
+    const valueNodes = texts.filter((entry) => /^\d+$/.test(entry.text));
+    const result = Object.fromEntries(expectedLabels.map((label) => [normalize(label), 0]));
+
+    for (const valueNode of valueNodes) {
+      const nearestLabel = labelNodes.reduce<{ distance: number; label: string } | null>((closest, labelNode) => {
+        const distance = Math.abs(labelNode.x - valueNode.x);
+        if (!closest || distance < closest.distance) {
+          return { distance, label: labelNode.normalized };
+        }
+        return closest;
+      }, null);
+
+      if (!nearestLabel) {
+        continue;
+      }
+
+      result[nearestLabel.label] = parseInt(valueNode.text, 10);
+    }
+
+    return result;
+  }, labels);
+
+  const normalized = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
+  return Object.fromEntries(labels.map((label) => [normalized(label), counts[normalized(label)] ?? 0]));
+}
+
+function chartBucketsToBreakdown(buckets: Record<string, number>): TicketBreakdown {
+  return {
+    new: buckets.new ?? 0,
+    assigned: buckets.assigned ?? 0,
+    inProgress: buckets['in-progress'] ?? 0,
+    pending: buckets.pending ?? 0
+  };
+}
+
+function changeBucketsToBreakdown(buckets: Record<string, number>): TicketBreakdown {
+  return {
+    new: buckets.initiated ?? 0,
+    assigned: buckets.implemented ?? 0,
+    inProgress: buckets['approved stage'] ?? 0,
+    pending: 0
+  };
+}
+
+async function getQueueUrl(page: Page, hrefNeedle: string): Promise<string> {
+  const href = await page.locator(`a[href*="${hrefNeedle}"]`).first().getAttribute('href');
+  if (!href) {
+    throw new Error(`Could not resolve Symphony queue link for ${hrefNeedle}`);
+  }
+
+  return new URL(href, page.url()).toString();
+}
+
+async function setGridPageSize(page: Page, totalRows: number) {
+  const selector = '#BodyContentPlaceHolder_ddlRecords';
+  const dropdown = page.locator(selector).first();
+  if (await dropdown.count() === 0) {
+    return;
+  }
+
+  const currentValue = await dropdown.inputValue().catch(() => '');
+  const currentPageSize = parseInt(currentValue, 10);
+  if ((Number.isFinite(currentPageSize) && totalRows <= currentPageSize) || currentValue === '100') {
+    return;
+  }
+
+  await Promise.allSettled([
+    page.waitForLoadState('domcontentloaded', { timeout: 15000 }),
+    dropdown.selectOption('100')
+  ]);
+  await page.locator(GRID_READY_SELECTOR).first().waitFor({ state: 'visible', timeout: 30000 });
+  await page.waitForTimeout(1000);
+}
+
+async function readGridRows(page: Page, tableId: string): Promise<{ rows: GridRow[]; totalRows: number }> {
+  await page.locator(GRID_READY_SELECTOR).first().waitFor({ state: 'visible', timeout: 30000 });
+
+  const totalRowsBeforeResize = await page.evaluate(() => {
+    const summaryText = (document.getElementById('divRecords')?.textContent || '').replace(/\s+/g, ' ').trim();
+    const totalMatch = summaryText.match(/of\s+(\d+)/i);
+    return totalMatch ? parseInt(totalMatch[1], 10) : 0;
+  });
+
+  await setGridPageSize(page, totalRowsBeforeResize);
+
+  const extracted = await page.evaluate((currentTableId) => {
+    const table = document.getElementById(currentTableId) as HTMLTableElement | null;
+    const summaryText = (document.getElementById('divRecords')?.textContent || '').replace(/\s+/g, ' ').trim();
+    const totalMatch = summaryText.match(/of\s+(\d+)/i);
+    const totalRows = totalMatch ? parseInt(totalMatch[1], 10) : 0;
+
+    if (!table) {
+      return { rows: [], totalRows };
+    }
+
+    const headers = Array.from(table.querySelectorAll('th'))
+      .map((header) => (header.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+
+    const rows = Array.from(table.querySelectorAll('tbody tr'))
+      .map((row) => Array.from(row.querySelectorAll('td')).map((cell) => (cell.textContent || '').replace(/\s+/g, ' ').trim()))
+      .map((cells) => cells.length > headers.length ? cells.slice(cells.length - headers.length) : cells)
+      .map((cells) => Object.fromEntries(headers.map((header, index) => [header, cells[index] || ''])))
+      .filter((row) => {
+        const merged = Object.values(row).join(' ').trim();
+        return merged.length > 0 && !/^No Data$/i.test(merged);
+      });
+
+    return { rows, totalRows };
+  }, tableId);
+
+  if (extracted.totalRows > extracted.rows.length) {
+    throw new Error(`Symphony grid ${tableId} spans ${extracted.totalRows} rows but only ${extracted.rows.length} rows were loaded after expanding to 100 records per page`);
+  }
+
+  return extracted;
+}
+
+async function scrapeSpecialQueues(page: Page): Promise<SpecialQueueCounts> {
+  const incidentUrl = await getQueueUrl(page, 'IM_WorkgroupTickets.aspx?dashboard=true');
+  const requestUrl = await getQueueUrl(page, 'SR_WorkgroupTickets.aspx?dashboard=true');
+  const incidentPage = await page.context().newPage();
+  const requestPage = await page.context().newPage();
+
+  try {
+    await incidentPage.goto(incidentUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    await requestPage.goto(requestUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+
+    const incidentGrid = await readGridRows(incidentPage, 'BodyContentPlaceHolder_gvMyTickets');
+    const requestGrid = await readGridRows(requestPage, 'BodyContentPlaceHolder_gvMyTickets');
+
+    return {
+      priority1Incidents: incidentGrid.rows.filter((row) => /^P1\b/i.test(row.Priority || '')).length,
+      priority2Incidents: incidentGrid.rows.filter((row) => /^P2\b/i.test(row.Priority || '')).length,
+      onboardingRequests: requestGrid.rows.filter((row) => /on-?boarding|off-?boarding/i.test(row.Category || '')).length,
+      securityRequests: requestGrid.rows.filter((row) => /security/i.test(row.Category || '')).length
+    };
+  } finally {
+    await Promise.allSettled([incidentPage.close(), requestPage.close()]);
+  }
+}
+
 async function parseSla(page: Page, renderTargetId: string): Promise<number | null> {
   const html = await page.content();
   const patterns = [
@@ -294,6 +469,30 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string) {
     throw new Error('One or more Symphony ticket counters could not be read reliably');
   }
 
+  console.log('Extracting HSD chart buckets from rendered dashboard charts...');
+  const incidentBuckets = await parseChartBuckets(page, '#myWorkgroupIncidents', ['New', 'Assigned', 'In-Progress', 'Pending']);
+  const requestBuckets = await parseChartBuckets(page, '#myWorkgroupRequests', ['New', 'Assigned', 'In-Progress', 'Pending']);
+  const workOrderBuckets = await parseChartBuckets(page, '#myWorkgroupWorkorders', ['New', 'Assigned', 'In-Progress', 'Pending']);
+  const changeBuckets = await parseChartBuckets(page, '#myWorkgroupCRs', ['Initiated', 'Implemented', 'Approved Stage']);
+
+  const openIncidentsBreakdown = chartBucketsToBreakdown(incidentBuckets);
+  const serviceRequestsBreakdown = chartBucketsToBreakdown(requestBuckets);
+  const workOrdersBreakdown = chartBucketsToBreakdown(workOrderBuckets);
+  const changeRecordsBreakdown = changeBucketsToBreakdown(changeBuckets);
+
+  if (openIncidents !== openIncidentsBreakdown.new + openIncidentsBreakdown.assigned + openIncidentsBreakdown.inProgress + openIncidentsBreakdown.pending) {
+    throw new Error('Incident chart breakdown does not match the Incident total');
+  }
+  if (serviceRequests !== serviceRequestsBreakdown.new + serviceRequestsBreakdown.assigned + serviceRequestsBreakdown.inProgress + serviceRequestsBreakdown.pending) {
+    throw new Error('Service Request chart breakdown does not match the Service Request total');
+  }
+  if (workOrders !== workOrdersBreakdown.new + workOrdersBreakdown.assigned + workOrdersBreakdown.inProgress + workOrdersBreakdown.pending) {
+    throw new Error('Work Order chart breakdown does not match the Work Order total');
+  }
+  if (changeRecords !== changeRecordsBreakdown.new + changeRecordsBreakdown.assigned + changeRecordsBreakdown.inProgress) {
+    throw new Error('Change Record chart breakdown does not match the Change Record total');
+  }
+
   console.log('Extracting SLA performance percentages...');
   const incidentsResponseSla = await parseSla(page, 'responseSLA');
   const incidentsResolutionSla = await parseSla(page, 'resolutionSLA');
@@ -304,19 +503,23 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string) {
     throw new Error('One or more Symphony SLA widgets could not be read reliably');
   }
 
+  console.log('Extracting P1/P2 and service request category counts from queue pages...');
+  const specialQueues = await scrapeSpecialQueues(page);
+
   return {
     meta: {
       ok: true,
       attemptedAt
     },
     openIncidents,
-    openIncidentsBreakdown: { new: 0, assigned: openIncidentsAssigned, inProgress: openIncidents, pending: 0 },
+    openIncidentsBreakdown,
     serviceRequests,
-    serviceRequestsBreakdown: { new: 0, assigned: serviceRequestsAssigned, inProgress: serviceRequests, pending: 0 },
+    serviceRequestsBreakdown,
     workOrders,
-    workOrdersBreakdown: { new: 0, assigned: workOrdersAssigned, inProgress: workOrders, pending: 0 },
+    workOrdersBreakdown,
     changeRecords,
-    changeRecordsBreakdown: { new: 0, assigned: changeRecordsAssigned, inProgress: changeRecords, pending: 0 },
+    changeRecordsBreakdown,
+    ...specialQueues,
     serviceRequestsSla: requestsResponseSla,
     incidentsResponseSla,
     incidentsResolutionSla,

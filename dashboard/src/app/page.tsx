@@ -91,13 +91,6 @@ const HSD_STATUS_COLORS = {
   pending: '#7b8794'
 } as const;
 
-const SPECIAL_QUEUE_WATCH = [
-  { label: 'P1', detail: 'Critical incidents' },
-  { label: 'P2', detail: 'High-priority incidents' },
-  { label: 'ONBOARDING', detail: 'User enablement queue' },
-  { label: 'SECURITY', detail: 'Security-related tickets' }
-] as const;
-
 interface SectionHealth {
   key: 'nutanix' | 'servers' | 'networks' | 'symphony';
   label: string;
@@ -144,6 +137,10 @@ interface DashboardState {
     workOrdersBreakdown: TicketBreakdown;
     changeRecords: number;
     changeRecordsBreakdown: TicketBreakdown;
+    priority1Incidents: number;
+    priority2Incidents: number;
+    onboardingRequests: number;
+    securityRequests: number;
     serviceRequestsSla: number;
     incidentsResponseSla: number;
     incidentsResolutionSla: number;
@@ -515,19 +512,21 @@ function HciHeaderChip({
 function HsdOverviewCard({
   title,
   total,
-  breakdown
+  breakdown,
+  labels
 }: {
   title: string;
   total: number;
   breakdown: TicketBreakdown;
+  labels?: Partial<Record<keyof TicketBreakdown, string>>;
 }) {
   const totalSafe = Math.max(0, total);
   const categories = [
-    { label: 'NEW', value: breakdown.new, color: HSD_STATUS_COLORS.new },
-    { label: 'ASG', value: breakdown.assigned, color: HSD_STATUS_COLORS.assigned },
-    { label: 'IP', value: breakdown.inProgress, color: HSD_STATUS_COLORS.inProgress },
-    { label: 'PND', value: breakdown.pending, color: HSD_STATUS_COLORS.pending }
-  ];
+    { label: labels?.new ?? 'NEW', value: breakdown.new, color: HSD_STATUS_COLORS.new },
+    { label: labels?.assigned ?? 'ASG', value: breakdown.assigned, color: HSD_STATUS_COLORS.assigned },
+    { label: labels?.inProgress ?? 'IP', value: breakdown.inProgress, color: HSD_STATUS_COLORS.inProgress },
+    { label: labels?.pending ?? 'PND', value: breakdown.pending, color: HSD_STATUS_COLORS.pending }
+  ].filter((category) => category.label);
   const peakCategory = Math.max(1, ...categories.map((category) => category.value));
   const activeCount = breakdown.assigned + breakdown.inProgress;
 
@@ -702,7 +701,11 @@ function HsdSlaHeaderCard({
   );
 }
 
-function SpecialQueueWatchCard() {
+function SpecialQueueWatchCard({
+  queues
+}: {
+  queues: Array<{ label: string; detail: string; value: number; accent: string; background: string; border: string }>;
+}) {
   return (
     <div
       style={{
@@ -725,20 +728,20 @@ function SpecialQueueWatchCard() {
           style={{
             padding: '5px 8px',
             borderRadius: '999px',
-            background: 'rgba(123,135,148,0.10)',
-            border: '1px solid rgba(123,135,148,0.18)',
+            background: 'rgba(21,101,192,0.08)',
+            border: '1px solid rgba(21,101,192,0.14)',
             fontSize: '0.62rem',
             fontWeight: 800,
             letterSpacing: '0.08em',
-            color: '#52606d'
+            color: '#1565c0'
           }}
         >
-          FEED NOT EXPOSED
+          LIVE QUEUE COUNTS
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px', minHeight: 0 }}>
-        {SPECIAL_QUEUE_WATCH.map((queue) => (
+        {queues.map((queue) => (
           <div
             key={queue.label}
             style={{
@@ -748,14 +751,14 @@ function SpecialQueueWatchCard() {
               gap: '6px',
               padding: '10px',
               borderRadius: '14px',
-              background: 'rgba(255,255,255,0.60)',
-              border: '1px solid rgba(141,110,99,0.10)'
+              background: queue.background,
+              border: `1px solid ${queue.border}`
             }}
           >
-            <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>{queue.label}</div>
-            <div style={{ fontSize: '1.7rem', fontWeight: 800, lineHeight: 1, color: '#607d8b' }}>--</div>
+            <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, color: queue.accent }}>{queue.label}</div>
+            <div style={{ fontSize: '1.7rem', fontWeight: 800, lineHeight: 1, color: queue.accent }}>{queue.value}</div>
             <div style={{ fontSize: '0.58rem', opacity: 0.62, lineHeight: 1.35 }}>{queue.detail}</div>
-            <div style={{ fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.06em', color: '#607d8b' }}>NOT IN CURRENT SYMPHONY SCRAPE</div>
+            <div style={{ fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.06em', color: queue.accent }}>OPEN QUEUE</div>
           </div>
         ))}
       </div>
@@ -1179,7 +1182,7 @@ function HsdWorkCard({
     { key: 'assigned', label: 'ASG', value: breakdown.assigned, color: '#f0b429' },
     { key: 'inProgress', label: 'IP', value: breakdown.inProgress, color: accent },
     { key: 'pending', label: 'PND', value: breakdown.pending, color: '#7b8794' }
-  ] as const;
+  ];
 
   return (
     <div
@@ -1308,7 +1311,7 @@ function HsdQueueRail({
     { key: 'assigned', short: 'A', value: breakdown.assigned, color: '#f0b429' },
     { key: 'inProgress', short: 'IP', value: breakdown.inProgress, color: accent },
     { key: 'pending', short: 'P', value: breakdown.pending, color: '#7b8794' }
-  ] as const;
+  ];
 
   return (
     <div className="hsd-queue-rail">
@@ -1568,12 +1571,57 @@ export default function Dashboard() {
     linuxOnPrem: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|On Prem'))
   };
 
-  const ticketCards = [
+  const ticketCards: Array<{
+    label: string;
+    total: number;
+    breakdown: TicketBreakdown;
+    labels?: Partial<Record<keyof TicketBreakdown, string>>;
+  }> = [
     { label: 'INCIDENTS', total: data.symphony.openIncidents, breakdown: data.symphony.openIncidentsBreakdown },
     { label: 'SERVICE REQUESTS', total: data.symphony.serviceRequests, breakdown: data.symphony.serviceRequestsBreakdown },
     { label: 'WORK ORDERS', total: data.symphony.workOrders, breakdown: data.symphony.workOrdersBreakdown },
-    { label: 'CHANGES', total: data.symphony.changeRecords, breakdown: data.symphony.changeRecordsBreakdown }
-  ] as const;
+    {
+      label: 'CHANGES',
+      total: data.symphony.changeRecords,
+      breakdown: data.symphony.changeRecordsBreakdown,
+      labels: { new: 'INT', assigned: 'IMP', inProgress: 'APR', pending: '' }
+    }
+  ];
+
+  const specialQueues = [
+    {
+      label: 'P1',
+      detail: 'Critical incidents',
+      value: data.symphony.priority1Incidents,
+      accent: '#c62828',
+      background: 'rgba(198,40,40,0.08)',
+      border: 'rgba(198,40,40,0.18)'
+    },
+    {
+      label: 'P2',
+      detail: 'High-priority incidents',
+      value: data.symphony.priority2Incidents,
+      accent: '#ef6c00',
+      background: 'rgba(239,108,0,0.08)',
+      border: 'rgba(239,108,0,0.18)'
+    },
+    {
+      label: 'ONBOARD',
+      detail: 'SR category contains onboarding',
+      value: data.symphony.onboardingRequests,
+      accent: '#1565c0',
+      background: 'rgba(21,101,192,0.08)',
+      border: 'rgba(21,101,192,0.18)'
+    },
+    {
+      label: 'SECURITY',
+      detail: 'SR category contains security',
+      value: data.symphony.securityRequests,
+      accent: '#455a64',
+      background: 'rgba(69,90,100,0.08)',
+      border: 'rgba(69,90,100,0.18)'
+    }
+  ];
 
   const totalHsdBacklog = ticketCards.reduce((sum, card) => sum + card.total, 0);
   const hsdBreakdownTotals = ticketCards.reduce<TicketBreakdown>((accumulator, card) => ({
@@ -1679,11 +1727,12 @@ export default function Dashboard() {
                 title={card.label}
                 total={card.total}
                 breakdown={card.breakdown}
+                labels={card.labels}
               />
             ))}
           </div>
 
-          <SpecialQueueWatchCard />
+          <SpecialQueueWatchCard queues={specialQueues} />
         </section>
 
         <UnifiedNetworkCard links={data.networks} sectionHealth={data.sections.networks} />
