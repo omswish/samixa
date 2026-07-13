@@ -21,6 +21,7 @@ interface UptimeChartProps {
   threshold?: number;
   thresholdColor?: string;
   fixedDomain?: [number, number];
+  yTicks?: number[];
   hideNoDataText?: boolean;
   strokeWidth?: number;
   variant?: 'area' | 'perfstack';
@@ -34,6 +35,7 @@ export default function UptimeChart({
   threshold,
   thresholdColor = 'rgba(198, 40, 40, 0.32)',
   fixedDomain,
+  yTicks,
   hideNoDataText = false,
   strokeWidth = 2,
   variant = 'area'
@@ -46,6 +48,7 @@ export default function UptimeChart({
     value: primary[idx],
     secondaryValue: secondary[idx]
   }));
+  const thresholdVisible = threshold !== undefined && (!fixedDomain || threshold <= fixedDomain[1]);
   const gradientId = `colorGrad-${color.replace(/[^a-z0-9]/gi, '')}-${strokeWidth}`;
   const secondaryGradientId = `colorGrad-${secondaryColor.replace(/[^a-z0-9]/gi, '')}-secondary-${strokeWidth}`;
 
@@ -68,10 +71,10 @@ export default function UptimeChart({
               tickLine={false}
               width={26}
               tick={{ fill: 'rgba(93, 64, 55, 0.68)', fontSize: 9, fontWeight: 700 }}
-              ticks={[0, 20, 40, 60, 80, 100]}
+              ticks={yTicks ?? [0, 20, 40, 60, 80, 100]}
             />
-            {threshold !== undefined ? (
-              <ReferenceLine y={threshold} stroke={thresholdColor} strokeDasharray="3 3" ifOverflow="extendDomain" />
+            {thresholdVisible ? (
+              <ReferenceLine y={threshold} stroke={thresholdColor} strokeDasharray="3 3" ifOverflow="discard" />
             ) : null}
             <Line
               type="monotone"
@@ -107,8 +110,8 @@ export default function UptimeChart({
                 <stop offset="95%" stopColor={secondaryColor} stopOpacity={0.0}/>
               </linearGradient>
             </defs>
-            {threshold !== undefined ? (
-              <ReferenceLine y={threshold} stroke={thresholdColor} strokeDasharray="3 3" ifOverflow="extendDomain" />
+            {thresholdVisible ? (
+              <ReferenceLine y={threshold} stroke={thresholdColor} strokeDasharray="3 3" ifOverflow="discard" />
             ) : null}
             <Area
               type="monotone"

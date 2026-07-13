@@ -307,6 +307,26 @@ function buildUtilizationSeries(
   return trend;
 }
 
+function getAdaptiveChartScale(values: Array<number | null | undefined>) {
+  const valid = values.filter((value): value is number => value !== null && value !== undefined && !Number.isNaN(value));
+  const peak = valid.length ? Math.max(...valid) : 0;
+
+  if (peak <= 8) {
+    return { upper: 20, ticks: [0, 5, 10, 15, 20] };
+  }
+  if (peak <= 18) {
+    return { upper: 30, ticks: [0, 10, 20, 30] };
+  }
+  if (peak <= 30) {
+    return { upper: 40, ticks: [0, 10, 20, 30, 40] };
+  }
+  if (peak <= 45) {
+    return { upper: 60, ticks: [0, 20, 40, 60] };
+  }
+
+  return { upper: 100, ticks: [0, 20, 40, 60, 80, 100] };
+}
+
 function CombinedUtilizationSparklineRow({
   txHistory,
   rxHistory,
@@ -327,19 +347,60 @@ function CombinedUtilizationSparklineRow({
   const palette = getTonePalette(tone);
   const txTrend = buildUtilizationSeries(txHistory, txDailyValue, txRealtimeValue);
   const rxTrend = buildUtilizationSeries(rxHistory, rxDailyValue, rxRealtimeValue);
+  const adaptiveScale = getAdaptiveChartScale([
+    ...txTrend,
+    ...rxTrend,
+    txRealtimeValue,
+    rxRealtimeValue,
+    txDailyValue,
+    rxDailyValue
+  ]);
+  const isZoomedScale = adaptiveScale.upper < 100;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
-        <span style={{ fontSize: '0.54rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.62 }}>TX / RX UTIL</span>
-        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: palette.text }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+          <span style={{ fontSize: '0.56rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.62 }}>TX / RX UTIL</span>
+          {isZoomedScale ? (
+            <span
+              style={{
+                padding: '2px 6px',
+                borderRadius: '999px',
+                background: 'rgba(22,151,246,0.10)',
+                border: '1px solid rgba(22,151,246,0.18)',
+                fontSize: '0.48rem',
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                color: '#0d6fb8'
+              }}
+            >
+              SCALE 0-{adaptiveScale.upper}
+            </span>
+          ) : null}
+          <span
+            style={{
+              padding: '2px 6px',
+              borderRadius: '999px',
+              background: 'rgba(198,40,40,0.10)',
+              border: '1px solid rgba(198,40,40,0.18)',
+              fontSize: '0.48rem',
+              fontWeight: 800,
+              letterSpacing: '0.08em',
+              color: '#b71c1c'
+            }}
+          >
+            ALERT 80
+          </span>
+        </span>
+        <span style={{ fontSize: '0.66rem', fontWeight: 800, color: palette.text }}>
           {`TX ${formatPercent(txRealtimeValue, 1)} | RX ${formatPercent(rxRealtimeValue, 1)}`}
         </span>
       </div>
       <div
         style={{
           width: '100%',
-          height: '74px',
+          height: '92px',
           padding: '2px 0',
           borderRadius: '10px',
           background: 'rgba(255,255,255,0.72)',
@@ -352,15 +413,16 @@ function CombinedUtilizationSparklineRow({
           secondaryHistory={rxTrend}
           secondaryColor="#ff0aa6"
           threshold={80}
-          fixedDomain={[0, 100]}
+          fixedDomain={[0, adaptiveScale.upper]}
+          yTicks={adaptiveScale.ticks}
           hideNoDataText
           strokeWidth={2}
           variant="perfstack"
         />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
-        <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#1697f6' }}>AVG TX {formatPercent(txDailyValue, 1)}</span>
-        <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#ff0aa6' }}>AVG RX {formatPercent(rxDailyValue, 1)}</span>
+        <span style={{ fontSize: '0.54rem', fontWeight: 700, color: '#1697f6' }}>AVG TX {formatPercent(txDailyValue, 1)}</span>
+        <span style={{ fontSize: '0.54rem', fontWeight: 700, color: '#ff0aa6' }}>AVG RX {formatPercent(rxDailyValue, 1)}</span>
       </div>
     </div>
   );
@@ -381,15 +443,15 @@ function HeaderMetricStack({
         display: 'grid',
         gap: '2px',
         minWidth: 0,
-        padding: '5px 7px',
+        padding: '6px 8px',
         borderRadius: '12px',
         background: 'rgba(255,255,255,0.52)',
         border: '1px solid rgba(141,110,99,0.10)'
       }}
     >
-      <div style={{ fontSize: '0.54rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>{label}</div>
-      <div style={{ fontSize: '0.92rem', fontWeight: 800, lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
-      <div style={{ fontSize: '0.54rem', opacity: 0.7, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</div>
+      <div style={{ fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>{label}</div>
+      <div style={{ fontSize: '1rem', fontWeight: 800, lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+      <div style={{ fontSize: '0.56rem', opacity: 0.72, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</div>
     </div>
   );
 }
