@@ -21,6 +21,44 @@ function requireEnv(name: string, value: string | undefined): string {
 const NUTANIX_USER = requireEnv('NUTANIX_USER', process.env.NUTANIX_USER);
 const NUTANIX_PASS = requireEnv('NUTANIX_PASS', process.env.NUTANIX_PASS);
 const POLL_INTERVAL = 30000; // 30 seconds
+type NutanixNodeStatus = 'normal' | 'warning' | 'critical' | 'offline';
+
+function deriveNutanixNodeStatus(host: any): NutanixNodeStatus {
+  const state = String(host?.state ?? '').toUpperCase();
+  const hypervisorState = String(host?.hypervisor_state ?? '').toLowerCase();
+  const connectionState = String(host?.acropolis_connection_state ?? '').toLowerCase();
+  const metadataStatus = String(host?.metadata_store_status ?? '').toLowerCase();
+  const maintenanceReason = String(host?.host_maintenance_mode_reason ?? '').trim();
+  const maintenanceActive = Boolean(host?.host_in_maintenance_mode);
+
+  if (host?.monitored === false || connectionState.includes('disconnected') || connectionState.includes('unreachable')) {
+    return 'offline';
+  }
+
+  if (state.includes('DOWN') || state.includes('FAIL') || hypervisorState.includes('down')) {
+    return 'offline';
+  }
+
+  if (
+    host?.is_degraded ||
+    maintenanceActive ||
+    (maintenanceReason && maintenanceActive) ||
+    state.includes('DEGRADE') ||
+    (metadataStatus && metadataStatus !== 'knormalmode')
+  ) {
+    return 'warning';
+  }
+
+  if (
+    (state && state !== 'NORMAL') ||
+    (hypervisorState && !hypervisorState.includes('normal')) ||
+    (connectionState && !connectionState.includes('connected'))
+  ) {
+    return 'critical';
+  }
+
+  return 'normal';
+}
 
 async function postUpdate(payload: object) {
   const response = await fetch(API_URL, {
@@ -83,6 +121,23 @@ async function collectNutanixData() {
     const storageUsage = Number(((storageUsageBytes / storageCapacityBytes) * 100).toFixed(2));
 
     const nodesCount = clusterData.num_nodes || 0;
+    let nodes: Array<{ name: string; status: NutanixNodeStatus }> = [];
+
+    try {
+      const hostsUrl = `https://${NUTANIX_HOST}:${NUTANIX_PORT}/PrismGateway/services/rest/v2.0/hosts/`;
+      const hostsRes = await fetch(hostsUrl, { headers });
+      if (hostsRes.ok) {
+        const hostsData = (await hostsRes.json()) as any;
+        nodes = (hostsData.entities || [])
+          .map((entity: any) => ({
+            name: entity.name || entity.hypervisor_address || entity.uuid,
+            status: deriveNutanixNodeStatus(entity)
+          }))
+          .sort((left: { name: string }, right: { name: string }) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }));
+      }
+    } catch (hostErr) {
+      console.warn('Could not retrieve Nutanix host list:', hostErr);
+    }
     
     // 2. Fetch VMs List to calculate individual server statuses and metrics
     let vms: any[] = [];
@@ -166,6 +221,7 @@ async function collectNutanixData() {
         },
         uptime: 'Up',
         nodesCount,
+        nodes: nodes.length ? nodes : undefined,
         storageUsage,
         cpuUsage,
         memoryUsage, // holds physical memory usage for retro-compatibility (charts)

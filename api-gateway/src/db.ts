@@ -7,6 +7,7 @@ type SectionKey = 'nutanix' | 'servers' | 'networks' | 'symphony';
 type SectionStatus = 'ok' | 'stale' | 'error' | 'never';
 type SourceStatus = SectionStatus | 'partial';
 type AssetStatus = 'operational' | 'degraded' | 'down';
+type NutanixNodeStatus = 'normal' | 'warning' | 'critical' | 'offline';
 type ServerSourceOfTruth = 'nutanix' | 'solarwinds';
 type ServerPlatform = 'hci-vm' | 'on-prem';
 
@@ -83,6 +84,7 @@ interface NetworkLink {
 interface NutanixState {
   uptime: string;
   nodesCount: number;
+  nodes: Array<{ name: string; status: NutanixNodeStatus }>;
   storageUsage: number;
   historyCpu: number[];
   historyMem: number[];
@@ -377,6 +379,7 @@ function createDefaultState(): StoredDbSchema {
     nutanix: {
       uptime: 'N/A',
       nodesCount: 0,
+      nodes: [],
       storageUsage: 0,
       historyCpu: [],
       historyMem: [],
@@ -429,6 +432,13 @@ function normalizeState(raw: any): StoredDbSchema {
   base.nutanix = {
     ...base.nutanix,
     ...(raw?.nutanix ?? {}),
+    nodes: Array.isArray(raw?.nutanix?.nodes)
+      ? raw.nutanix.nodes
+          .map((node: any) => ({
+            name: typeof node?.name === 'string' ? node.name : 'Node',
+            status: normalizeNutanixNodeStatus(node?.status) ?? 'offline'
+          }))
+      : base.nutanix.nodes,
     historyCpu: Array.isArray(raw?.nutanix?.historyCpu) ? raw.nutanix.historyCpu : base.nutanix.historyCpu,
     historyMem: Array.isArray(raw?.nutanix?.historyMem) ? raw.nutanix.historyMem : base.nutanix.historyMem
   };
@@ -515,6 +525,14 @@ function mergeNetworks(incomingNetworks: any[]): NetworkLink[] {
   }
 
   return merged;
+}
+
+function normalizeNutanixNodeStatus(value: any): NutanixNodeStatus | null {
+  if (value === 'normal' || value === 'warning' || value === 'critical' || value === 'offline') {
+    return value;
+  }
+
+  return null;
 }
 
 function loadState(): StoredDbSchema {
@@ -796,6 +814,7 @@ export function updateNutanix(data: {
   meta?: UpdateMeta;
   uptime?: string;
   nodesCount?: number;
+  nodes?: Array<{ name: string; status: NutanixNodeStatus }>;
   storageUsage?: number;
   cpuUsage?: number;
   memoryUsage?: number;
@@ -819,6 +838,7 @@ export function updateNutanix(data: {
   const hasPayload = [
     data.uptime,
     data.nodesCount,
+    data.nodes,
     data.storageUsage,
     data.cpuUsage,
     data.memoryUsage,
@@ -838,6 +858,14 @@ export function updateNutanix(data: {
 
   if (data.uptime !== undefined) state.nutanix.uptime = data.uptime;
   if (data.nodesCount !== undefined) state.nutanix.nodesCount = data.nodesCount;
+  if (Array.isArray(data.nodes)) {
+    state.nutanix.nodes = data.nodes
+      .map((node) => ({
+        name: node.name,
+        status: normalizeNutanixNodeStatus(node.status) ?? 'offline'
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }));
+  }
   if (data.storageUsage !== undefined) state.nutanix.storageUsage = data.storageUsage;
   if (data.physicalMemoryUsage !== undefined) state.nutanix.physicalMemoryUsage = data.physicalMemoryUsage;
   if (data.logicalMemoryUsage !== undefined) state.nutanix.logicalMemoryUsage = data.logicalMemoryUsage;

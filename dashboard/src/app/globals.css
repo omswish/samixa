@@ -74,12 +74,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .dashboard-header--wall {
-  min-height: 76px;
+  min-height: 52px;
 }
 
 .dashboard-hci-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   min-height: 0;
 }
@@ -87,13 +87,33 @@ h1, h2, h3, h4, h5, h6 {
 .dashboard-wall-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.42fr) minmax(520px, 0.98fr);
-  grid-template-rows: minmax(0, 1.02fr) minmax(0, 0.98fr);
   grid-template-areas:
-    "hsd servers"
-    "network servers";
+    "left servers";
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.dashboard-left-stack {
+  grid-area: left;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.dashboard-hci-card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.dashboard-hci-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
 }
 
 .dashboard-panel {
@@ -119,11 +139,29 @@ h1, h2, h3, h4, h5, h6 {
   gap: 10px;
 }
 
-.hsd-header-sla-grid {
+.hsd-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.hsd-panel-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.hsd-footer-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.7fr);
   gap: 10px;
   min-height: 0;
+  align-items: stretch;
 }
 
 .hsd-sla-grid {
@@ -233,6 +271,10 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .hsd-footer-row {
+    grid-template-columns: 1fr;
+  }
+
   .hsd-header-sla-grid {
     grid-template-columns: 1fr;
   }
@@ -263,7 +305,6 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .dashboard-header--wall {
-    grid-template-columns: 1fr;
     gap: 10px;
   }
 
@@ -273,14 +314,17 @@ h1, h2, h3, h4, h5, h6 {
 
   .dashboard-wall-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: auto;
     grid-template-areas:
-      "hsd"
-      "network"
+      "left"
       "servers";
     gap: 12px;
   }
 
+  .dashboard-hci-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hsd-footer-row,
   .hsd-modern-grid,
   .hsd-header-sla-grid,
   .hsd-sla-grid,
