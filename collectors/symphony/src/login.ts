@@ -1,49 +1,118 @@
-import { chromium } from 'playwright';
-import path from 'path';
+import { chromium, type BrowserContext } from 'playwright';
+import fs from 'fs';
 import readline from 'readline';
+import {
+  DEBUG_ROOT,
+  LEGACY_PROFILE_DIR,
+  PROFILE_ROOT,
+  STORAGE_STATE_PATH
+} from './sessionPaths';
 
 const SYM_URL = process.env.SYM_URL || 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
-const profileDir = path.join(__dirname, '../../edge-profile');
+const IMPORT_LEGACY_PROFILE = process.argv.includes('--import-legacy-profile');
+const READY_SELECTOR = 'span[ng-bind="INCIDENT.MyWorkgroupCount"], span[ng-bind="REQUEST.MyWorkgroupCount"], span[ng-bind="WORKORDER.MyWorkgroupCount"], span[ng-bind="CR.MyWorkgroupCount"]';
 
 console.log('==================================================');
 console.log('Symphony HSD Interactive Login & MFA Initializer');
 console.log('==================================================');
-console.log(`Profile Directory: ${profileDir}`);
-console.log('Opening MS Edge browser in interactive mode...');
+console.log(`Storage State: ${STORAGE_STATE_PATH}`);
 
-async function interactiveLogin() {
-  const context = await chromium.launchPersistentContext(profileDir, {
-    channel: 'msedge',
-    headless: false,
-    viewport: null, // Allow browser window resizing
-    args: ['--start-maximized']
-  });
-
-  const page = await context.newPage();
-  console.log(`Navigating to: ${SYM_URL}`);
-  await page.goto(SYM_URL);
-
-  console.log('\n--> ACTION REQUIRED IN BROWSER WINDOW <--');
-  console.log('1. Log in with your corporate AD credentials.');
-  console.log('2. Perform the MFA OTP check and check "Don\'t ask again for 60 days" if prompted.');
-  console.log('3. Wait until the Symphony Dashboard (incident counts page) fully loads.');
-  console.log('\nOnce you see the dashboard, press ENTER here in the terminal to save session and close...');
-
+async function waitForEnter(prompt: string) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   });
 
-  rl.question('', async () => {
-    console.log('Closing browser and saving persistent session...');
-    await context.close();
-    rl.close();
-    console.log('Session saved successfully! You can now run the background PM2 scraper.');
-    process.exit(0);
+  await new Promise<void>((resolve) => {
+    rl.question(prompt, () => {
+      rl.close();
+      resolve();
+    });
   });
 }
 
-interactiveLogin().catch((err) => {
+async function ensureReady(context: BrowserContext) {
+  const page = context.pages()[0] ?? await context.newPage();
+  await page.locator(READY_SELECTOR).first().waitFor({ state: 'visible', timeout: 30000 });
+  console.log('Symphony dashboard is visible and ready to save.');
+}
+
+async function interactiveLogin() {
+  console.log('Opening MS Edge browser in interactive mode...');
+  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+  fs.mkdirSync(DEBUG_ROOT, { recursive: true });
+
+  const browser = await chromium.launch({
+    channel: 'msedge',
+    headless: false
+  });
+
+  const context = await browser.newContext({
+    ...(fs.existsSync(STORAGE_STATE_PATH) ? { storageState: STORAGE_STATE_PATH } : {}),
+    viewport: null
+  });
+
+  try {
+    const page = await context.newPage();
+    console.log(`Navigating to: ${SYM_URL}`);
+    await page.goto(SYM_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    console.log('\n--> ACTION REQUIRED IN BROWSER WINDOW <--');
+    console.log('1. Log in with your corporate AD credentials if prompted.');
+    console.log('2. Complete MFA and "Stay signed in" if prompted.');
+    console.log('3. Wait until the Symphony dashboard fully loads.');
+    console.log('4. Return here and press ENTER to save the session state.');
+    await waitForEnter('\nPress ENTER after the dashboard has loaded...');
+
+    await ensureReady(context);
+    await context.storageState({ path: STORAGE_STATE_PATH });
+    console.log('Storage-state session saved successfully. You can now run the PM2 scraper.');
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
+async function importLegacyProfileSession() {
+  console.log(`Legacy Profile Directory: ${LEGACY_PROFILE_DIR}`);
+  if (!fs.existsSync(LEGACY_PROFILE_DIR)) {
+    throw new Error(`Legacy profile directory does not exist: ${LEGACY_PROFILE_DIR}`);
+  }
+
+  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+
+  let context: BrowserContext | undefined;
+  try {
+    context = await chromium.launchPersistentContext(LEGACY_PROFILE_DIR, {
+      channel: 'msedge',
+      headless: true,
+      viewport: { width: 1440, height: 900 }
+    });
+  } catch (err: any) {
+    throw new Error(`Could not open the legacy Symphony profile. Stop any running Symphony collector/browser using it, then retry. Original error: ${err.message}`);
+  }
+
+  try {
+    const page = context.pages()[0] ?? await context.newPage();
+    await page.goto(SYM_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await ensureReady(context);
+    await context.storageState({ path: STORAGE_STATE_PATH });
+    console.log('Imported legacy Symphony session into storage-state JSON.');
+  } finally {
+    await context.close();
+  }
+}
+
+async function main() {
+  if (IMPORT_LEGACY_PROFILE) {
+    await importLegacyProfileSession();
+    return;
+  }
+
+  await interactiveLogin();
+}
+
+main().catch((err) => {
   console.error('Failed to run interactive login:', err);
   process.exit(1);
 });

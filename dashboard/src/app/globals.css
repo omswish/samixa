@@ -1,5 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
 
+html {
+  height: 100%;
+}
+
 :root {
   --bg-color: #f6f3ee;
   --panel-bg: rgba(255, 255, 255, 0.7);
@@ -55,6 +59,245 @@ h1, h2, h3, h4, h5, h6 {
 .glass-panel:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 35px rgba(141, 110, 99, 0.08);
+}
+
+.dashboard-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.dashboard-header,
+.dashboard-footer {
+  flex: 0 0 auto;
+}
+
+.dashboard-header--wall {
+  min-height: 76px;
+}
+
+.dashboard-hci-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+}
+
+.dashboard-wall-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.58fr) minmax(470px, 0.92fr);
+  grid-template-rows: minmax(0, 1.16fr) minmax(0, 0.84fr);
+  grid-template-areas:
+    "hsd network"
+    "servers servers";
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dashboard-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard-panel--hsd {
+  grid-area: hsd;
+}
+
+.dashboard-panel--network {
+  grid-area: network;
+}
+
+.dashboard-panel--servers {
+  grid-area: servers;
+}
+
+.hsd-modern-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hsd-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.hsd-sla-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+}
+
+.hsd-state-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.network-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.network-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.network-detail-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.network-link-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  gap: 10px;
+  min-height: 0;
+}
+
+.network-bar-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.network-carrier-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.server-group-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(0, 0.96fr) minmax(0, 0.9fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "windows-hci windows-physical linux-hci"
+    "windows-hci windows-physical linux-physical";
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.server-group-grid__windows-hci {
+  grid-area: windows-hci;
+  min-height: 0;
+}
+
+.server-group-grid__windows-physical {
+  grid-area: windows-physical;
+  min-height: 0;
+}
+
+.server-group-grid__linux-hci {
+  grid-area: linux-hci;
+  min-height: 0;
+}
+
+.server-group-grid__linux-physical {
+  grid-area: linux-physical;
+  min-height: 0;
+}
+
+@media (max-width: 1520px) {
+  .dashboard-hci-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-wall-grid {
+    grid-template-columns: minmax(0, 1.45fr) minmax(420px, 0.95fr);
+  }
+
+  .hsd-modern-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .network-overview-grid,
+  .network-detail-metrics,
+  .server-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1240px) {
+  body {
+    overflow: auto;
+  }
+
+  .dashboard-shell {
+    height: auto;
+    overflow: visible;
+  }
+
+  .dashboard-header--wall {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .dashboard-hci-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-wall-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    grid-template-areas:
+      "hsd"
+      "network"
+      "servers";
+    gap: 12px;
+  }
+
+  .hsd-modern-grid,
+  .hsd-sla-grid,
+  .network-detail-metrics,
+  .network-overview-grid,
+  .network-carrier-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hsd-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .server-group-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    grid-template-areas:
+      "windows-hci"
+      "windows-physical"
+      "linux-hci"
+      "linux-physical";
+  }
+
+  .network-link-split,
+  .network-bar-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .network-overview-grid,
+  .hsd-state-grid,
+  .hsd-modern-grid,
+  .hsd-sla-grid,
+  .network-detail-metrics,
+  .network-carrier-strip,
+  .dashboard-hci-strip,
+  .server-summary-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Animated status pulse dot */

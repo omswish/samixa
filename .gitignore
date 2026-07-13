@@ -5,6 +5,7 @@ edge-profile/
 collectors/symphony/edge-profile/
 collectors/solarwinds/edge-profile/
 collectors/solarwinds/runtime/
+collectors/symphony/runtime/
 api-gateway/data/
 runtime_logs/
 *.png

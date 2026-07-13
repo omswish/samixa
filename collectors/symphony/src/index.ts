@@ -1,7 +1,8 @@
-import { chromium } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type BrowserContextOptions, type FrameLocator, type Page } from 'playwright';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { DEBUG_ROOT, PROFILE_ROOT, STORAGE_STATE_PATH } from './sessionPaths';
 
 // Load env from workspace root
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
@@ -12,6 +13,15 @@ const SYM_PASS = process.env.SYM_PASS;
 const SYM_URL = process.env.SYM_URL || 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
 const SYM_DEBUG = /^(1|true)$/i.test(process.env.SYM_DEBUG || '');
 const POLL_INTERVAL = 60000; // 60 seconds (tickets poll less frequently)
+const NAVIGATION_TIMEOUT = 30000;
+const USERNAME_SELECTOR = '#i0116, input[type="email"], input[name="loginfmt"]';
+const PASSWORD_SELECTOR = '#i0118, input[type="password"], input[name="passwd"]';
+const SUBMIT_SELECTOR = '#idSIButton9, input[type="submit"]';
+const DASHBOARD_READY_SELECTOR = 'span[ng-bind="INCIDENT.MyWorkgroupCount"], span[ng-bind="REQUEST.MyWorkgroupCount"], span[ng-bind="WORKORDER.MyWorkgroupCount"], span[ng-bind="CR.MyWorkgroupCount"]';
+
+let browserPromise: Promise<Browser> | null = null;
+let cycleInProgress = false;
+let nextCycleTimer: NodeJS.Timeout | null = null;
 
 async function postUpdate(payload: object) {
   const response = await fetch(API_URL, {
@@ -41,237 +51,345 @@ async function reportFailure(attemptedAt: string, error: string) {
   }
 }
 
-async function scrapeSymphony() {
-  const attemptedAt = new Date().toISOString();
-  console.log(`[${attemptedAt}] Starting Symphony HSD scraping session...`);
-  
-  let context: any;
-  let page: any;
-  try {
-    const profileDir = path.join(__dirname, '../../edge-profile');
+function buildBootstrapRequiredMessage(reason: string): string {
+  return `${reason} Run npm run login --workspace collectors/symphony to seed or refresh the Symphony session.`;
+}
 
-    // Launch Microsoft Edge using the persistent profile directory
-    context = await chromium.launchPersistentContext(profileDir, {
+async function ensureBrowser(): Promise<Browser> {
+  if (!browserPromise) {
+    browserPromise = chromium.launch({
       channel: 'msedge',
       headless: true
+    }).catch((err) => {
+      browserPromise = null;
+      throw err;
     });
-    
-    page = context.pages().length ? context.pages()[0] : await context.newPage();
-    
+  }
+
+  return browserPromise;
+}
+
+async function closeBrowser() {
+  if (!browserPromise) {
+    return;
+  }
+
+  const browser = await browserPromise.catch(() => null);
+  browserPromise = null;
+  if (browser) {
+    await browser.close();
+  }
+}
+
+function ensureRuntimeDirs() {
+  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+  if (SYM_DEBUG) {
+    fs.mkdirSync(DEBUG_ROOT, { recursive: true });
+  }
+}
+
+function debugPath(fileName: string): string {
+  ensureRuntimeDirs();
+  return path.join(DEBUG_ROOT, fileName);
+}
+
+async function captureDebugArtifacts(page: Page, prefix: string) {
+  if (!SYM_DEBUG) {
+    return;
+  }
+
+  await page.screenshot({ path: debugPath(`${prefix}.png`), fullPage: true });
+  fs.writeFileSync(debugPath(`${prefix}.html`), await page.content(), 'utf-8');
+}
+
+async function createContext(): Promise<{ context: BrowserContext; hasSavedSession: boolean }> {
+  ensureRuntimeDirs();
+  const browser = await ensureBrowser();
+  const hasSavedSession = fs.existsSync(STORAGE_STATE_PATH);
+  const contextOptions: BrowserContextOptions = {
+    viewport: { width: 1440, height: 900 }
+  };
+
+  if (hasSavedSession) {
+    contextOptions.storageState = STORAGE_STATE_PATH;
+  }
+
+  const context = await browser.newContext(contextOptions);
+  context.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT);
+  context.setDefaultTimeout(15000);
+  return { context, hasSavedSession };
+}
+
+async function isLoginPromptVisible(page: Page): Promise<boolean> {
+  const url = page.url().toLowerCase();
+  if (url.includes('login.microsoftonline.com') || url.includes('oauth') || url.includes('kmsi')) {
+    return true;
+  }
+
+  const usernameVisible = await page.locator(USERNAME_SELECTOR).first().isVisible().catch(() => false);
+  const passwordVisible = await page.locator(PASSWORD_SELECTOR).first().isVisible().catch(() => false);
+  return usernameVisible || passwordVisible;
+}
+
+async function clickSubmit(page: Page) {
+  const button = page.locator(SUBMIT_SELECTOR).first();
+  await Promise.allSettled([
+    page.waitForLoadState('domcontentloaded', { timeout: 15000 }),
+    button.click()
+  ]);
+  await page.waitForTimeout(1500);
+}
+
+async function attemptCredentialLogin(page: Page) {
+  if (!SYM_USER || !SYM_PASS) {
+    throw new Error(buildBootstrapRequiredMessage('Symphony login requires credentials or a saved session.'));
+  }
+
+  const usernameInput = page.locator(USERNAME_SELECTOR).first();
+  if (await usernameInput.isVisible().catch(() => false)) {
+    await usernameInput.fill(SYM_USER);
+    await clickSubmit(page);
+  }
+
+  const passwordInput = page.locator(PASSWORD_SELECTOR).first();
+  await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
+  await passwordInput.fill(SYM_PASS);
+  await clickSubmit(page);
+
+  const bodyText = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
+  if (bodyText.includes('stay signed in') || page.url().toLowerCase().includes('kmsi')) {
+    const submitButton = page.locator(SUBMIT_SELECTOR).first();
+    if (await submitButton.isVisible().catch(() => false)) {
+      await clickSubmit(page);
+    }
+  }
+}
+
+async function dismissDuplicateLoginPopup(page: Page) {
+  let popupFrame: FrameLocator;
+  try {
+    popupFrame = page.frameLocator('#SPopUp-frame');
+  } catch {
+    return;
+  }
+
+  const continueBtn = popupFrame.locator('#btnContinue, input[value="CONTINUE"], input[type="submit"]').first();
+  if (!await continueBtn.isVisible().catch(() => false)) {
+    return;
+  }
+
+  console.log('Duplicate Login popup detected. Continuing with the current session...');
+  await continueBtn.click();
+  await page.waitForTimeout(5000);
+}
+
+async function ensureAuthenticatedPage(): Promise<{ context: BrowserContext; page: Page }> {
+  const { context, hasSavedSession } = await createContext();
+  const page = await context.newPage();
+
+  try {
     console.log(`Navigating to Symphony HSD at ${SYM_URL}`);
-    await page.goto(SYM_URL, { waitUntil: 'networkidle', timeout: 30000 });
-    
-    // 1. Log in to Symphony HSD (which redirects to Microsoft AD login)
-    // Selectors for MS login page
-    const usernameInput = '#i0116, input[type="email"], input[name="loginfmt"]';
-    const passwordInput = '#i0118, input[type="password"], input[name="passwd"]';
-    const submitButton = '#idSIButton9, input[type="submit"]';
+    await page.goto(SYM_URL, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
 
-    console.log('Checking for login fields...');
-    if (await page.locator(usernameInput).count() > 0 && SYM_USER && SYM_PASS) {
-      console.log('Microsoft AD Login screen detected. Step 1: Entering Username...');
-      await page.locator(usernameInput).fill(SYM_USER);
-      if (SYM_DEBUG) {
-        await page.screenshot({ path: path.join(__dirname, '../../../symphony_step1_entered_user.png') });
-      }
-      await page.locator(submitButton).click();
-
-      console.log('Waiting for password field...');
-      await page.locator(passwordInput).waitFor({ state: 'visible', timeout: 15000 });
-      console.log('Step 2: Entering Password...');
-      await page.locator(passwordInput).fill(SYM_PASS);
-      if (SYM_DEBUG) {
-        await page.screenshot({ path: path.join(__dirname, '../../../symphony_step2_entered_pass.png') });
-      }
-      await page.locator(submitButton).click();
-
-      console.log('Waiting for Stay Signed In prompt...');
-      try {
-        await page.locator(submitButton).waitFor({ state: 'visible', timeout: 10000 });
-        if (SYM_DEBUG) {
-          await page.screenshot({ path: path.join(__dirname, '../../../symphony_step3_stay_signed_in.png') });
-        }
-        console.log('Step 3: Confirming Stay Signed In...');
-        await page.locator(submitButton).click();
-      } catch (e) {
-        console.log('No Stay Signed In prompt or timed out. Proceeding.');
-      }
-
-      console.log('Waiting for dashboard redirection to complete...');
-      await page.waitForURL(/SDE_Dashboard|Summit|MDLIncidentMgmt/, { timeout: 30000 });
-      if (SYM_DEBUG) {
-        await page.screenshot({ path: path.join(__dirname, '../../../symphony_step4_redirected.png') });
-      }
-      console.log('Dashboard redirection successful.');
-    } else {
-      console.log('Already logged in via cached Edge profile or login skipped.');
+    if (await isLoginPromptVisible(page)) {
+      console.log('Symphony login prompt detected. Attempting authenticated session setup...');
+      await attemptCredentialLogin(page);
     }
 
-    // Wait for the main page elements to load
-    await page.waitForTimeout(5000); // Give the dashboard extra time to render fully
-
-    // Handle Duplicate Login popup if it appears (loads inside #SPopUp-frame iframe)
-    try {
-      const popupFrame = page.frameLocator('#SPopUp-frame');
-      const continueBtn = popupFrame.locator('#btnContinue, input[value="CONTINUE"], input[type="submit"]').first();
-      
-      console.log('Checking for Duplicate Login popup...');
-      if (await continueBtn.count() > 0) {
-        console.log('Duplicate Login popup detected. Clicking CONTINUE to log out other sessions...');
-        await continueBtn.click();
-        console.log('Duplicate Login CONTINUE clicked.');
-        // Wait for page to settle after session override
-        await page.waitForTimeout(8000);
-      }
-    } catch (popupErr: any) {
-      console.log('No Duplicate Login popup or failed to dismiss:', popupErr.message);
+    if (await isLoginPromptVisible(page)) {
+      const message = hasSavedSession
+        ? buildBootstrapRequiredMessage('Saved Symphony session expired before reaching the dashboard.')
+        : buildBootstrapRequiredMessage('Symphony login did not complete automatically.');
+      throw new Error(message);
     }
 
-    // Save a screenshot to inspect the logged-in state and layout
-    if (SYM_DEBUG) {
-      const screenshotPath = path.join(__dirname, '../../../symphony_screenshot.png');
-      await page.screenshot({ path: screenshotPath, fullPage: true });
-      console.log(`Screenshot saved to ${screenshotPath}`);
-
-      const htmlPath = path.join(__dirname, '../../../symphony_page.html');
-      const htmlContent = await page.content();
-      fs.writeFileSync(htmlPath, htmlContent, 'utf-8');
-      console.log(`HTML content dumped to ${htmlPath}`);
+    if (!/SDE_Dashboard|Summit|MDLIncidentMgmt/i.test(page.url())) {
+      await page.goto(SYM_URL, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
     }
 
-    // Scrape data (tickets, SLAs, etc.)
-    const hasDashboardElements = await page.locator('svg, table, [ng-bind]').count() > 0;
-    
-    if (!hasDashboardElements) {
-      throw new Error('Symphony dashboard did not render expected data elements');
+    await dismissDuplicateLoginPopup(page);
+    await page.locator(DASHBOARD_READY_SELECTOR).first().waitFor({ state: 'visible', timeout: 30000 });
+    await context.storageState({ path: STORAGE_STATE_PATH });
+    await captureDebugArtifacts(page, 'symphony_dashboard');
+    return { context, page };
+  } catch (err) {
+    await context.close();
+    throw err;
+  }
+}
+
+async function getCount(page: Page, selector: string): Promise<number | null> {
+  const locator = page.locator(selector).first();
+  if (await locator.count() === 0) {
+    return null;
+  }
+
+  const txt = await locator.innerText();
+  const val = parseInt(txt.trim(), 10);
+  return Number.isNaN(val) ? null : val;
+}
+
+async function parseSla(page: Page, renderTargetId: string): Promise<number | null> {
+  const html = await page.content();
+  const patterns = [
+    new RegExp(`defaultCenterLabel=['"]([^'"]+)['"];\\s*chartObj = new FusionCharts\\([^)]*renderAt: ['"]${renderTargetId}['"]`, 'i'),
+    new RegExp(`renderAt: ['"]${renderTargetId}['"].*?defaultCenterLabel=['"]([^'"]+)['"]`, 'is')
+  ];
+
+  let centerLabel: string | null = null;
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      centerLabel = match[1];
+      break;
     }
+  }
 
-    console.log('Found dashboard elements. Parsing Symphony stats from DOM...');
+  if (!centerLabel) {
+    return null;
+  }
 
-    const getVal = async (selector: string): Promise<number | null> => {
-      const locator = page.locator(selector).first();
-      if (await locator.count() === 0) {
-        return null;
-      }
+  const fractionMatch = centerLabel.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+  if (!fractionMatch) {
+    return null;
+  }
 
-      const txt = await locator.innerText();
-      const val = parseInt(txt.trim(), 10);
-      return Number.isNaN(val) ? null : val;
-    };
+  const num = parseFloat(fractionMatch[1]);
+  const den = parseFloat(fractionMatch[2]);
+  if (Number.isNaN(num) || Number.isNaN(den) || den <= 0) {
+    return null;
+  }
 
-    const openIncidents = await getVal('span[ng-bind="INCIDENT.MyWorkgroupCount"]');
-    const openIncidentsAssigned = await getVal('span[ng-bind="INCIDENT.AssignedCount"]');
-    const serviceRequests = await getVal('span[ng-bind="REQUEST.MyWorkgroupCount"]');
-    const serviceRequestsAssigned = await getVal('span[ng-bind="REQUEST.AssignedCount"]');
-    const workOrders = await getVal('span[ng-bind="WORKORDER.MyWorkgroupCount"]');
-    const workOrdersAssigned = await getVal('span[ng-bind="WORKORDER.AssignedCount"]');
-    const changeRecords = await getVal('span[ng-bind="CR.MyWorkgroupCount"]');
-    const changeRecordsAssigned = await getVal('span[ng-bind="CR.AssignedCount"]');
+  return Number(((num / den) * 100).toFixed(2));
+}
 
-    const topLevelCounts = [
-      openIncidents,
-      openIncidentsAssigned,
-      serviceRequests,
-      serviceRequestsAssigned,
-      workOrders,
-      workOrdersAssigned,
-      changeRecords,
-      changeRecordsAssigned
-    ];
-    if (topLevelCounts.some((value) => value === null)) {
-      throw new Error('One or more Symphony ticket counters could not be read reliably');
-    }
+async function scrapeSymphonyPage(page: Page, attemptedAt: string) {
+  const dashboardSignals = await page.locator('svg, table, [ng-bind]').count();
+  if (dashboardSignals === 0) {
+    throw new Error('Symphony dashboard did not render expected data elements');
+  }
 
-    const parseSla = async (renderTargetId: string): Promise<number | null> => {
-      const html = await page.content();
-      const patterns = [
-        new RegExp(`defaultCenterLabel='([^']+)';\\s*chartObj = new FusionCharts\\([^)]*renderAt: '${renderTargetId}'`, 'i'),
-        new RegExp(`renderAt: '${renderTargetId}'.*?defaultCenterLabel='([^']+)'`, 'is')
-      ];
+  console.log('Found dashboard elements. Parsing Symphony stats from DOM...');
 
-      let centerLabel: string | null = null;
-      for (const pattern of patterns) {
-        const match = html.match(pattern);
-        if (match?.[1]) {
-          centerLabel = match[1];
-          break;
-        }
-      }
+  const openIncidents = await getCount(page, 'span[ng-bind="INCIDENT.MyWorkgroupCount"]');
+  const openIncidentsAssigned = await getCount(page, 'span[ng-bind="INCIDENT.AssignedCount"]');
+  const serviceRequests = await getCount(page, 'span[ng-bind="REQUEST.MyWorkgroupCount"]');
+  const serviceRequestsAssigned = await getCount(page, 'span[ng-bind="REQUEST.AssignedCount"]');
+  const workOrders = await getCount(page, 'span[ng-bind="WORKORDER.MyWorkgroupCount"]');
+  const workOrdersAssigned = await getCount(page, 'span[ng-bind="WORKORDER.AssignedCount"]');
+  const changeRecords = await getCount(page, 'span[ng-bind="CR.MyWorkgroupCount"]');
+  const changeRecordsAssigned = await getCount(page, 'span[ng-bind="CR.AssignedCount"]');
 
-      if (!centerLabel) {
-        return null;
-      }
+  const topLevelCounts = [
+    openIncidents,
+    openIncidentsAssigned,
+    serviceRequests,
+    serviceRequestsAssigned,
+    workOrders,
+    workOrdersAssigned,
+    changeRecords,
+    changeRecordsAssigned
+  ];
+  if (topLevelCounts.some((value) => value === null)) {
+    throw new Error('One or more Symphony ticket counters could not be read reliably');
+  }
 
-      const fractionMatch = centerLabel.match(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
-      if (!fractionMatch) {
-        return null;
-      }
+  console.log('Extracting SLA performance percentages...');
+  const incidentsResponseSla = await parseSla(page, 'responseSLA');
+  const incidentsResolutionSla = await parseSla(page, 'resolutionSLA');
+  const requestsResponseSla = await parseSla(page, 'SRresponseSLA');
+  const requestsResolutionSla = await parseSla(page, 'SRresolutionSLA');
 
-      const num = parseFloat(fractionMatch[1]);
-      const den = parseFloat(fractionMatch[2]);
-      if (Number.isNaN(num) || Number.isNaN(den) || den <= 0) {
-        return null;
-      }
+  if ([incidentsResponseSla, incidentsResolutionSla, requestsResponseSla, requestsResolutionSla].some((value) => value === null)) {
+    throw new Error('One or more Symphony SLA widgets could not be read reliably');
+  }
 
-      return Number(((num / den) * 100).toFixed(2));
-    };
+  return {
+    meta: {
+      ok: true,
+      attemptedAt
+    },
+    openIncidents,
+    openIncidentsBreakdown: { new: 0, assigned: openIncidentsAssigned, inProgress: openIncidents, pending: 0 },
+    serviceRequests,
+    serviceRequestsBreakdown: { new: 0, assigned: serviceRequestsAssigned, inProgress: serviceRequests, pending: 0 },
+    workOrders,
+    workOrdersBreakdown: { new: 0, assigned: workOrdersAssigned, inProgress: workOrders, pending: 0 },
+    changeRecords,
+    changeRecordsBreakdown: { new: 0, assigned: changeRecordsAssigned, inProgress: changeRecords, pending: 0 },
+    serviceRequestsSla: requestsResponseSla,
+    incidentsResponseSla,
+    incidentsResolutionSla,
+    requestsResponseSla,
+    requestsResolutionSla
+  };
+}
 
-    console.log('Extracting SLA performance percentages...');
-    const incidentsResponseSla = await parseSla('responseSLA');
-    const incidentsResolutionSla = await parseSla('resolutionSLA');
-    const requestsResponseSla = await parseSla('SRresponseSLA');
-    const requestsResolutionSla = await parseSla('SRresolutionSLA');
+async function scrapeSymphony() {
+  if (cycleInProgress) {
+    console.warn(`[${new Date().toISOString()}] Previous Symphony cycle is still running. Skipping overlap.`);
+    return;
+  }
 
-    if ([incidentsResponseSla, incidentsResolutionSla, requestsResponseSla, requestsResolutionSla].some((value) => value === null)) {
-      throw new Error('One or more Symphony SLA widgets could not be read reliably');
-    }
+  cycleInProgress = true;
+  const cycleStartedAt = Date.now();
+  const attemptedAt = new Date().toISOString();
+  console.log(`[${attemptedAt}] Starting Symphony HSD scraping session...`);
 
-    const symphonyData = {
-      meta: {
-        ok: true,
-        attemptedAt
-      },
-      openIncidents,
-      openIncidentsBreakdown: { new: 0, assigned: openIncidentsAssigned, inProgress: openIncidents, pending: 0 },
-      serviceRequests,
-      serviceRequestsBreakdown: { new: 0, assigned: serviceRequestsAssigned, inProgress: serviceRequests, pending: 0 },
-      workOrders,
-      workOrdersBreakdown: { new: 0, assigned: workOrdersAssigned, inProgress: workOrders, pending: 0 },
-      changeRecords,
-      changeRecordsBreakdown: { new: 0, assigned: changeRecordsAssigned, inProgress: changeRecords, pending: 0 },
-      serviceRequestsSla: requestsResponseSla,
-      incidentsResponseSla,
-      incidentsResolutionSla,
-      requestsResponseSla,
-      requestsResolutionSla
-    };
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
+  try {
+    const authenticated = await ensureAuthenticatedPage();
+    context = authenticated.context;
+    page = authenticated.page;
 
+    const symphonyData = await scrapeSymphonyPage(page, attemptedAt);
     console.log('Symphony Data Scraped Successfully:', JSON.stringify(symphonyData, null, 2));
-
-    // Post to API Gateway
     await postUpdate({ symphony: symphonyData });
     console.log(`[${new Date().toISOString()}] Symphony metrics posted successfully.`);
-
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}] Error in Symphony scraper:`, err.message);
     await reportFailure(attemptedAt, err.message);
-    if (page && SYM_DEBUG) {
-      try {
-        const errorScreenshotPath = path.join(__dirname, '../../../symphony_error_screenshot.png');
-        await page.screenshot({ path: errorScreenshotPath, fullPage: true });
-        console.log(`Error screenshot saved to ${errorScreenshotPath}`);
-      } catch (screenshotErr) {
-        console.error('Failed to capture error screenshot:', screenshotErr);
-      }
+    if (page) {
+      await captureDebugArtifacts(page, 'symphony_error');
     }
   } finally {
     if (context) {
       await context.close();
     }
+    cycleInProgress = false;
+    const elapsed = Date.now() - cycleStartedAt;
+    scheduleNextCycle(Math.max(1000, POLL_INTERVAL - elapsed));
   }
 }
 
-// Start polling
+function scheduleNextCycle(delayMs: number) {
+  if (nextCycleTimer) {
+    clearTimeout(nextCycleTimer);
+  }
+
+  nextCycleTimer = setTimeout(() => {
+    void scrapeSymphony();
+  }, delayMs);
+}
+
+async function shutdown() {
+  if (nextCycleTimer) {
+    clearTimeout(nextCycleTimer);
+  }
+
+  await closeBrowser();
+}
+
 console.log('Symphony scraper service started.');
-scrapeSymphony();
-setInterval(scrapeSymphony, POLL_INTERVAL);
+process.on('SIGINT', async () => {
+  await shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await shutdown();
+  process.exit(0);
+});
+
+void scrapeSymphony();

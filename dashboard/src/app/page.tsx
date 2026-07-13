@@ -1,22 +1,18 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import UnifiedNetworkCard from '../components/UnifiedNetworkCard';
 import UptimeChart from '../components/UptimeChart';
-import { 
-  Server, 
-  Activity, 
-  Database, 
-  Clock, 
-  RefreshCw, 
-  Ticket, 
-  Percent,
-  HardDrive,
-  Cpu,
-  Layers,
-  CheckCircle,
+import {
+  AlertOctagon,
   AlertTriangle,
-  XCircle
+  CheckCircle2,
+  Clock,
+  Layers,
+  Power,
+  RefreshCw,
+  Server,
+  Ticket
 } from 'lucide-react';
 
 interface ServerNode {
@@ -47,11 +43,38 @@ interface NetworkLink {
   portSpeed?: string;
   circuitId?: string;
   linkType?: string;
+  alias?: string;
+  interfaceType?: string;
+  ipAddress?: string;
+  administrativeStatus?: string;
+  operationalStatus?: string;
+  lastStatusChange?: string;
+  bandwidthReceiveMbps?: number | null;
+  bandwidthTransmitMbps?: number | null;
+  configuredSpeedMbps?: number | null;
+  currentTrafficReceiveMbps?: number | null;
+  currentTrafficTransmitMbps?: number | null;
+  packetsPerSecondReceive?: number | null;
+  packetsPerSecondTransmit?: number | null;
+  averagePacketSizeReceive?: number | null;
+  averagePacketSizeTransmit?: number | null;
+  realtimeTransmitUtilization?: number | null;
+  realtimeReceiveUtilization?: number | null;
+  dailyTransmitUtilization?: number | null;
+  dailyReceiveUtilization?: number | null;
   history: number[];
 }
 
 type SectionStatus = 'ok' | 'stale' | 'error' | 'never';
 type SourceStatus = SectionStatus | 'partial';
+type VisualTone = 'normal' | 'warning' | 'critical' | 'offline';
+
+interface TicketBreakdown {
+  new: number;
+  assigned: number;
+  inProgress: number;
+  pending: number;
+}
 
 interface SectionHealth {
   key: 'nutanix' | 'servers' | 'networks' | 'symphony';
@@ -92,13 +115,13 @@ interface DashboardState {
   };
   symphony: {
     openIncidents: number;
-    openIncidentsBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
+    openIncidentsBreakdown: TicketBreakdown;
     serviceRequests: number;
-    serviceRequestsBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
+    serviceRequestsBreakdown: TicketBreakdown;
     workOrders: number;
-    workOrdersBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
+    workOrdersBreakdown: TicketBreakdown;
     changeRecords: number;
-    changeRecordsBreakdown: { new: number; assigned: number; inProgress: number; pending: number };
+    changeRecordsBreakdown: TicketBreakdown;
     serviceRequestsSla: number;
     incidentsResponseSla: number;
     incidentsResolutionSla: number;
@@ -179,6 +202,415 @@ function getSystemStatusText(data: DashboardState) {
   return 'WAITING FOR FIRST SYNC';
 }
 
+function parsePercentValue(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/(\d+(?:\.\d+)?)/);
+  if (!match) {
+    return null;
+  }
+
+  return Number(parseFloat(match[1]).toFixed(2));
+}
+
+function formatPercent(value: number | null | undefined, digits = 0) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'N/A';
+  }
+
+  return `${value.toFixed(digits)}%`;
+}
+
+function getMetricTone(value: number | null, warning = 75, critical = 90): VisualTone {
+  if (value === null) {
+    return 'offline';
+  }
+  if (value >= critical) {
+    return 'critical';
+  }
+  if (value >= warning) {
+    return 'warning';
+  }
+  return 'normal';
+}
+
+function getTonePalette(tone: VisualTone) {
+  switch (tone) {
+    case 'normal':
+      return {
+        bg: 'rgba(46, 125, 50, 0.10)',
+        border: 'rgba(46, 125, 50, 0.22)',
+        text: '#1b5e20',
+        fill: '#2e7d32',
+        soft: 'rgba(46, 125, 50, 0.16)'
+      };
+    case 'warning':
+      return {
+        bg: 'rgba(245, 127, 23, 0.10)',
+        border: 'rgba(245, 127, 23, 0.22)',
+        text: '#b45309',
+        fill: '#f57f17',
+        soft: 'rgba(245, 127, 23, 0.18)'
+      };
+    case 'critical':
+      return {
+        bg: 'rgba(198, 40, 40, 0.10)',
+        border: 'rgba(198, 40, 40, 0.22)',
+        text: '#b71c1c',
+        fill: '#c62828',
+        soft: 'rgba(198, 40, 40, 0.18)'
+      };
+    default:
+      return {
+        bg: 'rgba(84, 110, 122, 0.10)',
+        border: 'rgba(84, 110, 122, 0.22)',
+        text: '#455a64',
+        fill: '#607d8b',
+        soft: 'rgba(84, 110, 122, 0.18)'
+      };
+  }
+}
+
+function getServerVisualState(server: ServerNode) {
+  const cpuPct = server.cpu;
+  const memoryPct = server.memory;
+  const diskPct = parsePercentValue(server.disk);
+  const noTelemetry = cpuPct === null && memoryPct === null && diskPct === null;
+
+  let tone: VisualTone = 'normal';
+  if (server.status === 'down') {
+    tone = noTelemetry ? 'offline' : 'critical';
+  } else if (noTelemetry) {
+    tone = 'offline';
+  } else if (server.backupStatus === 'failed' || [cpuPct, memoryPct, diskPct].some((value) => value !== null && value >= 90)) {
+    tone = 'critical';
+  } else if (server.status === 'degraded' || [cpuPct, memoryPct, diskPct].some((value) => value !== null && value >= 75)) {
+    tone = 'warning';
+  }
+
+  const labelMap: Record<VisualTone, string> = {
+    normal: 'Normal',
+    warning: 'Warning',
+    critical: 'Critical',
+    offline: 'Offline'
+  };
+
+  return {
+    tone,
+    label: labelMap[tone],
+    cpuPct,
+    memoryPct,
+    diskPct
+  };
+}
+
+function formatServerName(name: string) {
+  return name.split('.')[0];
+}
+
+function isWindowsServerName(name: string) {
+  return name.toLowerCase().endsWith('.abgplanet.abg.com');
+}
+
+function isHciVm(server: ServerNode) {
+  return server.disk !== null || server.backupStatus !== 'N/A';
+}
+
+function getServerOsFamily(server: ServerNode) {
+  return isWindowsServerName(server.name) ? 'Windows' : 'Linux';
+}
+
+function getServerPlatform(server: ServerNode) {
+  return isHciVm(server) ? 'HCI VM' : 'Physical';
+}
+
+function getServerGroupKey(server: ServerNode) {
+  return `${getServerOsFamily(server)}|${getServerPlatform(server)}`;
+}
+
+function sortServersForWallboard(servers: ServerNode[]) {
+  const toneRank: Record<VisualTone, number> = { critical: 0, warning: 1, offline: 2, normal: 3 };
+  return [...servers].sort((left, right) => {
+    const leftTone = getServerVisualState(left).tone;
+    const rightTone = getServerVisualState(right).tone;
+    if (toneRank[leftTone] !== toneRank[rightTone]) {
+      return toneRank[leftTone] - toneRank[rightTone];
+    }
+
+    return formatServerName(left.name).localeCompare(formatServerName(right.name));
+  });
+}
+
+function formatSmallNumber(value: number | null | undefined, suffix = '') {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'N/A';
+  }
+
+  const digits = value < 10 ? 1 : 0;
+  return `${value.toFixed(digits)}${suffix}`;
+}
+
+function HciHeaderChip({
+  label,
+  value,
+  detail,
+  color
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  color: string;
+}) {
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        padding: '10px 12px',
+        borderRadius: '14px',
+        background: 'rgba(255,255,255,0.56)',
+        border: `1px solid ${color}22`,
+        boxShadow: `inset 0 0 0 1px ${color}14`
+      }}
+    >
+      <span style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', color, opacity: 0.84 }}>{label}</span>
+      <span style={{ fontSize: '1.15rem', fontWeight: 800, lineHeight: 1.05 }}>{value}</span>
+      <span style={{ fontSize: '0.7rem', opacity: 0.64, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</span>
+    </div>
+  );
+}
+
+function HsdOverviewCard({
+  title,
+  total,
+  breakdown,
+  accent
+}: {
+  title: string;
+  total: number;
+  breakdown: TicketBreakdown;
+  accent: string;
+}) {
+  const totalSafe = Math.max(0, total);
+  const categories = [
+    { label: 'N', value: breakdown.new, color: '#4f6bed' },
+    { label: 'A', value: breakdown.assigned, color: '#f0b429' },
+    { label: 'IP', value: breakdown.inProgress, color: accent },
+    { label: 'P', value: breakdown.pending, color: '#7b8794' }
+  ];
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '14px',
+        padding: '16px 16px 14px',
+        borderRadius: '18px',
+        background: 'rgba(255,255,255,0.66)',
+        border: '1px solid rgba(141,110,99,0.12)',
+        boxShadow: `inset 0 4px 0 0 ${accent}`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+        <div>
+          <div style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.66 }}>{title}</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: 800, lineHeight: 1, marginTop: '10px', color: accent }}>{totalSafe}</div>
+        </div>
+        <div
+          style={{
+            padding: '7px 10px',
+            borderRadius: '999px',
+            background: `${accent}14`,
+            border: `1px solid ${accent}24`,
+            fontSize: '0.68rem',
+            fontWeight: 800,
+            letterSpacing: '0.08em',
+            color: accent
+          }}
+        >
+          OPEN
+        </div>
+      </div>
+
+      <div style={{ width: '100%', height: '12px', display: 'flex', overflow: 'hidden', borderRadius: '999px', background: 'rgba(62,39,35,0.08)' }}>
+        {categories.map((category) => (
+          <div
+            key={category.label}
+            style={{
+              width: totalSafe > 0 ? `${(category.value / totalSafe) * 100}%` : '0%',
+              minWidth: category.value > 0 ? '8px' : 0,
+              background: category.color
+            }}
+          />
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' }}>
+        {categories.map((category) => (
+          <div key={category.label} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span style={{ fontSize: '0.58rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.56 }}>{category.label}</span>
+            <span style={{ fontSize: '1rem', fontWeight: 800 }}>{category.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HsdSlaWidget({
+  title,
+  response,
+  resolution,
+  accent
+}: {
+  title: string;
+  response: number;
+  resolution: number;
+  accent: string;
+}) {
+  const responseTone = getTonePalette(getMetricTone(response, 92, 98));
+  const resolutionTone = getTonePalette(getMetricTone(resolution, 92, 98));
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        padding: '14px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.56)',
+        border: `1px solid ${accent}22`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+        <div style={{ fontSize: '0.76rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
+        <div style={{ fontSize: '0.66rem', fontWeight: 700, opacity: 0.56 }}>SLA</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
+        {[
+          { label: 'Response', value: response, palette: responseTone },
+          { label: 'Resolution', value: resolution, palette: resolutionTone }
+        ].map((metric) => (
+          <div key={metric.label} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
+              <span style={{ fontSize: '0.66rem', opacity: 0.62 }}>{metric.label}</span>
+              <span style={{ fontSize: '1rem', fontWeight: 800, color: metric.palette.text }}>{formatPercent(metric.value, 2)}</span>
+            </div>
+            <div style={{ width: '100%', height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
+              <div style={{ width: `${Math.max(0, Math.min(100, metric.value))}%`, height: '100%', background: metric.palette.fill }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompactServerRow({ server }: { server: ServerNode }) {
+  const visual = getServerVisualState(server);
+  const palette = getTonePalette(visual.tone);
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '144px minmax(0, 1fr) 54px',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '7px 9px',
+        borderRadius: '14px',
+        background: 'rgba(255,255,255,0.54)',
+        border: `1px solid ${palette.border}`
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: '0.8rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
+          {formatServerName(server.name)}
+        </div>
+        <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.62, marginTop: '4px' }}>
+          {getServerPlatform(server)} | {visual.label.toUpperCase()}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
+        {[
+          { label: 'CPU', value: visual.cpuPct },
+          { label: 'RAM', value: visual.memoryPct },
+          { label: 'DSK', value: visual.diskPct }
+        ].map((metric) => (
+          <div key={metric.label} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
+              <span style={{ fontSize: '0.54rem', fontWeight: 800, opacity: 0.58 }}>{metric.label}</span>
+              <span style={{ fontSize: '0.64rem', fontWeight: 800, color: getTonePalette(getMetricTone(metric.value)).text }}>
+                {formatSmallNumber(metric.value, metric.value === null ? '' : '%')}
+              </span>
+            </div>
+            <div style={{ width: '100%', height: '4px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
+              <div style={{ width: `${Math.max(0, Math.min(100, metric.value ?? 0))}%`, height: '100%', background: getTonePalette(getMetricTone(metric.value)).fill }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+        <div style={{ width: '52px', height: '16px' }}>
+          <UptimeChart history={server.history || []} color={palette.fill} />
+        </div>
+        <span style={{ fontSize: '0.56rem', fontWeight: 700, opacity: 0.62 }}>{server.backupStatus === 'successful' ? 'BKP' : server.backupStatus === 'failed' ? 'FAIL' : 'N/A'}</span>
+      </div>
+    </div>
+  );
+}
+
+function ServerGroupCard({
+  title,
+  subtitle,
+  servers,
+  accent
+}: {
+  title: string;
+  subtitle: string;
+  servers: ServerNode[];
+  accent: string;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        minHeight: 0,
+        padding: '12px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.46)',
+        border: `1px solid ${accent}18`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+        <div>
+          <div style={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
+          <div style={{ fontSize: '0.62rem', opacity: 0.62, marginTop: '3px' }}>{subtitle}</div>
+        </div>
+        <div style={{ fontSize: '1.25rem', fontWeight: 800, color: accent }}>{servers.length}</div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minHeight: 0, overflow: 'auto', paddingRight: '2px' }}>
+        {servers.length > 0 ? servers.map((server) => <CompactServerRow key={server.id} server={server} />) : (
+          <div style={{ padding: '16px 10px', borderRadius: '12px', background: 'rgba(255,255,255,0.4)', fontSize: '0.74rem', opacity: 0.58 }}>
+            No servers in this category.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SectionHealthMeta({ health }: { health: SectionHealth }) {
   const badgeStyle = getHealthBadgeStyle(health.status);
 
@@ -204,10 +636,379 @@ function SectionHealthMeta({ health }: { health: SectionHealth }) {
         Last synced: {formatSyncTime(health.lastSuccessAt)}
       </span>
       {health.status === 'error' && health.lastError ? (
-        <span style={{ fontSize: '0.72rem', color: '#c62828', maxWidth: '260px' }}>
+        <span style={{ fontSize: '0.72rem', color: '#c62828', maxWidth: '240px' }}>
           {health.lastError}
         </span>
       ) : null}
+    </div>
+  );
+}
+
+function StatusSummaryPill({ label, count, tone }: { label: string; count: number; tone: VisualTone }) {
+  const palette = getTonePalette(tone);
+
+  return (
+    <div
+      className="status-summary-pill"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '10px',
+        padding: '7px 10px',
+        borderRadius: '12px',
+        background: palette.bg,
+        border: `1px solid ${palette.border}`
+      }}
+    >
+      <span className="status-summary-pill__label" style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: palette.text }}>
+        {label}
+      </span>
+      <span className="status-summary-pill__value" style={{ fontSize: '1.05rem', fontWeight: 800, color: palette.text }}>
+        {count}
+      </span>
+    </div>
+  );
+}
+
+function LinearMetricBar({
+  label,
+  value,
+  tone,
+  digits = 0
+}: {
+  label: string;
+  value: number | null | undefined;
+  tone: VisualTone;
+  digits?: number;
+}) {
+  const palette = getTonePalette(tone);
+  const fill = value === null || value === undefined ? 0 : Math.max(0, Math.min(100, value));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', opacity: 0.72 }}>{label}</span>
+        <span style={{ fontSize: '0.88rem', fontWeight: 700, color: palette.text }}>{formatPercent(value, digits)}</span>
+      </div>
+      <div style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'rgba(62, 39, 35, 0.08)', overflow: 'hidden' }}>
+        <div
+          style={{
+            width: `${fill}%`,
+            height: '100%',
+            borderRadius: '999px',
+            background: `linear-gradient(90deg, ${palette.fill}, ${palette.fill}cc)`
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function HsdWorkCard({
+  label,
+  total,
+  breakdown,
+  accent
+}: {
+  label: string;
+  total: number;
+  breakdown: TicketBreakdown;
+  accent: string;
+}) {
+  const totalSafe = Math.max(0, total);
+  const categories = [
+    { key: 'new', label: 'NEW', value: breakdown.new, color: '#4f6bed' },
+    { key: 'assigned', label: 'ASG', value: breakdown.assigned, color: '#f0b429' },
+    { key: 'inProgress', label: 'IP', value: breakdown.inProgress, color: accent },
+    { key: 'pending', label: 'PND', value: breakdown.pending, color: '#7b8794' }
+  ] as const;
+
+  return (
+    <div
+      className="hsd-work-card"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        padding: '12px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.52)',
+        border: '1px solid rgba(141,110,99,0.12)',
+        boxShadow: `inset 0 0 0 1px ${accent}20`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+        <div>
+          <div style={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.1em', opacity: 0.64 }}>{label}</div>
+          <div style={{ fontSize: '1.7rem', fontWeight: 800, lineHeight: 1, marginTop: '4px', color: accent }}>{totalSafe}</div>
+        </div>
+        <div
+          style={{
+            minWidth: '68px',
+            textAlign: 'center',
+            padding: '6px 8px',
+            borderRadius: '12px',
+            background: `${accent}14`,
+            border: `1px solid ${accent}28`
+          }}
+        >
+          <div style={{ fontSize: '0.64rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.66 }}>ACTIVE</div>
+          <div style={{ fontSize: '1rem', fontWeight: 800, marginTop: '2px', color: '#3e2723' }}>
+            {breakdown.inProgress + breakdown.assigned}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ width: '100%', height: '12px', borderRadius: '999px', overflow: 'hidden', display: 'flex', background: 'rgba(62,39,35,0.08)' }}>
+        {categories.map((category) => {
+          const width = totalSafe > 0 ? `${(category.value / totalSafe) * 100}%` : '0%';
+          return (
+            <div
+              key={category.key}
+              style={{
+                width,
+                minWidth: category.value > 0 ? '8px' : 0,
+                background: category.color,
+                transition: 'width 0.4s ease'
+              }}
+            />
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' }}>
+        {categories.map((category) => (
+          <div key={category.key} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '999px', background: category.color }} />
+              <span style={{ fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.08em', opacity: 0.64 }}>{category.label}</span>
+            </div>
+            <span style={{ fontSize: '0.98rem', fontWeight: 800 }}>{category.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HsdStatusTile({
+  label,
+  count,
+  total,
+  color
+}: {
+  label: string;
+  count: number;
+  total: number;
+  color: string;
+}) {
+  const share = total > 0 ? Number(((count / total) * 100).toFixed(1)) : 0;
+
+  return (
+    <div
+      className="hsd-status-tile"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+        padding: '10px',
+        borderRadius: '14px',
+        background: `${color}10`,
+        border: `1px solid ${color}22`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+        <span style={{ fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.08em', color }}>
+          {label}
+        </span>
+        <span style={{ fontSize: '1.12rem', fontWeight: 800, color }}>
+          {count}
+        </span>
+      </div>
+      <div style={{ width: '100%', height: '9px', borderRadius: '999px', background: 'rgba(62,39,35,0.08)', overflow: 'hidden' }}>
+        <div style={{ width: `${Math.max(0, Math.min(100, share))}%`, height: '100%', borderRadius: '999px', background: color }} />
+      </div>
+      <div style={{ fontSize: '0.66rem', opacity: 0.72 }}>{share.toFixed(1)}% backlog</div>
+    </div>
+  );
+}
+
+function HsdQueueRail({
+  label,
+  total,
+  breakdown,
+  accent
+}: {
+  label: string;
+  total: number;
+  breakdown: TicketBreakdown;
+  accent: string;
+}) {
+  const totalSafe = Math.max(0, total);
+  const categories = [
+    { key: 'new', short: 'N', value: breakdown.new, color: '#4f6bed' },
+    { key: 'assigned', short: 'A', value: breakdown.assigned, color: '#f0b429' },
+    { key: 'inProgress', short: 'IP', value: breakdown.inProgress, color: accent },
+    { key: 'pending', short: 'P', value: breakdown.pending, color: '#7b8794' }
+  ] as const;
+
+  return (
+    <div className="hsd-queue-rail">
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.62 }}>{label}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
+          <span style={{ fontSize: '1rem', fontWeight: 800, color: accent }}>{totalSafe}</span>
+          <span style={{ fontSize: '0.66rem', opacity: 0.62 }}>open</span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ width: '100%', height: '10px', borderRadius: '999px', overflow: 'hidden', display: 'flex', background: 'rgba(62,39,35,0.08)' }}>
+          {categories.map((category) => {
+            const width = totalSafe > 0 ? `${(category.value / totalSafe) * 100}%` : '0%';
+            return (
+              <div
+                key={category.key}
+                style={{
+                  width,
+                  minWidth: category.value > 0 ? '10px' : 0,
+                  background: category.color
+                }}
+              />
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', flexWrap: 'wrap' }}>
+          {categories.map((category) => (
+            <div key={category.key} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.66rem', opacity: 0.74 }}>
+              <span style={{ width: '7px', height: '7px', borderRadius: '999px', background: category.color }} />
+              <span style={{ fontWeight: 700 }}>{category.short}</span>
+              <span>{category.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+          gap: '6px',
+          padding: '8px',
+          borderRadius: '12px',
+          background: 'rgba(255,255,255,0.5)',
+          border: '1px solid rgba(141,110,99,0.12)'
+        }}
+      >
+        {categories.map((category) => (
+          <div key={category.key} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <span style={{ fontSize: '0.58rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.58 }}>{category.short}</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 800 }}>{category.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ServerNodeCard({ server }: { server: ServerNode }) {
+  const visual = getServerVisualState(server);
+  const palette = getTonePalette(visual.tone);
+  const statusIcon =
+    visual.tone === 'normal' ? <CheckCircle2 size={14} /> :
+    visual.tone === 'warning' ? <AlertTriangle size={14} /> :
+    visual.tone === 'critical' ? <AlertOctagon size={14} /> :
+    <Power size={14} />;
+
+  return (
+    <div
+      className="server-node-card"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '9px',
+        minHeight: '128px',
+        padding: '12px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.52)',
+        border: `1px solid ${palette.border}`,
+        position: 'relative',
+        overflow: 'hidden'
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          inset: '0 auto 0 0',
+          width: '5px',
+          background: palette.fill
+        }}
+      />
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'flex-start' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
+            {formatServerName(server.name)}
+          </div>
+          <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.58, marginTop: '4px' }}>
+            {server.location.toUpperCase()}
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '5px 8px',
+            borderRadius: '999px',
+            background: palette.bg,
+            color: palette.text,
+            fontSize: '0.68rem',
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em'
+          }}
+        >
+          {statusIcon}
+          {visual.label}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
+        <LinearMetricBar label="CPU" value={visual.cpuPct} tone={getMetricTone(visual.cpuPct)} digits={visual.cpuPct !== null && visual.cpuPct < 10 ? 2 : 0} />
+        <LinearMetricBar label="RAM" value={visual.memoryPct} tone={getMetricTone(visual.memoryPct)} digits={visual.memoryPct !== null && visual.memoryPct < 10 ? 2 : 0} />
+        <LinearMetricBar label="DISK" value={visual.diskPct} tone={getMetricTone(visual.diskPct)} digits={visual.diskPct !== null && visual.diskPct < 10 ? 2 : 0} />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: 'auto' }}>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: '76px',
+            padding: '5px 8px',
+            borderRadius: '10px',
+            fontSize: '0.66rem',
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            background:
+              server.backupStatus === 'successful' ? 'rgba(46,125,50,0.12)' :
+              server.backupStatus === 'failed' ? 'rgba(198,40,40,0.12)' :
+              'rgba(84,110,122,0.10)',
+            color:
+              server.backupStatus === 'successful' ? '#1b5e20' :
+              server.backupStatus === 'failed' ? '#b71c1c' :
+              '#546e7a'
+          }}
+        >
+          {server.backupStatus === 'successful' ? 'BACKUP OK' : server.backupStatus === 'failed' ? 'BACKUP FAIL' : 'NO DATA'}
+        </span>
+        <div style={{ width: '72px', height: '22px' }}>
+          <UptimeChart history={server.history || []} color={palette.fill} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -218,7 +1019,6 @@ export default function Dashboard() {
   const [time, setTime] = useState('');
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Update clock every second
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
@@ -229,12 +1029,11 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  // Set up WebSocket connection to central gateway
   useEffect(() => {
     const connectWS = () => {
       const apiHost = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
       const wsUrl = apiHost.replace(/^http/, 'ws');
-      
+
       console.log(`Connecting to WebSocket gateway at ${wsUrl}`);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -269,15 +1068,17 @@ export default function Dashboard() {
 
     connectWS();
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
   }, []);
 
   const getThresholdColor = (pct: number) => {
-    if (pct >= 95) return '#c62828'; // red (>= 95)
-    if (pct >= 90) return '#ff9100'; // orange (>= 90)
-    if (pct >= 80) return '#f57f17'; // yellow (>= 80)
-    return '#2e7d32'; // green (< 80)
+    if (pct >= 95) return '#c62828';
+    if (pct >= 90) return '#ff9100';
+    if (pct >= 80) return '#f57f17';
+    return '#2e7d32';
   };
 
   if (!data) {
@@ -290,255 +1091,251 @@ export default function Dashboard() {
   }
 
   const overallSystemStatus = getSystemStatusText(data);
+  const serverStates = data.servers.map((server) => getServerVisualState(server));
+  const serverSummary = {
+    normal: serverStates.filter((state) => state.tone === 'normal').length,
+    warning: serverStates.filter((state) => state.tone === 'warning').length,
+    critical: serverStates.filter((state) => state.tone === 'critical').length,
+    offline: serverStates.filter((state) => state.tone === 'offline').length
+  };
+  const serverTopologySummary = {
+    windows: data.servers.filter((server) => getServerOsFamily(server) === 'Windows').length,
+    linux: data.servers.filter((server) => getServerOsFamily(server) === 'Linux').length,
+    hciVm: data.servers.filter((server) => getServerPlatform(server) === 'HCI VM').length,
+    physical: data.servers.filter((server) => getServerPlatform(server) === 'Physical').length
+  };
+  const groupedServers = {
+    windowsHci: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Windows|HCI VM')),
+    windowsPhysical: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Windows|Physical')),
+    linuxHci: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|HCI VM')),
+    linuxPhysical: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|Physical'))
+  };
+
+  const ticketCards = [
+    { label: 'INCIDENTS', total: data.symphony.openIncidents, breakdown: data.symphony.openIncidentsBreakdown, accent: '#c62828' },
+    { label: 'SERVICE REQUESTS', total: data.symphony.serviceRequests, breakdown: data.symphony.serviceRequestsBreakdown, accent: '#1565c0' },
+    { label: 'WORK ORDERS', total: data.symphony.workOrders, breakdown: data.symphony.workOrdersBreakdown, accent: '#546e7a' },
+    { label: 'CHANGES', total: data.symphony.changeRecords, breakdown: data.symphony.changeRecordsBreakdown, accent: '#8d6e63' }
+  ] as const;
+
+  const totalHsdBacklog = ticketCards.reduce((sum, card) => sum + card.total, 0);
+  const hsdBreakdownTotals = ticketCards.reduce<TicketBreakdown>((accumulator, card) => ({
+    new: accumulator.new + card.breakdown.new,
+    assigned: accumulator.assigned + card.breakdown.assigned,
+    inProgress: accumulator.inProgress + card.breakdown.inProgress,
+    pending: accumulator.pending + card.breakdown.pending
+  }), { new: 0, assigned: 0, inProgress: 0, pending: 0 });
+  const activeHsdWork = hsdBreakdownTotals.assigned + hsdBreakdownTotals.inProgress;
+  const hciCurrentCpu = data.nutanix.historyCpu.length ? data.nutanix.historyCpu[data.nutanix.historyCpu.length - 1] : 0;
 
   return (
-    <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', minHeight: '100vh' }}>
-      
-      {/* Header Panel */}
-      <header className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyItems: 'center', justifyContent: 'center' }}>
+    <div className="dashboard-shell" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '100vh' }}>
+      <header className="glass-panel dashboard-header dashboard-header--wall" style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 1fr) 280px', alignItems: 'center', gap: '14px', padding: '10px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '16px', background: 'linear-gradient(135deg, rgba(141,110,99,0.18), rgba(215,204,200,0.58))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Server size={24} style={{ color: 'var(--text-primary)' }} />
           </div>
-          <div>
-            <h1 style={{ fontSize: '1.5rem', color: 'var(--text-primary)', fontWeight: 700 }}>UTKAL IT DASHBOARD</h1>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>NOC Widescreen Operations Hub</span>
+          <div style={{ minWidth: 0 }}>
+            <h1 style={{ fontSize: '1.35rem', color: 'var(--text-primary)', fontWeight: 700 }}>UTKAL IT DASHBOARD</h1>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600, letterSpacing: '0.08em' }}>ENGINEERING WALLBOARD</div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-          {/* Sync status */}
+        <div className="dashboard-hci-strip">
+          <HciHeaderChip label="CLUSTER" value={`${data.nutanix.nodesCount} Nodes`} detail={data.nutanix.uptime || 'Nutanix control plane'} color="#2e7d32" />
+          <HciHeaderChip label="CPU" value={formatPercent(hciCurrentCpu, hciCurrentCpu < 10 ? 1 : 0)} detail="Current cluster load" color={getThresholdColor(hciCurrentCpu)} />
+          <HciHeaderChip label="MEMORY" value={formatPercent(data.nutanix.logicalMemoryUsage || 0)} detail={`${data.nutanix.memoryUsedGib || 0} / ${data.nutanix.memoryCapacityGib || 0} GiB`} color={getThresholdColor(data.nutanix.logicalMemoryUsage || 0)} />
+          <HciHeaderChip label="STORAGE" value={formatPercent(data.nutanix.storageUsage, 0)} detail={`${data.nutanix.storageUsedTib || 0} / ${data.nutanix.storageCapacityTib || 0} TiB`} color={getThresholdColor(data.nutanix.storageUsage)} />
+          <HciHeaderChip label="HCI VM" value={`${serverTopologySummary.hciVm}`} detail={`${serverTopologySummary.windows} Windows | ${serverTopologySummary.linux} Linux`} color="#1565c0" />
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.5)', padding: '6px 12px', borderRadius: '20px', border: '1px solid var(--panel-border)' }}>
             <span className={`pulse-dot ${wsConnected ? 'ok' : 'critical'}`} />
-            <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>
-              {wsConnected ? 'GATEWAY CONNECTED' : 'DISCONNECTED'}
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.06em' }}>
+              {wsConnected ? 'GATEWAY LIVE' : 'DISCONNECTED'}
             </span>
           </div>
 
-          {/* Clock */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.25rem', fontFamily: 'var(--font-headings)', fontWeight: 600, color: 'var(--text-primary)' }}>
-            <Clock size={18} style={{ color: 'var(--primary)' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: '1.05rem', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
+            <Clock size={16} style={{ color: 'var(--primary)' }} />
             <span>{time}</span>
           </div>
         </div>
       </header>
 
-      {/* Main Grid: HCI, Network, Service Desk */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: '20px' }}>
-        
-        {/* Left Side: HCI / Nutanix Cluster Health & Symphony Service Desk */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          
-          {/* HCI Nutanix Cluster Card */}
-          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Database size={20} style={{ color: 'var(--primary)' }} />
-                <h2 style={{ fontSize: '1.2rem' }}>Nutanix HCI Cluster Health</h2>
+      <main className="dashboard-wall-grid">
+        <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
+              <div
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '16px',
+                  background: 'rgba(21,101,192,0.10)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flex: '0 0 auto'
+                }}
+              >
+                <Ticket size={20} style={{ color: '#1565c0' }} />
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 1 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 1 status">N1</div>
-                  <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 2 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 2 status">N2</div>
-                  <div style={{ width: '26px', height: '26px', borderRadius: '6px', backgroundColor: data.nutanix.nodesCount >= 3 ? '#2e7d32' : '#c62828', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700, color: '#fff' }} title="Node 3 status">N3</div>
-                </div>
-                <SectionHealthMeta health={data.sections.nutanix} />
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1.5fr', gap: '16px' }}>
-              {/* Cluster CPU info */}
-              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px' }}>
-                <div>
-                  <span style={{ fontSize: '0.7rem', opacity: 0.7, display: 'block', fontWeight: 650 }}>CLUSTER CPU</span>
-                  <span style={{ fontSize: '1.4rem', fontWeight: 700 }}>
-                    {data.nutanix.historyCpu.length ? `${data.nutanix.historyCpu[data.nutanix.historyCpu.length - 1]}%` : '0%'}
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ fontSize: '1.1rem' }}>Hindalco Service Desk</h2>
+                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE HSD BACKLOG</div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                  <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 800, background: 'rgba(21,101,192,0.10)', color: '#1565c0' }}>
+                    OPEN {totalHsdBacklog}
+                  </span>
+                  <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 800, background: 'rgba(245,127,23,0.10)', color: '#b45309' }}>
+                    ACTIVE {activeHsdWork}
+                  </span>
+                  <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 800, background: 'rgba(123,135,148,0.10)', color: '#52606d' }}>
+                    PENDING {hsdBreakdownTotals.pending}
                   </span>
                 </div>
-                {/* CPU Sparkline */}
-                <div style={{ height: '22px', width: '100%', marginTop: '4px' }}>
-                  <UptimeChart history={data.nutanix.historyCpu || []} color="#2e7d32" />
+              </div>
+            </div>
+            <SectionHealthMeta health={data.sections.symphony} />
+          </div>
+
+          <div className="hsd-modern-grid">
+            {ticketCards.map((card) => (
+              <HsdOverviewCard
+                key={card.label}
+                title={card.label}
+                total={card.total}
+                breakdown={card.breakdown}
+                accent={card.accent}
+              />
+            ))}
+          </div>
+
+          <div className="hsd-bottom-grid">
+            <div className="hsd-sla-grid">
+              <HsdSlaWidget
+                title="INCIDENT SLA"
+                response={data.symphony.incidentsResponseSla}
+                resolution={data.symphony.incidentsResolutionSla}
+                accent="#c62828"
+              />
+              <HsdSlaWidget
+                title="SERVICE REQUEST SLA"
+                response={data.symphony.requestsResponseSla}
+                resolution={data.symphony.requestsResolutionSla}
+                accent="#1565c0"
+              />
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                minHeight: 0,
+                padding: '14px',
+                borderRadius: '16px',
+                background: 'linear-gradient(180deg, rgba(21,101,192,0.08), rgba(255,255,255,0.56))',
+                border: '1px solid rgba(21,101,192,0.12)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+                <div>
+                  <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>QUEUE MIX</div>
+                  <div style={{ fontSize: '1rem', fontWeight: 800, marginTop: '4px' }}>Backlog state distribution</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.64rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.58 }}>TOTAL OPEN</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#1565c0' }}>{totalHsdBacklog}</div>
                 </div>
               </div>
 
-              {/* Storage */}
-              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <span style={{ fontSize: '0.7rem', opacity: 0.7, fontWeight: 650 }}>LOGICAL STORAGE</span>
-                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: getThresholdColor(data.nutanix.storageUsage) }}>
-                      {data.nutanix.storageUsage}%
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '0.75rem', opacity: 0.8, marginTop: '4px', fontWeight: 500 }}>
-                    {data.nutanix.storageUsedTib || 0} TiB / {data.nutanix.storageCapacityTib || 0} TiB
-                  </div>
-                </div>
-                
-                {/* Bar style progress bar */}
-                <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ 
-                    width: `${data.nutanix.storageUsage}%`, 
-                    height: '100%', 
-                    backgroundColor: getThresholdColor(data.nutanix.storageUsage),
-                    transition: 'width 0.5s ease-in-out'
-                  }} />
-                </div>
+              <div className="hsd-state-grid">
+                <HsdStatusTile label="NEW" count={hsdBreakdownTotals.new} total={totalHsdBacklog} color="#4f6bed" />
+                <HsdStatusTile label="ASSIGNED" count={hsdBreakdownTotals.assigned} total={totalHsdBacklog} color="#f0b429" />
+                <HsdStatusTile label="IN PROGRESS" count={hsdBreakdownTotals.inProgress} total={totalHsdBacklog} color="#1565c0" />
+                <HsdStatusTile label="PENDING" count={hsdBreakdownTotals.pending} total={totalHsdBacklog} color="#7b8794" />
               </div>
 
-              {/* Logical Memory */}
-              <div style={{ padding: '12px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', border: '1px solid rgba(141,110,99,0.1)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '8px' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <span style={{ fontSize: '0.7rem', opacity: 0.7, fontWeight: 650 }}>LOGICAL MEMORY</span>
-                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: getThresholdColor(data.nutanix.logicalMemoryUsage || 0) }}>
-                      {data.nutanix.logicalMemoryUsage || 0}%
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '0.75rem', opacity: 0.8, marginTop: '4px', fontWeight: 500 }}>
-                    {data.nutanix.memoryUsedGib || 0} GiB / {data.nutanix.memoryCapacityGib || 0} GiB
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px', marginTop: 'auto' }}>
+                <div style={{ padding: '10px', borderRadius: '14px', background: 'rgba(255,255,255,0.56)', border: '1px solid rgba(141,110,99,0.12)' }}>
+                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>INC SLA</div>
+                  <div style={{ fontSize: '1.08rem', fontWeight: 800, marginTop: '4px', color: getTonePalette(getMetricTone(data.symphony.incidentsResolutionSla, 92, 98)).text }}>
+                    {formatPercent(data.symphony.incidentsResolutionSla, 2)}
                   </div>
                 </div>
-
-                {/* Bar style progress bar */}
-                <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(0,0,0,0.06)', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ 
-                    width: `${data.nutanix.logicalMemoryUsage || 0}%`, 
-                    height: '100%', 
-                    backgroundColor: getThresholdColor(data.nutanix.logicalMemoryUsage || 0),
-                    transition: 'width 0.5s ease-in-out'
-                  }} />
+                <div style={{ padding: '10px', borderRadius: '14px', background: 'rgba(255,255,255,0.56)', border: '1px solid rgba(141,110,99,0.12)' }}>
+                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>REQ SLA</div>
+                  <div style={{ fontSize: '1.08rem', fontWeight: 800, marginTop: '4px', color: getTonePalette(getMetricTone(data.symphony.requestsResolutionSla, 92, 98)).text }}>
+                    {formatPercent(data.symphony.requestsResolutionSla, 2)}
+                  </div>
+                </div>
+                <div style={{ padding: '10px', borderRadius: '14px', background: 'rgba(255,255,255,0.56)', border: '1px solid rgba(141,110,99,0.12)' }}>
+                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>ACTIVE</div>
+                  <div style={{ fontSize: '1.08rem', fontWeight: 800, marginTop: '4px', color: '#1565c0' }}>{activeHsdWork}</div>
                 </div>
               </div>
             </div>
           </div>
+        </section>
 
-          {/* Unified Network links card */}
-          <UnifiedNetworkCard links={data.networks} sectionHealth={data.sections.networks} />
+        <UnifiedNetworkCard links={data.networks} sectionHealth={data.sections.networks} />
 
-          {/* Symphony Ticket Summary Card */}
-          <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Ticket size={20} style={{ color: 'var(--primary)' }} />
-                <h2 style={{ fontSize: '1.2rem' }}>Hindalco Service Desk (Symphony)</h2>
+        <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
+              <div
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '16px',
+                  background: 'rgba(141,110,99,0.12)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flex: '0 0 auto'
+                }}
+              >
+                <Layers size={20} style={{ color: 'var(--primary)' }} />
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem' }}>
-                  <span style={{ padding: '2px 6px', background: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontWeight: 500 }}>
-                    Inc SLA: {data.symphony.incidentsResolutionSla}%
-                  </span>
-                  <span style={{ padding: '2px 6px', background: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontWeight: 500 }}>
-                    Req SLA: {data.symphony.requestsResolutionSla}%
-                  </span>
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ fontSize: '1.1rem' }}>Server Fleet</h2>
+                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>WINDOWS / LINUX | HCI VM / PHYSICAL</div>
+                <div style={{ fontSize: '0.72rem', opacity: 0.72, marginTop: '6px' }}>
+                  {serverTopologySummary.windows} Windows | {serverTopologySummary.linux} Linux | {serverTopologySummary.hciVm} HCI VM | {serverTopologySummary.physical} Physical
                 </div>
-                <SectionHealthMeta health={data.sections.symphony} />
               </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
-              <div style={{ padding: '10px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', textAlign: 'center' }}>
-                <span style={{ fontSize: '0.7rem', opacity: 0.7, display: 'block' }}>INCIDENTS</span>
-                <span style={{ fontSize: '1.4rem', fontWeight: 700 }}>{data.symphony.openIncidents}</span>
-                <span style={{ fontSize: '0.65rem', display: 'block', opacity: 0.6 }}>
-                  {data.symphony.openIncidentsBreakdown.inProgress} In-Prg
-                </span>
-              </div>
-              <div style={{ padding: '10px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', textAlign: 'center' }}>
-                <span style={{ fontSize: '0.7rem', opacity: 0.7, display: 'block' }}>SR</span>
-                <span style={{ fontSize: '1.4rem', fontWeight: 700 }}>{data.symphony.serviceRequests}</span>
-                <span style={{ fontSize: '0.65rem', display: 'block', opacity: 0.6 }}>
-                  {data.symphony.serviceRequestsBreakdown.inProgress} In-Prg
-                </span>
-              </div>
-              <div style={{ padding: '10px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', textAlign: 'center' }}>
-                <span style={{ fontSize: '0.7rem', opacity: 0.7, display: 'block' }}>WORK ORDERS</span>
-                <span style={{ fontSize: '1.4rem', fontWeight: 700 }}>{data.symphony.workOrders}</span>
-                <span style={{ fontSize: '0.65rem', display: 'block', opacity: 0.6 }}>
-                  {data.symphony.workOrdersBreakdown.inProgress} In-Prg
-                </span>
-              </div>
-              <div style={{ padding: '10px', background: 'rgba(255,255,255,0.4)', borderRadius: '8px', textAlign: 'center' }}>
-                <span style={{ fontSize: '0.7rem', opacity: 0.7, display: 'block' }}>CHANGES</span>
-                <span style={{ fontSize: '1.4rem', fontWeight: 700 }}>{data.symphony.changeRecords}</span>
-                <span style={{ fontSize: '0.65rem', display: 'block', opacity: 0.6 }}>
-                  {data.symphony.changeRecordsBreakdown.inProgress} In-Prg
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Side: Server Nodes Matrix Table */}
-        <div className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '780px', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Layers size={20} style={{ color: 'var(--primary)' }} />
-              <h2 style={{ fontSize: '1.25rem' }}>Server Nodes (16 Monitored)</h2>
             </div>
             <SectionHealthMeta health={data.sections.servers} />
           </div>
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid var(--panel-border)', textAlign: 'left', opacity: 0.7 }}>
-                <th style={{ padding: '8px 4px' }}>STATUS</th>
-                <th style={{ padding: '8px 4px' }}>NODE NAME</th>
-                <th style={{ padding: '8px 4px' }}>CPU</th>
-                <th style={{ padding: '8px 4px' }}>RAM</th>
-                <th style={{ padding: '8px 4px' }}>DISK</th>
-                <th style={{ padding: '8px 4px' }}>BACKUP</th>
-                <th style={{ padding: '8px 4px', width: '90px' }}>CPU TREND</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.servers.map((srv) => (
-                <tr key={srv.id} style={{ borderBottom: '1px solid rgba(141,110,99,0.08)', height: '40px' }}>
-                  <td style={{ padding: '6px 4px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span className={`pulse-dot ${srv.status === 'operational' ? 'ok' : srv.status === 'degraded' ? 'warning' : 'critical'}`} />
-                      <span style={{ fontSize: '0.75rem', textTransform: 'capitalize', fontWeight: 500 }}>{srv.status}</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: '6px 4px', fontWeight: 600, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={srv.name}>
-                    {srv.name.split('.')[0]}
-                  </td>
-                  <td style={{ padding: '6px 4px', fontWeight: 700 }}>
-                    {srv.cpu !== null ? `${srv.cpu}%` : 'N/A'}
-                  </td>
-                  <td style={{ padding: '6px 4px' }}>
-                    {srv.memory !== null ? `${srv.memory}%` : 'N/A'}
-                  </td>
-                  <td style={{ padding: '6px 4px' }}>
-                    {srv.disk || 'N/A'}
-                  </td>
-                  <td style={{ padding: '6px 4px' }}>
-                    <span style={{ 
-                      fontSize: '0.75rem', 
-                      padding: '2px 6px', 
-                      borderRadius: '4px', 
-                      backgroundColor: srv.backupStatus === 'successful' ? '#e8f5e9' : srv.backupStatus === 'failed' ? '#ffebee' : '#f5f5f5',
-                      color: srv.backupStatus === 'successful' ? '#2e7d32' : srv.backupStatus === 'failed' ? '#c62828' : '#757575',
-                      fontWeight: 600
-                    }}>
-                      {srv.backupStatus}
-                    </span>
-                  </td>
-                  <td style={{ padding: '6px 4px', height: '30px' }}>
-                    <div style={{ height: '24px', width: '80px' }}>
-                      <UptimeChart history={srv.history || []} color={srv.status === 'operational' ? '#2e7d32' : '#f57f17'} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          <div className="server-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' }}>
+            <StatusSummaryPill label="Normal" count={serverSummary.normal} tone="normal" />
+            <StatusSummaryPill label="Warning" count={serverSummary.warning} tone="warning" />
+            <StatusSummaryPill label="Critical" count={serverSummary.critical} tone="critical" />
+            <StatusSummaryPill label="Offline" count={serverSummary.offline} tone="offline" />
+          </div>
 
-      </div>
+          <div className="server-group-grid">
+            <div className="server-group-grid__windows-hci">
+              <ServerGroupCard title="Windows / HCI VM" subtitle="Nutanix-backed virtual servers" servers={groupedServers.windowsHci} accent="#1565c0" />
+            </div>
+            <div className="server-group-grid__windows-physical">
+              <ServerGroupCard title="Windows / Physical" subtitle="SolarWinds-only physical estate" servers={groupedServers.windowsPhysical} accent="#8d6e63" />
+            </div>
+            <div className="server-group-grid__linux-hci">
+              <ServerGroupCard title="Linux / HCI VM" subtitle="Virtual Linux workloads with live Nutanix feed" servers={groupedServers.linuxHci} accent="#2e7d32" />
+            </div>
+            <div className="server-group-grid__linux-physical">
+              <ServerGroupCard title="Linux / Physical" subtitle="Bare-metal Linux estate" servers={groupedServers.linuxPhysical} accent="#546e7a" />
+            </div>
+          </div>
+        </section>
+      </main>
 
-      {/* Footer */}
-      <footer className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 20px', fontSize: '0.75rem', opacity: 0.8 }}>
+      <footer className="glass-panel dashboard-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 16px', fontSize: '0.74rem', opacity: 0.8 }}>
         <div>SYSTEM STATUS: {overallSystemStatus}</div>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {Object.values(data.sources).map((source) => {
@@ -558,13 +1355,12 @@ export default function Dashboard() {
                 title={source.lastError || undefined}
               >
                 <span className={`pulse-dot ${getHealthPulseClass(source.status)}`} />
-                {source.label}: {getHealthText(source.status)} · {formatSyncTime(source.lastSuccessAt)}
+                {source.label}: {getHealthText(source.status)} | {formatSyncTime(source.lastSuccessAt)}
               </span>
             );
           })}
         </div>
       </footer>
-
     </div>
   );
 }

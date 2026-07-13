@@ -36,6 +36,25 @@ interface NetworkLink {
   portSpeed?: string;
   circuitId?: string;
   linkType?: string;
+  alias?: string;
+  interfaceType?: string;
+  ipAddress?: string;
+  administrativeStatus?: string;
+  operationalStatus?: string;
+  lastStatusChange?: string;
+  bandwidthReceiveMbps?: number | null;
+  bandwidthTransmitMbps?: number | null;
+  configuredSpeedMbps?: number | null;
+  currentTrafficReceiveMbps?: number | null;
+  currentTrafficTransmitMbps?: number | null;
+  packetsPerSecondReceive?: number | null;
+  packetsPerSecondTransmit?: number | null;
+  averagePacketSizeReceive?: number | null;
+  averagePacketSizeTransmit?: number | null;
+  realtimeTransmitUtilization?: number | null;
+  realtimeReceiveUtilization?: number | null;
+  dailyTransmitUtilization?: number | null;
+  dailyReceiveUtilization?: number | null;
   history: number[];
 }
 
@@ -691,6 +710,25 @@ export function updateSolarWinds(data: {
     portSpeed?: string;
     circuitId?: string;
     linkType?: string;
+    alias?: string;
+    interfaceType?: string;
+    ipAddress?: string;
+    administrativeStatus?: string;
+    operationalStatus?: string;
+    lastStatusChange?: string;
+    bandwidthReceiveMbps?: number;
+    bandwidthTransmitMbps?: number;
+    configuredSpeedMbps?: number;
+    currentTrafficReceiveMbps?: number;
+    currentTrafficTransmitMbps?: number;
+    packetsPerSecondReceive?: number;
+    packetsPerSecondTransmit?: number;
+    averagePacketSizeReceive?: number;
+    averagePacketSizeTransmit?: number;
+    realtimeTransmitUtilization?: number;
+    realtimeReceiveUtilization?: number;
+    dailyTransmitUtilization?: number;
+    dailyReceiveUtilization?: number;
   }>;
 }): void {
   const attemptedAt = currentTimestamp(data.meta);
@@ -777,6 +815,63 @@ export function updateSolarWinds(data: {
       }
       if (incoming.linkType !== undefined) {
         network.linkType = incoming.linkType;
+      }
+      if (incoming.alias !== undefined) {
+        network.alias = incoming.alias;
+      }
+      if (incoming.interfaceType !== undefined) {
+        network.interfaceType = incoming.interfaceType;
+      }
+      if (incoming.ipAddress !== undefined) {
+        network.ipAddress = incoming.ipAddress;
+      }
+      if (incoming.administrativeStatus !== undefined) {
+        network.administrativeStatus = incoming.administrativeStatus;
+      }
+      if (incoming.operationalStatus !== undefined) {
+        network.operationalStatus = incoming.operationalStatus;
+      }
+      if (incoming.lastStatusChange !== undefined) {
+        network.lastStatusChange = incoming.lastStatusChange;
+      }
+      if (incoming.bandwidthReceiveMbps !== undefined) {
+        network.bandwidthReceiveMbps = incoming.bandwidthReceiveMbps;
+      }
+      if (incoming.bandwidthTransmitMbps !== undefined) {
+        network.bandwidthTransmitMbps = incoming.bandwidthTransmitMbps;
+      }
+      if (incoming.configuredSpeedMbps !== undefined) {
+        network.configuredSpeedMbps = incoming.configuredSpeedMbps;
+      }
+      if (incoming.currentTrafficReceiveMbps !== undefined) {
+        network.currentTrafficReceiveMbps = incoming.currentTrafficReceiveMbps;
+      }
+      if (incoming.currentTrafficTransmitMbps !== undefined) {
+        network.currentTrafficTransmitMbps = incoming.currentTrafficTransmitMbps;
+      }
+      if (incoming.packetsPerSecondReceive !== undefined) {
+        network.packetsPerSecondReceive = incoming.packetsPerSecondReceive;
+      }
+      if (incoming.packetsPerSecondTransmit !== undefined) {
+        network.packetsPerSecondTransmit = incoming.packetsPerSecondTransmit;
+      }
+      if (incoming.averagePacketSizeReceive !== undefined) {
+        network.averagePacketSizeReceive = incoming.averagePacketSizeReceive;
+      }
+      if (incoming.averagePacketSizeTransmit !== undefined) {
+        network.averagePacketSizeTransmit = incoming.averagePacketSizeTransmit;
+      }
+      if (incoming.realtimeTransmitUtilization !== undefined) {
+        network.realtimeTransmitUtilization = incoming.realtimeTransmitUtilization;
+      }
+      if (incoming.realtimeReceiveUtilization !== undefined) {
+        network.realtimeReceiveUtilization = incoming.realtimeReceiveUtilization;
+      }
+      if (incoming.dailyTransmitUtilization !== undefined) {
+        network.dailyTransmitUtilization = incoming.dailyTransmitUtilization;
+      }
+      if (incoming.dailyReceiveUtilization !== undefined) {
+        network.dailyReceiveUtilization = incoming.dailyReceiveUtilization;
       }
       if (incoming.status !== undefined) {
         network.status = normalizeAssetStatus(incoming.status) ?? network.status;

@@ -47,8 +47,8 @@ const SERVER_NAMES = [
 const NETWORK_NODE_MAP = [
   { id: 'sw-net-1', provider: 'RJIO (ISP1)', nodeId: 'N:1419', nodeNumericId: 1419, kind: 'carrier' as const },
   { id: 'sw-net-2', provider: 'RailTel (ISP2)', nodeId: 'N:1417', nodeNumericId: 1417, kind: 'carrier' as const },
-  { id: 'sw-net-3', provider: 'HIL-UTK-EC-1 (SDWAN-A)', nodeId: 'N:401', nodeNumericId: 401, kind: 'sdwan' as const },
-  { id: 'sw-net-4', provider: 'HIL-UTK-EC-2 (SDWAN-B)', nodeId: 'N:402', nodeNumericId: 402, kind: 'sdwan' as const }
+  { id: 'sw-net-3', provider: 'HIL-UTK-EC-1 (SDWAN-A)', nodeId: 'N:401', nodeNumericId: 401, interfaceId: 4744, kind: 'sdwan' as const },
+  { id: 'sw-net-4', provider: 'HIL-UTK-EC-2 (SDWAN-B)', nodeId: 'N:402', nodeNumericId: 402, interfaceId: 12134, kind: 'sdwan' as const }
 ];
 
 type AssetStatus = 'operational' | 'degraded' | 'down';
@@ -76,6 +76,25 @@ interface NetworkMetric {
   portSpeed?: string;
   circuitId?: string;
   linkType?: string;
+  alias?: string;
+  interfaceType?: string;
+  ipAddress?: string;
+  administrativeStatus?: string;
+  operationalStatus?: string;
+  lastStatusChange?: string;
+  bandwidthReceiveMbps?: number;
+  bandwidthTransmitMbps?: number;
+  configuredSpeedMbps?: number;
+  currentTrafficReceiveMbps?: number;
+  currentTrafficTransmitMbps?: number;
+  packetsPerSecondReceive?: number;
+  packetsPerSecondTransmit?: number;
+  averagePacketSizeReceive?: number;
+  averagePacketSizeTransmit?: number;
+  realtimeTransmitUtilization?: number;
+  realtimeReceiveUtilization?: number;
+  dailyTransmitUtilization?: number;
+  dailyReceiveUtilization?: number;
 }
 
 interface SectionResult<T> {
@@ -109,6 +128,28 @@ interface CarrierMetadata {
   portSpeed?: string;
   circuitId?: string;
   linkType?: string;
+}
+
+interface InterfaceDetailSnapshot {
+  alias?: string;
+  interfaceType?: string;
+  ipAddress?: string;
+  administrativeStatus?: string;
+  operationalStatus?: string;
+  lastStatusChange?: string;
+  bandwidthReceiveMbps?: number;
+  bandwidthTransmitMbps?: number;
+  configuredSpeedMbps?: number;
+  currentTrafficReceiveMbps?: number;
+  currentTrafficTransmitMbps?: number;
+  packetsPerSecondReceive?: number;
+  packetsPerSecondTransmit?: number;
+  averagePacketSizeReceive?: number;
+  averagePacketSizeTransmit?: number;
+  realtimeTransmitUtilization?: number;
+  realtimeReceiveUtilization?: number;
+  dailyTransmitUtilization?: number;
+  dailyReceiveUtilization?: number;
 }
 
 const hostConfigs: Record<HostKey, HostConfig> = {
@@ -273,6 +314,58 @@ function parseCarrierMetadata(displayName: string | undefined): CarrierMetadata 
     portSpeed: portSpeedMatch?.[1]?.replace(/\s+/g, ' '),
     circuitId: circuitMatch?.[1],
     linkType: normalizedProvider ? `${normalizedProvider} ILL` : undefined
+  };
+}
+
+function parseMetricNumber(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const match = value.match(/-?\d+(?:\.\d+)?/);
+  if (!match) {
+    return undefined;
+  }
+
+  return Number(parseFloat(match[0]).toFixed(2));
+}
+
+function captureTextGroup(bodyText: string, pattern: RegExp): string | undefined {
+  const match = bodyText.match(pattern);
+  return match?.[1]?.trim();
+}
+
+function captureNumericGroup(bodyText: string, pattern: RegExp): number | undefined {
+  const value = captureTextGroup(bodyText, pattern);
+  return parseMetricNumber(value);
+}
+
+function parseInterfaceDetailsText(bodyText: string): InterfaceDetailSnapshot {
+  const sanitized = bodyText.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+  const utilizationMatches = [...sanitized.matchAll(/(\d+(?:\.\d+)?) % Transmit Percent Utilization (\d+(?:\.\d+)?) % Received Percent Utilization/g)];
+  const realTimeUtilization = utilizationMatches[0];
+  const dailyUtilization = utilizationMatches[1];
+
+  return {
+    alias: captureTextGroup(sanitized, /Alias\s+(.+?)\s+Index/i),
+    interfaceType: captureTextGroup(sanitized, /Interface Type\s+(.+?)\s+MAC Address/i),
+    ipAddress: captureTextGroup(sanitized, /IP Address\s+(.+?)\s+Administrative Status/i),
+    administrativeStatus: captureTextGroup(sanitized, /Administrative Status\s+(.+?)\s+Operational Status/i),
+    operationalStatus: captureTextGroup(sanitized, /Operational Status\s+(.+?)\s+Last Status Change/i),
+    lastStatusChange: captureTextGroup(sanitized, /Last Status Change\s+(.+?)\s+Receive\s+Transmit/i),
+    bandwidthReceiveMbps: captureNumericGroup(sanitized, /Interface Bandwidth\s+([0-9.]+\s*Mbps)\s+[0-9.]+\s*Mbps/i),
+    bandwidthTransmitMbps: captureNumericGroup(sanitized, /Interface Bandwidth\s+[0-9.]+\s*Mbps\s+([0-9.]+\s*Mbps)/i),
+    currentTrafficReceiveMbps: captureNumericGroup(sanitized, /Current Traffic\s+([0-9.]+\s*Mbps)\s+[0-9.]+\s*Mbps/i),
+    currentTrafficTransmitMbps: captureNumericGroup(sanitized, /Current Traffic\s+[0-9.]+\s*Mbps\s+([0-9.]+\s*Mbps)/i),
+    packetsPerSecondReceive: captureNumericGroup(sanitized, /Packets per Second\s+([0-9.]+\s*pps)\s+[0-9.]+\s*pps/i),
+    packetsPerSecondTransmit: captureNumericGroup(sanitized, /Packets per Second\s+[0-9.]+\s*pps\s+([0-9.]+\s*pps)/i),
+    averagePacketSizeReceive: captureNumericGroup(sanitized, /Average Packet Size\s+([0-9.]+\s*bytes)\s+[0-9.]+\s*bytes/i),
+    averagePacketSizeTransmit: captureNumericGroup(sanitized, /Average Packet Size\s+[0-9.]+\s*bytes\s+([0-9.]+\s*bytes)/i),
+    configuredSpeedMbps: captureNumericGroup(sanitized, /Configured Interface Speed\s+([0-9.]+\s*Mbps)/i),
+    realtimeTransmitUtilization: realTimeUtilization ? Number(parseFloat(realTimeUtilization[1]).toFixed(2)) : undefined,
+    realtimeReceiveUtilization: realTimeUtilization ? Number(parseFloat(realTimeUtilization[2]).toFixed(2)) : undefined,
+    dailyTransmitUtilization: dailyUtilization ? Number(parseFloat(dailyUtilization[1]).toFixed(2)) : undefined,
+    dailyReceiveUtilization: dailyUtilization ? Number(parseFloat(dailyUtilization[2]).toFixed(2)) : undefined
   };
 }
 
@@ -491,6 +584,22 @@ async function fetchAvailabilityToday(page: Page, nodeNumericId: number): Promis
   return parsePercentText(todayRow[1]);
 }
 
+async function scrapeInterfaceDetailPage(context: BrowserContext, interfaceId: number): Promise<InterfaceDetailSnapshot> {
+  const detailPage = await context.newPage();
+
+  try {
+    await detailPage.goto(
+      `http://${SW_HOST_NETWORKS}/Orion/Interfaces/InterfaceDetails.aspx?NetObject=I:${interfaceId}&view=InterfaceDetails`,
+      { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT }
+    );
+    await detailPage.waitForTimeout(2000);
+    const bodyText = await detailPage.locator('body').innerText();
+    return parseInterfaceDetailsText(bodyText);
+  } finally {
+    await detailPage.close();
+  }
+}
+
 async function scrapeServers(page: Page): Promise<ServerMetric[]> {
   const serverMap = new Map<string, ServerMetric>();
   const tableTexts = await page.locator('table.NeedsZebraStripes, table.sw-custom-query-table').evaluateAll((nodes) =>
@@ -510,7 +619,7 @@ async function scrapeServers(page: Page): Promise<ServerMetric[]> {
   return servers;
 }
 
-async function scrapeNetworks(page: Page): Promise<NetworkMetric[]> {
+async function scrapeNetworks(context: BrowserContext, page: Page): Promise<NetworkMetric[]> {
   const networks = new Map<string, NetworkMetric>();
   const rows = await page.locator('table.NeedsZebraStripes tr').all();
 
@@ -593,6 +702,23 @@ async function scrapeNetworks(page: Page): Promise<NetworkMetric[]> {
     });
   }));
 
+  for (const target of NETWORK_NODE_MAP) {
+    if (target.kind !== 'sdwan' || !target.interfaceId) {
+      continue;
+    }
+
+    try {
+      const detailSnapshot = await scrapeInterfaceDetailPage(context, target.interfaceId);
+      networks.set(target.id, {
+        id: target.id,
+        ...(networks.get(target.id) ?? {}),
+        ...detailSnapshot
+      });
+    } catch (err: any) {
+      console.warn(`[${new Date().toISOString()}] SolarWinds interface detail scrape failed for ${target.id}: ${err.message}`);
+    }
+  }
+
   const result = [...networks.values()];
   if (result.length === 0) {
     throw new Error('SolarWinds network views did not expose any recognized links');
@@ -645,7 +771,7 @@ async function collectSolarWindsData() {
         'table.NeedsZebraStripes'
       );
       networkContext = context;
-      networkResult.data = await scrapeNetworks(page);
+      networkResult.data = await scrapeNetworks(context, page);
       networkResult.reportedAt = new Date().toISOString();
       await context.storageState({ path: hostConfigs.networks.storageStatePath });
     } catch (err: any) {
