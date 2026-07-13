@@ -28,6 +28,18 @@ interface ServerNode {
   lastBoot: string | null;
   availabilityToday: number | null;
   history: number[];
+  nutanixCpu: number | null;
+  nutanixMemory: number | null;
+  nutanixDisk: string | null;
+  nutanixStatus: AssetStatus | null;
+  nutanixHistory: number[];
+  solarwindsCpu: number | null;
+  solarwindsMemory: number | null;
+  solarwindsDisk: string | null;
+  solarwindsStatus: AssetStatus | null;
+  solarwindsHistory: number[];
+  effectiveTelemetrySource?: ServerSourceOfTruth | null;
+  usingFallback?: boolean;
 }
 
 interface NetworkLink {
@@ -206,7 +218,17 @@ function createDefaultServer(id: string, name: string): ServerNode {
     hardwareType: null,
     lastBoot: null,
     availabilityToday: null,
-    history: []
+    history: [],
+    nutanixCpu: null,
+    nutanixMemory: null,
+    nutanixDisk: null,
+    nutanixStatus: null,
+    nutanixHistory: [],
+    solarwindsCpu: null,
+    solarwindsMemory: null,
+    solarwindsDisk: null,
+    solarwindsStatus: null,
+    solarwindsHistory: []
   };
 }
 
@@ -248,6 +270,7 @@ const SECTION_TEMPLATES: Record<SectionKey, Omit<StoredSectionState, 'lastAttemp
   networks: { key: 'networks', label: 'ISP Gateways & SDWAN', source: 'solarwinds', pollIntervalMs: 30000 },
   symphony: { key: 'symphony', label: 'Hindalco Service Desk', source: 'symphony', pollIntervalMs: 60000 }
 };
+const NUTANIX_FALLBACK_DELAY_MS = 10 * 60 * 1000;
 
 const dbPath = resolveDbPath();
 const dbDir = path.dirname(dbPath);
@@ -459,6 +482,18 @@ function mergeServers(incomingServers: any[]): ServerNode[] {
     target.hardwareType = typeof target.hardwareType === 'string' ? target.hardwareType : null;
     target.lastBoot = typeof target.lastBoot === 'string' ? target.lastBoot : null;
     target.availabilityToday = typeof target.availabilityToday === 'number' ? target.availabilityToday : null;
+    target.nutanixCpu = typeof target.nutanixCpu === 'number' ? target.nutanixCpu : null;
+    target.nutanixMemory = typeof target.nutanixMemory === 'number' ? target.nutanixMemory : null;
+    target.nutanixDisk = typeof target.nutanixDisk === 'string' ? target.nutanixDisk : null;
+    target.nutanixStatus = normalizeAssetStatus(target.nutanixStatus) ?? null;
+    target.nutanixHistory = Array.isArray(target.nutanixHistory) ? target.nutanixHistory : [];
+    target.solarwindsCpu = typeof target.solarwindsCpu === 'number' ? target.solarwindsCpu : null;
+    target.solarwindsMemory = typeof target.solarwindsMemory === 'number' ? target.solarwindsMemory : null;
+    target.solarwindsDisk = typeof target.solarwindsDisk === 'string' ? target.solarwindsDisk : null;
+    target.solarwindsStatus = normalizeAssetStatus(target.solarwindsStatus) ?? null;
+    target.solarwindsHistory = Array.isArray(target.solarwindsHistory) ? target.solarwindsHistory : [];
+    target.effectiveTelemetrySource = normalizeServerSource(target.effectiveTelemetrySource);
+    target.usingFallback = typeof target.usingFallback === 'boolean' ? target.usingFallback : false;
   }
 
   return merged;
@@ -570,9 +605,7 @@ function normalizeServerPlatform(platform?: string | null): ServerPlatform | nul
 
 function isNutanixBackedServer(server: ServerNode): boolean {
   return server.sourceOfTruth === 'nutanix'
-    || server.platform === 'hci-vm'
-    || server.disk !== null
-    || server.backupStatus !== 'N/A';
+    || server.platform === 'hci-vm';
 }
 
 function markSectionAttempt(sectionKey: SectionKey, attemptedAt: string): void {
@@ -670,6 +703,71 @@ function deriveSources(sections: Record<SectionKey, SectionHealth>): Record<Coll
   return result;
 }
 
+function hasFreshNutanixServerTelemetry(server: ServerNode): boolean {
+  return server.nutanixCpu !== null
+    || server.nutanixMemory !== null
+    || server.nutanixDisk !== null
+    || server.nutanixStatus !== null
+    || server.nutanixHistory.length > 0;
+}
+
+function hasSolarWindsServerTelemetry(server: ServerNode): boolean {
+  return server.solarwindsCpu !== null
+    || server.solarwindsMemory !== null
+    || server.solarwindsDisk !== null
+    || server.solarwindsStatus !== null
+    || server.solarwindsHistory.length > 0;
+}
+
+function shouldUseSolarWindsFallback(server: ServerNode, sections: Record<SectionKey, SectionHealth>): boolean {
+  if (!isNutanixBackedServer(server) || !hasSolarWindsServerTelemetry(server)) {
+    return false;
+  }
+
+  const lastNutanixSuccess = sections.nutanix.lastSuccessAt ? new Date(sections.nutanix.lastSuccessAt).getTime() : 0;
+  if (!lastNutanixSuccess) {
+    return true;
+  }
+
+  return (Date.now() - lastNutanixSuccess) > NUTANIX_FALLBACK_DELAY_MS;
+}
+
+function materializeServer(server: ServerNode, sections: Record<SectionKey, SectionHealth>): ServerNode {
+  const usingFallback = shouldUseSolarWindsFallback(server, sections);
+  const prefersNutanix = isNutanixBackedServer(server);
+  const effectiveSource: ServerSourceOfTruth | null =
+    usingFallback ? 'solarwinds' :
+    prefersNutanix ? 'nutanix' :
+    'solarwinds';
+
+  const cpu = effectiveSource === 'nutanix'
+    ? (server.nutanixCpu ?? server.cpu)
+    : (server.solarwindsCpu ?? server.cpu);
+  const memory = effectiveSource === 'nutanix'
+    ? (server.nutanixMemory ?? server.memory)
+    : (server.solarwindsMemory ?? server.memory);
+  const disk = effectiveSource === 'nutanix'
+    ? (server.nutanixDisk ?? server.disk)
+    : (server.solarwindsDisk ?? server.disk);
+  const status = effectiveSource === 'nutanix'
+    ? (server.nutanixStatus ?? server.status)
+    : (server.solarwindsStatus ?? server.status);
+  const history = effectiveSource === 'nutanix'
+    ? (server.nutanixHistory.length > 0 ? server.nutanixHistory : server.history)
+    : (server.solarwindsHistory.length > 0 ? server.solarwindsHistory : server.history);
+
+  return {
+    ...server,
+    cpu,
+    memory,
+    disk,
+    status,
+    history,
+    effectiveTelemetrySource: effectiveSource,
+    usingFallback
+  };
+}
+
 function currentTimestamp(meta?: UpdateMeta): string {
   return meta?.attemptedAt ?? new Date().toISOString();
 }
@@ -688,6 +786,7 @@ export function getDashboardState(): DbSchema {
   const { sections: _storedSections, ...rest } = snapshot;
   return {
     ...rest,
+    servers: snapshot.servers.map((server) => materializeServer(server, sections)),
     sections,
     sources: deriveSources(sections)
   };
@@ -763,6 +862,7 @@ export function updateNutanix(data: {
 
       if (vm.diskUsage !== undefined) {
         server.disk = vm.diskUsage;
+        server.nutanixDisk = vm.diskUsage;
       }
       if (vm.backupStatus !== undefined) {
         server.backupStatus = vm.backupStatus;
@@ -772,12 +872,17 @@ export function updateNutanix(data: {
       if (vm.cpu !== undefined) {
         server.cpu = vm.cpu;
         server.history = pushToHistory(server.history, vm.cpu);
+        server.nutanixCpu = vm.cpu;
+        server.nutanixHistory = pushToHistory(server.nutanixHistory, vm.cpu);
       }
       if (vm.memory !== undefined) {
         server.memory = vm.memory;
+        server.nutanixMemory = vm.memory;
       }
       if (vm.status !== undefined) {
-        server.status = normalizeAssetStatus(vm.status) ?? server.status;
+        const normalizedStatus = normalizeAssetStatus(vm.status) ?? server.status;
+        server.status = normalizedStatus;
+        server.nutanixStatus = normalizedStatus;
       }
     }
   }
@@ -798,6 +903,7 @@ export function updateSolarWinds(data: {
     name: string;
     cpu?: number;
     memory?: number;
+    disk?: string;
     status?: string;
     nodeId?: number;
     pollingIp?: string;
@@ -886,6 +992,19 @@ export function updateSolarWinds(data: {
       if (incoming.availabilityToday !== undefined) {
         server.availabilityToday = incoming.availabilityToday;
       }
+      if (incoming.cpu !== undefined) {
+        server.solarwindsCpu = incoming.cpu;
+        server.solarwindsHistory = pushToHistory(server.solarwindsHistory, incoming.cpu);
+      }
+      if (incoming.memory !== undefined) {
+        server.solarwindsMemory = incoming.memory;
+      }
+      if (incoming.disk !== undefined) {
+        server.solarwindsDisk = incoming.disk;
+      }
+      if (incoming.status !== undefined) {
+        server.solarwindsStatus = normalizeAssetStatus(incoming.status) ?? server.solarwindsStatus;
+      }
 
       if (!isNutanixBackedServer(server)) {
         server.sourceOfTruth = incoming.sourceOfTruth ?? 'solarwinds';
@@ -897,6 +1016,9 @@ export function updateSolarWinds(data: {
         }
         if (incoming.memory !== undefined) {
           server.memory = incoming.memory;
+        }
+        if (incoming.disk !== undefined) {
+          server.disk = incoming.disk;
         }
         if (incoming.status !== undefined) {
           server.status = normalizeAssetStatus(incoming.status) ?? server.status;

@@ -58,6 +58,7 @@ interface ServerMetric {
   name: string;
   cpu?: number;
   memory?: number;
+  disk?: string;
   status?: AssetStatus;
   nodeId?: number;
   pollingIp?: string;
@@ -185,6 +186,13 @@ interface PerfstackMetricResponse {
     dateTimeStamp?: string;
     value?: number | null;
   }>;
+}
+
+interface PerfstackEntityRelationship {
+  id: string;
+  instanceType?: string;
+  displayName?: string;
+  description?: string | null;
 }
 
 const SERVER_NODE_MAP: ServerInventoryEntry[] = [
@@ -683,11 +691,15 @@ async function fetchServerNodeDetails(page: Page, nodeId: number): Promise<NodeD
   return result.d;
 }
 
-function buildPerfstackMetricUrl(nodeId: number, metricId: string): string {
+function buildPerfstackEntityMetricUrl(entityId: string, metricId: string): string {
   const endTime = new Date();
   const startTime = new Date(endTime.getTime() - 12 * 60 * 60 * 1000);
 
-  return `/api2/perfstack/metrics/0_Orion.Nodes_${nodeId}-${metricId}/?displayNameSource=&endTime=${encodeURIComponent(endTime.toISOString())}&groupBy=&lang=en-gb&limitationId=&resolution=180&startTime=${encodeURIComponent(startTime.toISOString())}&viewId=2`;
+  return `/api2/perfstack/metrics/${entityId}-${metricId}/?displayNameSource=&endTime=${encodeURIComponent(endTime.toISOString())}&groupBy=&lang=en-gb&limitationId=&resolution=180&startTime=${encodeURIComponent(startTime.toISOString())}&viewId=2`;
+}
+
+function buildPerfstackMetricUrl(nodeId: number, metricId: string): string {
+  return buildPerfstackEntityMetricUrl(`0_Orion.Nodes_${nodeId}`, metricId);
 }
 
 function extractLatestMeasurementValue(metric: PerfstackMetricResponse): number | undefined {
@@ -713,6 +725,61 @@ async function fetchLatestPerfstackMetric(page: Page, nodeId: number, metricIds:
   }
 
   return undefined;
+}
+
+async function fetchLatestPerfstackEntityMetric(page: Page, entityId: string, metricIds: string[]): Promise<number | undefined> {
+  for (const metricId of metricIds) {
+    const metric = await fetchJsonFromPage<PerfstackMetricResponse>(page, buildPerfstackEntityMetricUrl(entityId, metricId));
+    const latestValue = extractLatestMeasurementValue(metric);
+    if (latestValue !== undefined) {
+      return latestValue;
+    }
+  }
+
+  return undefined;
+}
+
+async function fetchPerfstackRelationships(page: Page, entityId: string): Promise<PerfstackEntityRelationship[]> {
+  return fetchJsonFromPage<PerfstackEntityRelationship[]>(
+    page,
+    `/api2/perfstack/entities/${entityId}/relationships/?lang=en-gb&viewId=2`
+  );
+}
+
+async function fetchFixedDiskUsage(page: Page, nodeId: number): Promise<number | undefined> {
+  try {
+    const relationships = await fetchPerfstackRelationships(page, `0_Orion.Nodes_${nodeId}`);
+    const fixedDisks = relationships.filter((relationship) =>
+      relationship.instanceType === 'Orion.Volumes'
+      && typeof relationship.id === 'string'
+      && typeof relationship.description === 'string'
+      && relationship.description.toLowerCase().includes('fixed disk')
+    );
+
+    if (fixedDisks.length === 0) {
+      return undefined;
+    }
+
+    const usages = await Promise.all(
+      fixedDisks.map(async (volume) => {
+        try {
+          return await fetchLatestPerfstackEntityMetric(page, volume.id, ['Orion.VolumeUsageHistory.PercentDiskUsed']);
+        } catch {
+          return undefined;
+        }
+      })
+    );
+
+    const validUsages = usages.filter((value): value is number => typeof value === 'number' && !Number.isNaN(value));
+    if (validUsages.length === 0) {
+      return undefined;
+    }
+
+    return Number(Math.max(...validUsages).toFixed(2));
+  } catch (err: any) {
+    console.warn(`[${new Date().toISOString()}] SolarWinds fixed-disk usage probe failed for node ${nodeId}: ${err.message}`);
+    return undefined;
+  }
 }
 
 async function discoverServerInventory(page: Page): Promise<ServerInventoryEntry[]> {
@@ -745,11 +812,12 @@ async function discoverServerInventory(page: Page): Promise<ServerInventoryEntry
 }
 
 async function scrapeServerNode(page: Page, entry: ServerInventoryEntry): Promise<ServerMetric> {
-  const [details, availabilityToday, cpu, memory] = await Promise.all([
+  const [details, availabilityToday, cpu, memory, diskUsage] = await Promise.all([
     fetchServerNodeDetails(page, entry.nodeId),
     fetchAvailabilityToday(page, entry.nodeId),
     fetchLatestPerfstackMetric(page, entry.nodeId, ['Orion.CPUMultiLoad.AvgLoad', 'Orion.CPULoad.AvgLoad']),
-    fetchLatestPerfstackMetric(page, entry.nodeId, ['Orion.CPULoad.AvgPercentMemoryUsed'])
+    fetchLatestPerfstackMetric(page, entry.nodeId, ['Orion.CPULoad.AvgPercentMemoryUsed']),
+    fetchFixedDiskUsage(page, entry.nodeId)
   ]);
 
   return {
@@ -757,6 +825,7 @@ async function scrapeServerNode(page: Page, entry: ServerInventoryEntry): Promis
     nodeId: entry.nodeId,
     cpu,
     memory,
+    disk: diskUsage !== undefined ? `${diskUsage}%` : undefined,
     status: parseAssetStatus(details?.NodeStatusDescription) ?? parseAssetStatus(details?.NodeStatusAltText),
     pollingIp: details?.IPAddressString || details?.HrefIPAddress,
     machineType: details?.MachineType,

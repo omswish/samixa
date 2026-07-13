@@ -33,6 +33,8 @@ interface ServerNode {
   lastBoot?: string | null;
   availabilityToday?: number | null;
   history: number[];
+  effectiveTelemetrySource?: 'nutanix' | 'solarwinds' | null;
+  usingFallback?: boolean;
 }
 
 interface NetworkLink {
@@ -373,6 +375,15 @@ function getServerHardwareLabel(server: ServerNode) {
 }
 
 function getServerSourceChip(server: ServerNode) {
+  if (server.usingFallback && server.effectiveTelemetrySource === 'solarwinds') {
+    return {
+      label: 'SW45 FB',
+      color: '#ef6c00',
+      background: 'rgba(239,108,0,0.12)',
+      border: 'rgba(239,108,0,0.18)'
+    };
+  }
+
   if (server.sourceOfTruth === 'nutanix') {
     return {
       label: 'NX',
@@ -390,6 +401,42 @@ function getServerSourceChip(server: ServerNode) {
   };
 }
 
+function getServerProtectionChip(server: ServerNode) {
+  if (server.backupStatus === 'successful') {
+    return {
+      label: 'PD OK',
+      accent: '#1b5e20',
+      background: 'rgba(46,125,50,0.12)',
+      border: 'rgba(46,125,50,0.18)'
+    };
+  }
+
+  if (server.backupStatus === 'failed') {
+    return {
+      label: 'PD FAIL',
+      accent: '#b71c1c',
+      background: 'rgba(198,40,40,0.12)',
+      border: 'rgba(198,40,40,0.18)'
+    };
+  }
+
+  if (server.sourceOfTruth === 'nutanix' || server.platform === 'hci-vm') {
+    return {
+      label: 'NO PD',
+      accent: '#ef6c00',
+      background: 'rgba(239,108,0,0.12)',
+      border: 'rgba(239,108,0,0.18)'
+    };
+  }
+
+  return {
+    label: 'SW45',
+    accent: '#8d6e63',
+    background: 'rgba(141,110,99,0.10)',
+    border: 'rgba(141,110,99,0.16)'
+  };
+}
+
 function isWindowsServerName(name: string) {
   return name.toLowerCase().endsWith('.abgplanet.abg.com');
 }
@@ -402,7 +449,7 @@ function isHciVm(server: ServerNode) {
     return false;
   }
 
-  return server.disk !== null || server.backupStatus !== 'N/A';
+  return false;
 }
 
 function getServerOsFamily(server: ServerNode) {
@@ -959,16 +1006,11 @@ function ServerFleetTableRow({ server }: { server: ServerNode }) {
   const palette = getTonePalette(visual.tone);
   const sourceChip = getServerSourceChip(server);
   const categoryPalette = getServerCategoryPalette(server);
+  const protectionChip = getServerProtectionChip(server);
   const bootLabel = formatServerBootLabel(server.lastBoot)?.replace('BOOT ', '');
   const tertiaryMetric = server.disk !== null
     ? { value: visual.diskPct, tone: getMetricTone(visual.diskPct), label: 'DSK' }
     : { value: server.availabilityToday ?? null, tone: getAvailabilityTone(server.availabilityToday), label: 'AVL' };
-  const backupMeta =
-    server.backupStatus === 'successful'
-      ? { label: 'BKP OK', accent: '#1b5e20', background: 'rgba(46,125,50,0.12)', border: 'rgba(46,125,50,0.18)' }
-      : server.backupStatus === 'failed'
-        ? { label: 'BKP FAIL', accent: '#b71c1c', background: 'rgba(198,40,40,0.12)', border: 'rgba(198,40,40,0.18)' }
-        : { label: 'SW45', accent: '#8d6e63', background: 'rgba(141,110,99,0.10)', border: 'rgba(141,110,99,0.16)' };
 
   return (
     <div
@@ -1037,15 +1079,15 @@ function ServerFleetTableRow({ server }: { server: ServerNode }) {
             justifyContent: 'center',
             padding: '3px 5px',
             borderRadius: '999px',
-            background: backupMeta.background,
-            border: `1px solid ${backupMeta.border}`,
+            background: protectionChip.background,
+            border: `1px solid ${protectionChip.border}`,
             fontSize: '0.46rem',
             fontWeight: 800,
             letterSpacing: '0.08em',
-            color: backupMeta.accent
+            color: protectionChip.accent
           }}
         >
-          {backupMeta.label}
+          {protectionChip.label}
         </span>
       </div>
     </div>
@@ -1136,15 +1178,10 @@ function FleetServerTile({ server }: { server: ServerNode }) {
   const palette = getTonePalette(visual.tone);
   const sourceChip = getServerSourceChip(server);
   const categoryPalette = getServerCategoryPalette(server);
+  const protectionChip = getServerProtectionChip(server);
   const platformShort = getServerPlatform(server) === 'HCI VM' ? 'HCI' : 'ONP';
   const osShort = getServerOsFamily(server) === 'Windows' ? 'WIN' : 'LNX';
   const bootLabel = formatServerBootLabel(server.lastBoot)?.replace('BOOT ', '');
-  const backupMeta =
-    server.backupStatus === 'successful'
-      ? { label: 'BKP', accent: '#1b5e20', background: 'rgba(46,125,50,0.12)', border: 'rgba(46,125,50,0.18)' }
-      : server.backupStatus === 'failed'
-        ? { label: 'FAIL', accent: '#b71c1c', background: 'rgba(198,40,40,0.12)', border: 'rgba(198,40,40,0.18)' }
-        : { label: 'SW45', accent: '#8d6e63', background: 'rgba(141,110,99,0.10)', border: 'rgba(141,110,99,0.16)' };
   const tertiaryMetric = server.disk !== null
     ? { label: 'DSK', value: visual.diskPct, tone: getMetricTone(visual.diskPct), suffix: '%' }
     : { label: 'AVL', value: server.availabilityToday ?? null, tone: getAvailabilityTone(server.availabilityToday), suffix: '%' };
@@ -1214,12 +1251,12 @@ function FleetServerTile({ server }: { server: ServerNode }) {
             fontSize: '0.48rem',
             fontWeight: 800,
             letterSpacing: '0.08em',
-            color: backupMeta.accent,
-            background: backupMeta.background,
-            border: `1px solid ${backupMeta.border}`
+            color: protectionChip.accent,
+            background: protectionChip.background,
+            border: `1px solid ${protectionChip.border}`
           }}
         >
-          {backupMeta.label}
+          {protectionChip.label}
         </span>
         <span style={{ fontSize: '0.46rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.58, textAlign: 'right', whiteSpace: 'nowrap' }}>
           {bootLabel || '--'}
@@ -1233,16 +1270,9 @@ function CompactServerRow({ server }: { server: ServerNode }) {
   const visual = getServerVisualState(server);
   const palette = getTonePalette(visual.tone);
   const sourceChip = getServerSourceChip(server);
+  const protectionChip = getServerProtectionChip(server);
   const hardwareLabel = getServerHardwareLabel(server);
   const bootLabel = formatServerBootLabel(server.lastBoot);
-  const backupLabel =
-    server.backupStatus === 'successful' ? 'BKP OK' :
-    server.backupStatus === 'failed' ? 'BKP FAIL' :
-    'SW45';
-  const backupTone =
-    server.backupStatus === 'successful' ? getTonePalette('normal') :
-    server.backupStatus === 'failed' ? getTonePalette('critical') :
-    { text: '#8d6e63', bg: 'rgba(141,110,99,0.10)', border: 'rgba(141,110,99,0.18)', fill: '#8d6e63', soft: 'rgba(141,110,99,0.18)' };
   const tertiaryMetric = server.disk !== null
     ? { label: 'DSK', value: visual.diskPct, tone: getMetricTone(visual.diskPct) }
     : { label: 'AVL', value: server.availabilityToday ?? null, tone: getAvailabilityTone(server.availabilityToday) };
@@ -1311,12 +1341,12 @@ function CompactServerRow({ server }: { server: ServerNode }) {
             fontSize: '0.5rem',
             fontWeight: 800,
             letterSpacing: '0.08em',
-            color: backupTone.text,
-            background: backupTone.bg,
-            border: `1px solid ${backupTone.border}`
+            color: protectionChip.accent,
+            background: protectionChip.background,
+            border: `1px solid ${protectionChip.border}`
           }}
         >
-          {backupLabel}
+          {protectionChip.label}
         </span>
       </div>
     </div>
@@ -1727,6 +1757,7 @@ function HsdQueueRail({
 function ServerNodeCard({ server }: { server: ServerNode }) {
   const visual = getServerVisualState(server);
   const palette = getTonePalette(visual.tone);
+  const protectionChip = getServerProtectionChip(server);
   const statusIcon =
     visual.tone === 'normal' ? <CheckCircle2 size={14} /> :
     visual.tone === 'warning' ? <AlertTriangle size={14} /> :
@@ -1805,17 +1836,12 @@ function ServerNodeCard({ server }: { server: ServerNode }) {
             fontSize: '0.66rem',
             fontWeight: 700,
             letterSpacing: '0.08em',
-            background:
-              server.backupStatus === 'successful' ? 'rgba(46,125,50,0.12)' :
-              server.backupStatus === 'failed' ? 'rgba(198,40,40,0.12)' :
-              'rgba(84,110,122,0.10)',
-            color:
-              server.backupStatus === 'successful' ? '#1b5e20' :
-              server.backupStatus === 'failed' ? '#b71c1c' :
-              '#546e7a'
+            background: protectionChip.background,
+            color: protectionChip.accent,
+            border: `1px solid ${protectionChip.border}`
           }}
         >
-          {server.backupStatus === 'successful' ? 'BACKUP OK' : server.backupStatus === 'failed' ? 'BACKUP FAIL' : 'NO DATA'}
+          {protectionChip.label}
         </span>
         <div style={{ width: '72px', height: '22px' }}>
           <UptimeChart history={server.history || []} color={palette.fill} />
