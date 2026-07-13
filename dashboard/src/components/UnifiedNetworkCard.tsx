@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Activity, Radio } from 'lucide-react';
+import { Activity } from 'lucide-react';
 import UptimeChart from './UptimeChart';
 
 interface NetworkLink {
@@ -75,6 +75,25 @@ function getHealthText(status: SectionHealth['status']) {
     case 'error': return 'Error';
     default: return 'Waiting';
   }
+}
+
+function formatHealthErrorSummary(message: string | null) {
+  if (!message) {
+    return '';
+  }
+
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  if (/session expired/i.test(normalized)) {
+    return 'Session expired';
+  }
+  if (/timeout/i.test(normalized)) {
+    return 'Timeout';
+  }
+  if (/unreachable|network changed|connection aborted/i.test(normalized)) {
+    return 'Source unreachable';
+  }
+
+  return normalized.length > 36 ? `${normalized.slice(0, 33)}...` : normalized;
 }
 
 function getHealthBadgeStyle(status: SectionHealth['status']) {
@@ -211,6 +230,40 @@ function getLinkLabel(link: NetworkLink) {
   return link.interfaceName || link.alias || link.displayName || link.provider;
 }
 
+function formatCompactState(state?: string | null) {
+  if (!state) {
+    return 'Waiting';
+  }
+
+  const normalized = state.toLowerCase();
+  if (normalized.includes('up') || normalized.includes('operational') || normalized.includes('ok')) {
+    return 'Up';
+  }
+  if (normalized.includes('down')) {
+    return 'Down';
+  }
+  if (normalized.includes('warn') || normalized.includes('degrad')) {
+    return 'Warning';
+  }
+  return state;
+}
+
+function getNetworkLinkState(link?: NetworkLink | null) {
+  if (!link) {
+    return { label: 'Waiting', tone: 'warning' as VisualTone };
+  }
+
+  const operational = (link.operationalStatus || '').toLowerCase();
+  const stateLabel = formatCompactState(link.operationalStatus || link.status);
+  if (link.status === 'down' || operational.includes('down')) {
+    return { label: stateLabel, tone: 'critical' as VisualTone };
+  }
+  if (link.status === 'degraded') {
+    return { label: stateLabel, tone: 'warning' as VisualTone };
+  }
+  return { label: stateLabel, tone: 'normal' as VisualTone };
+}
+
 function getSpeedLabel(link: NetworkLink) {
   if (link.portSpeed) {
     return link.portSpeed;
@@ -225,68 +278,95 @@ function getSpeedLabel(link: NetworkLink) {
   return 'N/A';
 }
 
-function MetricRow({
-  label,
-  value,
-  fill,
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Number(value.toFixed(2))));
+}
+
+function buildUtilizationSeries(
+  history: number[],
+  dailyValue: number | null | undefined,
+  realtimeValue: number | null | undefined
+) {
+  const trend = (history || [])
+    .filter((value): value is number => value !== null && value !== undefined && !Number.isNaN(value))
+    .slice(-6)
+    .map(clampPercent);
+
+  if (dailyValue !== null && dailyValue !== undefined && !Number.isNaN(dailyValue)) {
+    trend.push(clampPercent(dailyValue));
+  }
+
+  if (realtimeValue !== null && realtimeValue !== undefined && !Number.isNaN(realtimeValue)) {
+    trend.push(clampPercent(realtimeValue));
+  }
+
+  if (trend.length === 1) {
+    trend.push(trend[0]);
+  }
+
+  return trend;
+}
+
+function CombinedUtilizationSparklineRow({
+  txHistory,
+  rxHistory,
+  txRealtimeValue,
+  rxRealtimeValue,
+  txDailyValue,
+  rxDailyValue,
   tone
 }: {
-  label: string;
-  value: string;
-  fill: number;
+  txHistory: number[];
+  rxHistory: number[];
+  txRealtimeValue: number | null | undefined;
+  rxRealtimeValue: number | null | undefined;
+  txDailyValue: number | null | undefined;
+  rxDailyValue: number | null | undefined;
   tone: VisualTone;
 }) {
   const palette = getTonePalette(tone);
+  const txTrend = buildUtilizationSeries(txHistory, txDailyValue, txRealtimeValue);
+  const rxTrend = buildUtilizationSeries(rxHistory, rxDailyValue, rxRealtimeValue);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
-        <span style={{ fontSize: '0.58rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.62 }}>{label}</span>
-        <span style={{ fontSize: '0.76rem', fontWeight: 800, color: palette.text }}>{value}</span>
+        <span style={{ fontSize: '0.54rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.62 }}>TX / RX UTIL</span>
+        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: palette.text }}>
+          {`TX ${formatPercent(txRealtimeValue, 1)} | RX ${formatPercent(rxRealtimeValue, 1)}`}
+        </span>
       </div>
-      <div style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'rgba(62,39,35,0.08)', overflow: 'hidden' }}>
-        <div style={{ width: `${Math.max(0, Math.min(100, fill))}%`, height: '100%', background: palette.fill, borderRadius: '999px' }} />
+      <div
+        style={{
+          width: '100%',
+          height: '74px',
+          padding: '2px 0',
+          borderRadius: '10px',
+          background: 'rgba(255,255,255,0.72)',
+          border: '1px solid rgba(141,110,99,0.08)'
+        }}
+      >
+        <UptimeChart
+          history={txTrend}
+          color="#1697f6"
+          secondaryHistory={rxTrend}
+          secondaryColor="#ff0aa6"
+          threshold={80}
+          fixedDomain={[0, 100]}
+          hideNoDataText
+          strokeWidth={2}
+          variant="perfstack"
+        />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
+        <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#1697f6' }}>AVG TX {formatPercent(txDailyValue, 1)}</span>
+        <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#ff0aa6' }}>AVG RX {formatPercent(rxDailyValue, 1)}</span>
       </div>
     </div>
   );
 }
 
-function OverviewTile({
-  label,
-  value,
-  detail,
-  tone
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  tone: VisualTone;
-}) {
-  const palette = getTonePalette(tone);
-
-  return (
-    <div
-      className="network-overview-tile"
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        padding: '10px 12px',
-        borderRadius: '14px',
-        background: palette.bg,
-        border: `1px solid ${palette.border}`
-      }}
-    >
-      <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', color: palette.text, opacity: 0.78 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: '1.3rem', fontWeight: 800, lineHeight: 1, color: palette.text }}>{value}</div>
-      <div style={{ fontSize: '0.68rem', opacity: 0.72, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</div>
-    </div>
-  );
-}
-
-function DetailStatTile({
+function HeaderMetricStack({
   label,
   value,
   detail
@@ -296,16 +376,27 @@ function DetailStatTile({
   detail: string;
 }) {
   return (
-    <div style={{ padding: '7px 8px', borderRadius: '12px', background: 'rgba(255,255,255,0.52)', border: '1px solid rgba(141,110,99,0.10)' }}>
-      <div style={{ fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>{label}</div>
-      <div style={{ fontSize: '0.88rem', fontWeight: 800, marginTop: '3px' }}>{value}</div>
-      <div style={{ fontSize: '0.6rem', opacity: 0.6, marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</div>
+    <div
+      style={{
+        display: 'grid',
+        gap: '2px',
+        minWidth: 0,
+        padding: '5px 7px',
+        borderRadius: '12px',
+        background: 'rgba(255,255,255,0.52)',
+        border: '1px solid rgba(141,110,99,0.10)'
+      }}
+    >
+      <div style={{ fontSize: '0.54rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>{label}</div>
+      <div style={{ fontSize: '0.92rem', fontWeight: 800, lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+      <div style={{ fontSize: '0.54rem', opacity: 0.7, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</div>
     </div>
   );
 }
 
 export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetworkCardProps) {
   const healthBadgeStyle = getHealthBadgeStyle(sectionHealth.status);
+  const compactError = formatHealthErrorSummary(sectionHealth.lastError);
   const detailedLinks = links.filter((link) =>
     Boolean(
       link.interfaceName ||
@@ -318,40 +409,10 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
     )
   );
   const focusLinks = detailedLinks.length > 0 ? detailedLinks : links;
-  const focusIds = new Set(focusLinks.map((link) => link.id));
-  const carrierLinks = links.filter((link) => !focusIds.has(link.id));
   const tonedLinks = focusLinks.map((link) => ({ link, tone: getLinkTone(link) }));
-  const healthyLinks = tonedLinks.filter((entry) => entry.tone === 'normal').length;
-  const peakRealtimeLink = tonedLinks.reduce<{ label: string; value: number } | null>((peak, entry) => {
-    const value = getPeakValue([entry.link.realtimeTransmitUtilization, entry.link.realtimeReceiveUtilization]);
-    if (value === null) {
-      return peak;
-    }
-    if (!peak || value > peak.value) {
-      return { label: getLinkLabel(entry.link), value };
-    }
-    return peak;
-  }, null);
-  const peakDailyLink = tonedLinks.reduce<{ label: string; value: number } | null>((peak, entry) => {
-    const value = getPeakValue([entry.link.dailyTransmitUtilization, entry.link.dailyReceiveUtilization]);
-    if (value === null) {
-      return peak;
-    }
-    if (!peak || value > peak.value) {
-      return { label: getLinkLabel(entry.link), value };
-    }
-    return peak;
-  }, null);
-  const totalCarrierCapacity = carrierLinks.reduce((sum, link) => {
-    const match = link.portSpeed?.match(/(\d+(?:\.\d+)?)/);
-    return sum + (match ? parseFloat(match[1]) : 0);
-  }, 0);
-  const carrierCaption = carrierLinks
-    .map((link) => `${link.provider.replace(/\s*\(.*?\)\s*/g, '')} ${link.portSpeed || ''}`.trim())
-    .join(' | ');
 
   return (
-    <div className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
+    <div className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div
@@ -368,57 +429,34 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
             <Activity size={20} style={{ color: 'var(--primary)' }} />
           </div>
           <div>
-            <h2 style={{ fontSize: '1.08rem', color: 'var(--text-primary)' }}>Network Fabric</h2>
-            <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>REAL-TIME SD-WAN AND CARRIER VIEW</div>
+            <h2 style={{ fontSize: '0.98rem', color: 'var(--text-primary)' }}>Network Fabric</h2>
+            <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>REAL-TIME SD-WAN AND CARRIER VIEW</div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
           <div
             style={{
               ...healthBadgeStyle,
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '3px 8px',
+              padding: '5px 10px',
               borderRadius: '999px',
-              fontSize: '0.74rem',
-              fontWeight: 700
+              fontSize: '0.64rem',
+              fontWeight: 800,
+              letterSpacing: '0.05em',
+              maxWidth: '270px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
             }}
             title={sectionHealth.lastError || undefined}
           >
             <span className={`pulse-dot ${sectionHealth.status === 'ok' ? 'ok' : sectionHealth.status === 'error' ? 'critical' : 'warning'}`} />
-            {getHealthText(sectionHealth.status).toUpperCase()}
+            {`DATA LINK ${getHealthText(sectionHealth.status).toUpperCase()} | ${formatSyncTime(sectionHealth.lastSuccessAt)}${compactError ? ` | ${compactError}` : ''}`}
           </div>
-          <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>Last synced: {formatSyncTime(sectionHealth.lastSuccessAt)}</span>
         </div>
-      </div>
-
-      <div className="network-overview-grid">
-        <OverviewTile
-          label="SD-WAN PATHS"
-          value={`${healthyLinks}/${focusLinks.length}`}
-          detail={detailedLinks.length > 0 ? 'Interface detail live from Orion' : 'Awaiting interface detail scrape'}
-          tone={healthyLinks === focusLinks.length ? 'normal' : healthyLinks > 0 ? 'warning' : 'critical'}
-        />
-        <OverviewTile
-          label="REALTIME PEAK"
-          value={peakRealtimeLink ? formatPercent(peakRealtimeLink.value, 1) : 'N/A'}
-          detail={peakRealtimeLink ? peakRealtimeLink.label : 'No realtime utilization yet'}
-          tone={peakRealtimeLink ? getUtilizationTone(peakRealtimeLink.value) : 'warning'}
-        />
-        <OverviewTile
-          label="DAILY PEAK"
-          value={peakDailyLink ? formatPercent(peakDailyLink.value, 1) : 'N/A'}
-          detail={peakDailyLink ? peakDailyLink.label : 'No daily averages yet'}
-          tone={peakDailyLink ? getUtilizationTone(peakDailyLink.value) : 'warning'}
-        />
-        <OverviewTile
-          label="CARRIER BACKHAUL"
-          value={carrierLinks.length ? `${carrierLinks.length}` : '0'}
-          detail={carrierLinks.length ? `${totalCarrierCapacity.toFixed(0)} Mbps | ${carrierCaption}` : 'No carrier circuits mapped'}
-          tone={carrierLinks.length ? 'normal' : 'warning'}
-        />
       </div>
 
       <div className="network-detail-list">
@@ -429,12 +467,26 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
           const hasTraffic =
             link.currentTrafficTransmitMbps !== null && link.currentTrafficTransmitMbps !== undefined ||
             link.currentTrafficReceiveMbps !== null && link.currentTrafficReceiveMbps !== undefined;
-          const trafficTotal = hasTraffic
-            ? (link.currentTrafficTransmitMbps ?? 0) + (link.currentTrafficReceiveMbps ?? 0)
-            : null;
           const label = getLinkLabel(link);
-          const subtitle = [link.alias, link.interfaceType, link.ipAddress].filter(Boolean).join(' | ');
-          const secondary = [link.displayName, link.pollingIp].filter(Boolean).join(' | ');
+          const subtitle = [link.interfaceType].filter(Boolean).join(' | ');
+          const providerState = getNetworkLinkState(link);
+          const metricSummary = [
+            {
+              label: 'NOW',
+              value: formatPercent(realtimePeak, realtimePeak !== null && realtimePeak < 10 ? 1 : 0),
+              detail: `Peak | AVG ${formatPercent(dailyPeak, dailyPeak !== null && dailyPeak < 10 ? 1 : 0)}`
+            },
+            {
+              label: 'TX',
+              value: hasTraffic ? formatMbps(link.currentTrafficTransmitMbps) : 'N/A',
+              detail: `${formatPercent(link.realtimeTransmitUtilization ?? link.transmitUtilization, 1)} now | ${formatPercent(link.dailyTransmitUtilization, 1)} avg`
+            },
+            {
+              label: 'RX',
+              value: hasTraffic ? formatMbps(link.currentTrafficReceiveMbps) : 'N/A',
+              detail: `${formatPercent(link.realtimeReceiveUtilization ?? link.receiveUtilization, 1)} now | ${formatPercent(link.dailyReceiveUtilization, 1)} avg`
+            }
+          ];
 
           return (
             <div
@@ -443,23 +495,23 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '8px',
-                padding: '10px',
+                gap: '5px',
+                padding: '7px',
                 borderRadius: '16px',
                 background: 'rgba(255,255,255,0.5)',
                 border: `1px solid ${palette.border}`,
                 boxShadow: `inset 0 0 0 1px ${palette.bg}`
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+              <div className="network-link-top-grid">
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.08em', color: palette.text }}>{link.provider}</div>
+                  <div style={{ fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.08em', color: palette.text }}>{link.provider}</div>
                   <div
                     style={{
-                      fontSize: '0.96rem',
+                      fontSize: '0.86rem',
                       fontWeight: 800,
                       lineHeight: 1.2,
-                      marginTop: '3px',
+                      marginTop: '2px',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis'
@@ -469,63 +521,86 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                     {label}
                   </div>
                   {subtitle ? (
-                    <div style={{ fontSize: '0.62rem', opacity: 0.66, marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ fontSize: '0.56rem', opacity: 0.66, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {subtitle}
                     </div>
                   ) : null}
-                  {secondary ? (
-                    <div style={{ fontSize: '0.6rem', opacity: 0.56, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {secondary}
-                    </div>
-                  ) : null}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', flex: '0 0 auto' }}>
-                  <div
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      padding: '5px 8px',
-                      borderRadius: '999px',
-                      background: palette.bg,
-                      color: palette.text,
-                      fontSize: '0.62rem',
-                      fontWeight: 800,
-                      letterSpacing: '0.08em',
-                      textTransform: 'uppercase'
-                    }}
-                  >
-                    <Radio size={12} />
-                    {link.operationalStatus || tone}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '5px' }}>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        padding: '4px 8px',
+                        borderRadius: '999px',
+                        background: palette.bg,
+                        border: `1px solid ${palette.border}`,
+                        fontSize: '0.54rem',
+                        fontWeight: 800,
+                        letterSpacing: '0.08em',
+                        color: palette.text
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '999px',
+                          background: palette.fill
+                        }}
+                      />
+                      {(link.alias || link.provider).toUpperCase()} - {providerState.label.toUpperCase()}
+                    </span>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '4px 8px',
+                        borderRadius: '999px',
+                        background: 'rgba(255,255,255,0.56)',
+                        border: '1px solid rgba(141,110,99,0.12)',
+                        fontSize: '0.54rem',
+                        fontWeight: 800,
+                        letterSpacing: '0.08em',
+                        color: 'var(--text-secondary)'
+                      }}
+                    >
+                      {getSpeedLabel(link)}
+                    </span>
                   </div>
-                  <div style={{ width: '72px', height: '20px' }}>
-                    <UptimeChart history={link.history || []} color={palette.fill} />
+                </div>
+                <div style={{ display: 'grid', gap: '6px', minWidth: 0 }}>
+                  <div className="network-link-header-metrics">
+                    {metricSummary.map((metric) => (
+                      <HeaderMetricStack
+                        key={metric.label}
+                        label={metric.label}
+                        value={metric.value}
+                        detail={metric.detail}
+                      />
+                    ))}
                   </div>
                 </div>
               </div>
 
-              <div className="network-detail-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
-                <DetailStatTile label="NOW" value={formatPercent(realtimePeak, realtimePeak !== null && realtimePeak < 10 ? 1 : 0)} detail="Peak realtime utilization" />
-                <DetailStatTile label="TRAFFIC" value={trafficTotal !== null ? formatMbps(trafficTotal) : formatLatency(link.latency)} detail={trafficTotal !== null ? `${formatMbps(link.currentTrafficTransmitMbps)} TX | ${formatMbps(link.currentTrafficReceiveMbps)} RX` : 'Latency fallback'} />
-                <DetailStatTile label="SPEED" value={getSpeedLabel(link)} detail={formatUptime(link.uptime)} />
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <MetricRow
-                  label="TX UTIL"
-                  value={`${formatPercent(link.realtimeTransmitUtilization ?? link.transmitUtilization, 1)} now | ${formatPercent(link.dailyTransmitUtilization, 1)} day`}
-                  fill={Math.max(link.realtimeTransmitUtilization ?? link.transmitUtilization ?? 0, link.dailyTransmitUtilization ?? 0)}
-                  tone={getUtilizationTone(Math.max(link.realtimeTransmitUtilization ?? link.transmitUtilization ?? 0, link.dailyTransmitUtilization ?? 0))}
-                />
-                <MetricRow
-                  label="RX UTIL"
-                  value={`${formatPercent(link.realtimeReceiveUtilization ?? link.receiveUtilization, 1)} now | ${formatPercent(link.dailyReceiveUtilization, 1)} day`}
-                  fill={Math.max(link.realtimeReceiveUtilization ?? link.receiveUtilization ?? 0, link.dailyReceiveUtilization ?? 0)}
-                  tone={getUtilizationTone(Math.max(link.realtimeReceiveUtilization ?? link.receiveUtilization ?? 0, link.dailyReceiveUtilization ?? 0))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <CombinedUtilizationSparklineRow
+                  txHistory={link.history || []}
+                  rxHistory={link.history || []}
+                  txRealtimeValue={link.realtimeTransmitUtilization ?? link.transmitUtilization}
+                  rxRealtimeValue={link.realtimeReceiveUtilization ?? link.receiveUtilization}
+                  txDailyValue={link.dailyTransmitUtilization}
+                  rxDailyValue={link.dailyReceiveUtilization}
+                  tone={getUtilizationTone(Math.max(
+                    link.realtimeTransmitUtilization ?? link.transmitUtilization ?? 0,
+                    link.realtimeReceiveUtilization ?? link.receiveUtilization ?? 0,
+                    link.dailyTransmitUtilization ?? 0,
+                    link.dailyReceiveUtilization ?? 0
+                  ))}
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', fontSize: '0.6rem', opacity: 0.64 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', fontSize: '0.5rem', opacity: 0.64 }}>
                 <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {link.lastStatusChange ? `Change ${link.lastStatusChange}` : 'No status timestamp'}
                 </div>

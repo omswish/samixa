@@ -87,7 +87,7 @@ h1, h2, h3, h4, h5, h6 {
 .dashboard-wall-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.58fr) minmax(470px, 0.92fr);
-  grid-template-rows: minmax(0, 1.16fr) minmax(0, 0.84fr);
+  grid-template-rows: minmax(0, 1.18fr) minmax(0, 0.82fr);
   grid-template-areas:
     "hsd network"
     "servers servers";
@@ -119,11 +119,10 @@ h1, h2, h3, h4, h5, h6 {
   gap: 10px;
 }
 
-.hsd-bottom-grid {
+.hsd-header-sla-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -142,21 +141,41 @@ h1, h2, h3, h4, h5, h6 {
 
 .network-overview-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .network-detail-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   min-height: 0;
 }
 
 .network-detail-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
+}
+
+.network-link-top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.92fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.network-link-header-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.network-status-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .network-link-split {
@@ -178,35 +197,18 @@ h1, h2, h3, h4, h5, h6 {
   gap: 8px;
 }
 
-.server-group-grid {
+.server-platform-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.28fr) minmax(0, 0.96fr) minmax(0, 0.9fr);
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-areas:
-    "windows-hci windows-physical linux-hci"
-    "windows-hci windows-physical linux-physical";
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   flex: 1 1 auto;
   min-height: 0;
 }
 
-.server-group-grid__windows-hci {
-  grid-area: windows-hci;
-  min-height: 0;
-}
-
-.server-group-grid__windows-physical {
-  grid-area: windows-physical;
-  min-height: 0;
-}
-
-.server-group-grid__linux-hci {
-  grid-area: linux-hci;
-  min-height: 0;
-}
-
-.server-group-grid__linux-physical {
-  grid-area: linux-physical;
+.server-platform-card__content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   min-height: 0;
 }
 
@@ -223,10 +225,22 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .hsd-header-sla-grid {
+    grid-template-columns: 1fr;
+  }
+
   .network-overview-grid,
   .network-detail-metrics,
   .server-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .network-link-top-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .server-platform-card__content {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -260,6 +274,7 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .hsd-modern-grid,
+  .hsd-header-sla-grid,
   .hsd-sla-grid,
   .network-detail-metrics,
   .network-overview-grid,
@@ -271,18 +286,15 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-columns: 1fr;
   }
 
-  .server-group-grid {
+  .server-platform-grid,
+  .server-platform-card__content {
     grid-template-columns: 1fr;
-    grid-template-rows: auto;
-    grid-template-areas:
-      "windows-hci"
-      "windows-physical"
-      "linux-hci"
-      "linux-physical";
   }
 
   .network-link-split,
-  .network-bar-grid {
+  .network-bar-grid,
+  .network-link-top-grid,
+  .network-link-header-metrics {
     grid-template-columns: 1fr;
   }
 }
@@ -293,6 +305,7 @@ h1, h2, h3, h4, h5, h6 {
   .hsd-modern-grid,
   .hsd-sla-grid,
   .network-detail-metrics,
+  .network-link-header-metrics,
   .network-carrier-strip,
   .dashboard-hci-strip,
   .server-summary-grid {

@@ -76,6 +76,20 @@ interface TicketBreakdown {
   pending: number;
 }
 
+const HSD_STATUS_COLORS = {
+  new: '#4f6bed',
+  assigned: '#f0b429',
+  inProgress: '#2e7d32',
+  pending: '#7b8794'
+} as const;
+
+const SPECIAL_QUEUE_WATCH = [
+  { label: 'P1', detail: 'Critical incidents' },
+  { label: 'P2', detail: 'High-priority incidents' },
+  { label: 'ONBOARDING', detail: 'User enablement queue' },
+  { label: 'SECURITY', detail: 'Security-related tickets' }
+] as const;
+
 interface SectionHealth {
   key: 'nutanix' | 'servers' | 'networks' | 'symphony';
   label: string;
@@ -323,7 +337,7 @@ function getServerOsFamily(server: ServerNode) {
 }
 
 function getServerPlatform(server: ServerNode) {
-  return isHciVm(server) ? 'HCI VM' : 'Physical';
+  return isHciVm(server) ? 'HCI VM' : 'On Prem';
 }
 
 function getServerGroupKey(server: ServerNode) {
@@ -350,6 +364,38 @@ function formatSmallNumber(value: number | null | undefined, suffix = '') {
 
   const digits = value < 10 ? 1 : 0;
   return `${value.toFixed(digits)}${suffix}`;
+}
+
+function getSlaAccent(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return '#b0b7bf';
+  }
+  if (value >= 99.95) {
+    return '#84c341';
+  }
+  if (value >= 95) {
+    return '#ff8f00';
+  }
+  return '#f0b429';
+}
+
+function formatHealthErrorSummary(message: string | null) {
+  if (!message) {
+    return '';
+  }
+
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  if (/session expired/i.test(normalized)) {
+    return 'Session expired';
+  }
+  if (/timeout/i.test(normalized)) {
+    return 'Timeout';
+  }
+  if (/unreachable|network changed|connection aborted/i.test(normalized)) {
+    return 'Source unreachable';
+  }
+
+  return normalized.length > 44 ? `${normalized.slice(0, 41)}...` : normalized;
 }
 
 function HciHeaderChip({
@@ -387,57 +433,62 @@ function HciHeaderChip({
 function HsdOverviewCard({
   title,
   total,
-  breakdown,
-  accent
+  breakdown
 }: {
   title: string;
   total: number;
   breakdown: TicketBreakdown;
-  accent: string;
 }) {
   const totalSafe = Math.max(0, total);
   const categories = [
-    { label: 'N', value: breakdown.new, color: '#4f6bed' },
-    { label: 'A', value: breakdown.assigned, color: '#f0b429' },
-    { label: 'IP', value: breakdown.inProgress, color: accent },
-    { label: 'P', value: breakdown.pending, color: '#7b8794' }
+    { label: 'NEW', value: breakdown.new, color: HSD_STATUS_COLORS.new },
+    { label: 'ASG', value: breakdown.assigned, color: HSD_STATUS_COLORS.assigned },
+    { label: 'IP', value: breakdown.inProgress, color: HSD_STATUS_COLORS.inProgress },
+    { label: 'PND', value: breakdown.pending, color: HSD_STATUS_COLORS.pending }
   ];
+  const peakCategory = Math.max(1, ...categories.map((category) => category.value));
+  const activeCount = breakdown.assigned + breakdown.inProgress;
 
   return (
     <div
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: '14px',
-        padding: '16px 16px 14px',
+        gap: '12px',
+        padding: '14px 14px 12px',
         borderRadius: '18px',
         background: 'rgba(255,255,255,0.66)',
         border: '1px solid rgba(141,110,99,0.12)',
-        boxShadow: `inset 0 4px 0 0 ${accent}`
+        boxShadow: 'inset 0 4px 0 0 rgba(93,64,55,0.10)'
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
         <div>
           <div style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.66 }}>{title}</div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 800, lineHeight: 1, marginTop: '10px', color: accent }}>{totalSafe}</div>
+          <div style={{ fontSize: '2.2rem', fontWeight: 800, lineHeight: 1, marginTop: '8px', color: 'var(--text-primary)' }}>{totalSafe}</div>
         </div>
-        <div
-          style={{
-            padding: '7px 10px',
-            borderRadius: '999px',
-            background: `${accent}14`,
-            border: `1px solid ${accent}24`,
-            fontSize: '0.68rem',
-            fontWeight: 800,
-            letterSpacing: '0.08em',
-            color: accent
-          }}
-        >
-          OPEN
+        <div style={{ display: 'grid', gap: '6px', justifyItems: 'end' }}>
+          <div
+            style={{
+              padding: '6px 9px',
+              borderRadius: '999px',
+              background: 'rgba(62,39,35,0.06)',
+              border: '1px solid rgba(141,110,99,0.14)',
+              fontSize: '0.62rem',
+              fontWeight: 800,
+              letterSpacing: '0.08em',
+              color: 'var(--text-primary)'
+            }}
+          >
+            OPEN
+          </div>
+          <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', color: HSD_STATUS_COLORS.inProgress }}>
+            ACTIVE {activeCount}
+          </div>
         </div>
       </div>
 
-      <div style={{ width: '100%', height: '12px', display: 'flex', overflow: 'hidden', borderRadius: '999px', background: 'rgba(62,39,35,0.08)' }}>
+      <div style={{ width: '100%', height: '8px', display: 'flex', overflow: 'hidden', borderRadius: '999px', background: 'rgba(62,39,35,0.08)' }}>
         {categories.map((category) => (
           <div
             key={category.label}
@@ -450,15 +501,212 @@ function HsdOverviewCard({
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '10px', alignItems: 'end', minHeight: '88px' }}>
         {categories.map((category) => (
-          <div key={category.label} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <span style={{ fontSize: '0.58rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.56 }}>{category.label}</span>
-            <span style={{ fontSize: '1rem', fontWeight: 800 }}>{category.value}</span>
+          <div key={category.label} style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.92rem', fontWeight: 800, color: category.color }}>{category.value}</span>
+            <div style={{ width: '100%', height: '58px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+              <div
+                style={{
+                  width: '34px',
+                  height: category.value > 0 ? `${Math.max(8, (category.value / peakCategory) * 58)}px` : '4px',
+                  borderRadius: '10px 10px 4px 4px',
+                  background: category.value > 0 ? `linear-gradient(180deg, ${category.color}, ${category.color}cc)` : 'rgba(62,39,35,0.12)',
+                  boxShadow: category.value > 0 ? `0 6px 12px ${category.color}26` : 'none'
+                }}
+              />
+            </div>
+            <span style={{ fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>{category.label}</span>
           </div>
         ))}
       </div>
     </div>
+  );
+}
+
+function MiniDonutMetric({
+  label,
+  value,
+  accent,
+  note = '',
+  centerLabel,
+  size = 52,
+  stroke = 6,
+  labelSize = '0.52rem',
+  noteSize = '0.56rem',
+  noteMinHeight = '10px'
+}: {
+  label: string;
+  value: number | null;
+  accent: string;
+  note?: string;
+  centerLabel?: string;
+  size?: number;
+  stroke?: number;
+  labelSize?: string;
+  noteSize?: string;
+  noteMinHeight?: string;
+}) {
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = value === null ? 0 : Math.max(0, Math.min(100, value));
+  const dashOffset = circumference - (pct / 100) * circumference;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', minWidth: '58px' }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(62,39,35,0.10)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={accent}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: `${Math.max(9, Math.round(size * 0.19))}px`, fontWeight: 800, fill: accent }}>
+          {centerLabel || (value === null ? 'N/A' : `${Math.round(value)}%`)}
+        </text>
+      </svg>
+      <div style={{ fontSize: labelSize, letterSpacing: '0.08em', fontWeight: 800, color: accent }}>{label}</div>
+      <div style={{ fontSize: noteSize, opacity: 0.56, minHeight: noteMinHeight }}>{note || '\u00a0'}</div>
+    </div>
+  );
+}
+
+function HsdSlaHeaderCard({
+  title,
+  response,
+  resolution,
+  accent,
+  aboutToMiss = null
+}: {
+  title: string;
+  response: number;
+  resolution: number;
+  accent: string;
+  aboutToMiss?: number | null;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        padding: '10px 12px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.56)',
+        border: `1px solid ${accent}22`,
+        minWidth: 0
+      }}
+    >
+      <div style={{ fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <MiniDonutMetric label="RESP" value={response} accent={getSlaAccent(response)} />
+        <MiniDonutMetric label="RES" value={resolution} accent={getSlaAccent(resolution)} />
+        <MiniDonutMetric
+          label="ATM"
+          value={aboutToMiss === null ? null : Math.min(100, aboutToMiss)}
+          accent={aboutToMiss !== null && aboutToMiss > 0 ? '#c62828' : '#b0b7bf'}
+          centerLabel={aboutToMiss === null ? undefined : `${aboutToMiss}`}
+          note="About to miss"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SpecialQueueWatchCard() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        minHeight: 0,
+        padding: '12px',
+        borderRadius: '16px',
+        background: 'linear-gradient(180deg, rgba(62,39,35,0.04), rgba(255,255,255,0.62))',
+        border: '1px solid rgba(141,110,99,0.12)'
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
+        <div>
+          <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>SPECIAL QUEUE WATCH</div>
+          <div style={{ fontSize: '0.94rem', fontWeight: 800, marginTop: '4px' }}>P1 / P2 / onboarding / security</div>
+        </div>
+        <div
+          style={{
+            padding: '5px 8px',
+            borderRadius: '999px',
+            background: 'rgba(123,135,148,0.10)',
+            border: '1px solid rgba(123,135,148,0.18)',
+            fontSize: '0.62rem',
+            fontWeight: 800,
+            letterSpacing: '0.08em',
+            color: '#52606d'
+          }}
+        >
+          FEED NOT EXPOSED
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px', minHeight: 0 }}>
+        {SPECIAL_QUEUE_WATCH.map((queue) => (
+          <div
+            key={queue.label}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              gap: '6px',
+              padding: '10px',
+              borderRadius: '14px',
+              background: 'rgba(255,255,255,0.60)',
+              border: '1px solid rgba(141,110,99,0.10)'
+            }}
+          >
+            <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>{queue.label}</div>
+            <div style={{ fontSize: '1.7rem', fontWeight: 800, lineHeight: 1, color: '#607d8b' }}>--</div>
+            <div style={{ fontSize: '0.58rem', opacity: 0.62, lineHeight: 1.35 }}>{queue.detail}</div>
+            <div style={{ fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.06em', color: '#607d8b' }}>NOT IN CURRENT SYMPHONY SCRAPE</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ServerSummaryDonut({
+  label,
+  count,
+  total,
+  accent
+}: {
+  label: string;
+  count: number;
+  total: number;
+  accent: string;
+}) {
+  const value = total > 0 ? (count / total) * 100 : 0;
+
+  return (
+    <MiniDonutMetric
+      label={label}
+      value={value}
+      accent={accent}
+      centerLabel={`${count}`}
+      note=""
+      size={40}
+      stroke={5}
+      labelSize="0.48rem"
+      noteSize="0rem"
+      noteMinHeight="0px"
+    />
   );
 }
 
@@ -473,8 +721,8 @@ function HsdSlaWidget({
   resolution: number;
   accent: string;
 }) {
-  const responseTone = getTonePalette(getMetricTone(response, 92, 98));
-  const resolutionTone = getTonePalette(getMetricTone(resolution, 92, 98));
+  const responseAccent = getSlaAccent(response);
+  const resolutionAccent = getSlaAccent(resolution);
 
   return (
     <div
@@ -494,17 +742,17 @@ function HsdSlaWidget({
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
-        {[
-          { label: 'Response', value: response, palette: responseTone },
-          { label: 'Resolution', value: resolution, palette: resolutionTone }
+        {[ 
+          { label: 'Response', value: response, accent: responseAccent },
+          { label: 'Resolution', value: resolution, accent: resolutionAccent }
         ].map((metric) => (
           <div key={metric.label} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
               <span style={{ fontSize: '0.66rem', opacity: 0.62 }}>{metric.label}</span>
-              <span style={{ fontSize: '1rem', fontWeight: 800, color: metric.palette.text }}>{formatPercent(metric.value, 2)}</span>
+              <span style={{ fontSize: '1rem', fontWeight: 800, color: metric.accent }}>{formatPercent(metric.value, 2)}</span>
             </div>
             <div style={{ width: '100%', height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
-              <div style={{ width: `${Math.max(0, Math.min(100, metric.value))}%`, height: '100%', background: metric.palette.fill }} />
+              <div style={{ width: `${Math.max(0, Math.min(100, metric.value))}%`, height: '100%', background: metric.accent }} />
             </div>
           </div>
         ))}
@@ -521,21 +769,21 @@ function CompactServerRow({ server }: { server: ServerNode }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '144px minmax(0, 1fr) 54px',
+        gridTemplateColumns: '128px minmax(0, 1fr) 50px',
         alignItems: 'center',
-        gap: '8px',
-        padding: '7px 9px',
+        gap: '6px',
+        padding: '6px 8px',
         borderRadius: '14px',
         background: 'rgba(255,255,255,0.54)',
         border: `1px solid ${palette.border}`
       }}
     >
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: '0.8rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
+        <div style={{ fontSize: '0.74rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
           {formatServerName(server.name)}
         </div>
-        <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.62, marginTop: '4px' }}>
-          {getServerPlatform(server)} | {visual.label.toUpperCase()}
+        <div style={{ fontSize: '0.54rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.62, marginTop: '3px' }}>
+          {getServerOsFamily(server)} | {getServerPlatform(server)}
         </div>
       </div>
 
@@ -547,8 +795,8 @@ function CompactServerRow({ server }: { server: ServerNode }) {
         ].map((metric) => (
           <div key={metric.label} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
-              <span style={{ fontSize: '0.54rem', fontWeight: 800, opacity: 0.58 }}>{metric.label}</span>
-              <span style={{ fontSize: '0.64rem', fontWeight: 800, color: getTonePalette(getMetricTone(metric.value)).text }}>
+              <span style={{ fontSize: '0.5rem', fontWeight: 800, opacity: 0.58 }}>{metric.label}</span>
+              <span style={{ fontSize: '0.6rem', fontWeight: 800, color: getTonePalette(getMetricTone(metric.value)).text }}>
                 {formatSmallNumber(metric.value, metric.value === null ? '' : '%')}
               </span>
             </div>
@@ -560,16 +808,16 @@ function CompactServerRow({ server }: { server: ServerNode }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
-        <div style={{ width: '52px', height: '16px' }}>
-          <UptimeChart history={server.history || []} color={palette.fill} />
+        <div style={{ width: '46px', height: '14px' }}>
+          <UptimeChart history={server.history || []} color={palette.fill} hideNoDataText />
         </div>
-        <span style={{ fontSize: '0.56rem', fontWeight: 700, opacity: 0.62 }}>{server.backupStatus === 'successful' ? 'BKP' : server.backupStatus === 'failed' ? 'FAIL' : 'N/A'}</span>
+        <span style={{ fontSize: '0.52rem', fontWeight: 700, opacity: 0.62 }}>{server.backupStatus === 'successful' ? 'BKP' : server.backupStatus === 'failed' ? 'FAIL' : 'N/A'}</span>
       </div>
     </div>
   );
 }
 
-function ServerGroupCard({
+function ServerSubgroupCard({
   title,
   subtitle,
   servers,
@@ -587,22 +835,32 @@ function ServerGroupCard({
         flexDirection: 'column',
         gap: '8px',
         minHeight: 0,
-        padding: '12px',
-        borderRadius: '16px',
-        background: 'rgba(255,255,255,0.46)',
+        padding: '10px',
+        borderRadius: '14px',
+        background: 'rgba(255,255,255,0.58)',
         border: `1px solid ${accent}18`
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
         <div>
-          <div style={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
-          <div style={{ fontSize: '0.62rem', opacity: 0.62, marginTop: '3px' }}>{subtitle}</div>
+          <div style={{ fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
+          <div style={{ fontSize: '0.58rem', opacity: 0.62, marginTop: '2px' }}>{subtitle}</div>
         </div>
-        <div style={{ fontSize: '1.25rem', fontWeight: 800, color: accent }}>{servers.length}</div>
+        <div style={{ fontSize: '1.08rem', fontWeight: 800, color: accent }}>{servers.length}</div>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minHeight: 0, overflow: 'auto', paddingRight: '2px' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr',
+          gap: '6px',
+          minHeight: 0,
+          overflow: 'auto',
+          paddingRight: '2px',
+          alignContent: 'start'
+        }}
+      >
         {servers.length > 0 ? servers.map((server) => <CompactServerRow key={server.id} server={server} />) : (
-          <div style={{ padding: '16px 10px', borderRadius: '12px', background: 'rgba(255,255,255,0.4)', fontSize: '0.74rem', opacity: 0.58 }}>
+          <div style={{ padding: '14px 10px', borderRadius: '12px', background: 'rgba(255,255,255,0.4)', fontSize: '0.72rem', opacity: 0.58 }}>
             No servers in this category.
           </div>
         )}
@@ -611,35 +869,83 @@ function ServerGroupCard({
   );
 }
 
+function ServerPlatformCard({
+  title,
+  subtitle,
+  accent,
+  windowsServers,
+  linuxServers
+}: {
+  title: string;
+  subtitle: string;
+  accent: string;
+  windowsServers: ServerNode[];
+  linuxServers: ServerNode[];
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        minHeight: 0,
+        padding: '12px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.46)',
+        border: `1px solid ${accent}18`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+        <div>
+          <div style={{ fontSize: '0.74rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
+          <div style={{ fontSize: '0.62rem', opacity: 0.62, marginTop: '3px' }}>{subtitle}</div>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.64rem', fontWeight: 800, background: 'rgba(21,101,192,0.10)', color: '#1565c0' }}>
+            WIN {windowsServers.length}
+          </span>
+          <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.64rem', fontWeight: 800, background: 'rgba(46,125,50,0.10)', color: '#2e7d32' }}>
+            LNX {linuxServers.length}
+          </span>
+        </div>
+      </div>
+
+      <div className="server-platform-card__content">
+        <ServerSubgroupCard title="Windows" subtitle="Windows estate" servers={windowsServers} accent="#1565c0" />
+        <ServerSubgroupCard title="Linux" subtitle="Linux estate" servers={linuxServers} accent="#2e7d32" />
+      </div>
+    </div>
+  );
+}
+
 function SectionHealthMeta({ health }: { health: SectionHealth }) {
   const badgeStyle = getHealthBadgeStyle(health.status);
+  const compactError = formatHealthErrorSummary(health.lastError);
+  const lastSync = formatSyncTime(health.lastSuccessAt);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', textAlign: 'right' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
       <span
         style={{
           ...badgeStyle,
           display: 'inline-flex',
           alignItems: 'center',
           gap: '6px',
-          padding: '3px 8px',
+          padding: '5px 10px',
           borderRadius: '999px',
-          fontSize: '0.75rem',
-          fontWeight: 700
+          fontSize: '0.68rem',
+          fontWeight: 800,
+          letterSpacing: '0.05em',
+          maxWidth: '280px',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
         }}
         title={health.lastError || undefined}
       >
         <span className={`pulse-dot ${getHealthPulseClass(health.status)}`} />
-        {getHealthText(health.status).toUpperCase()}
+        {`DATA LINK ${getHealthText(health.status).toUpperCase()} | ${lastSync}${compactError ? ` | ${compactError}` : ''}`}
       </span>
-      <span style={{ fontSize: '0.78rem', opacity: 0.75 }}>
-        Last synced: {formatSyncTime(health.lastSuccessAt)}
-      </span>
-      {health.status === 'error' && health.lastError ? (
-        <span style={{ fontSize: '0.72rem', color: '#c62828', maxWidth: '240px' }}>
-          {health.lastError}
-        </span>
-      ) : null}
     </div>
   );
 }
@@ -1102,20 +1408,20 @@ export default function Dashboard() {
     windows: data.servers.filter((server) => getServerOsFamily(server) === 'Windows').length,
     linux: data.servers.filter((server) => getServerOsFamily(server) === 'Linux').length,
     hciVm: data.servers.filter((server) => getServerPlatform(server) === 'HCI VM').length,
-    physical: data.servers.filter((server) => getServerPlatform(server) === 'Physical').length
+    onPrem: data.servers.filter((server) => getServerPlatform(server) === 'On Prem').length
   };
   const groupedServers = {
     windowsHci: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Windows|HCI VM')),
-    windowsPhysical: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Windows|Physical')),
+    windowsOnPrem: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Windows|On Prem')),
     linuxHci: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|HCI VM')),
-    linuxPhysical: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|Physical'))
+    linuxOnPrem: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|On Prem'))
   };
 
   const ticketCards = [
-    { label: 'INCIDENTS', total: data.symphony.openIncidents, breakdown: data.symphony.openIncidentsBreakdown, accent: '#c62828' },
-    { label: 'SERVICE REQUESTS', total: data.symphony.serviceRequests, breakdown: data.symphony.serviceRequestsBreakdown, accent: '#1565c0' },
-    { label: 'WORK ORDERS', total: data.symphony.workOrders, breakdown: data.symphony.workOrdersBreakdown, accent: '#546e7a' },
-    { label: 'CHANGES', total: data.symphony.changeRecords, breakdown: data.symphony.changeRecordsBreakdown, accent: '#8d6e63' }
+    { label: 'INCIDENTS', total: data.symphony.openIncidents, breakdown: data.symphony.openIncidentsBreakdown },
+    { label: 'SERVICE REQUESTS', total: data.symphony.serviceRequests, breakdown: data.symphony.serviceRequestsBreakdown },
+    { label: 'WORK ORDERS', total: data.symphony.workOrders, breakdown: data.symphony.workOrdersBreakdown },
+    { label: 'CHANGES', total: data.symphony.changeRecords, breakdown: data.symphony.changeRecordsBreakdown }
   ] as const;
 
   const totalHsdBacklog = ticketCards.reduce((sum, card) => sum + card.total, 0);
@@ -1166,7 +1472,7 @@ export default function Dashboard() {
 
       <main className="dashboard-wall-grid">
         <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.9fr) minmax(0, 1.35fr) auto', alignItems: 'start', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
               <div
                 style={{
@@ -1182,13 +1488,13 @@ export default function Dashboard() {
               >
                 <Ticket size={20} style={{ color: '#1565c0' }} />
               </div>
-              <div style={{ minWidth: 0 }}>
-                <h2 style={{ fontSize: '1.1rem' }}>Hindalco Service Desk</h2>
-                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE HSD BACKLOG</div>
-                <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
-                  <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 800, background: 'rgba(21,101,192,0.10)', color: '#1565c0' }}>
-                    OPEN {totalHsdBacklog}
-                  </span>
+                <div style={{ minWidth: 0 }}>
+                  <h2 style={{ fontSize: '1.1rem' }}>Hindalco Service Desk</h2>
+                  <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE HSD BACKLOG</div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 800, background: 'rgba(21,101,192,0.10)', color: '#1565c0' }}>
+                      OPEN {totalHsdBacklog}
+                    </span>
                   <span style={{ padding: '5px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 800, background: 'rgba(245,127,23,0.10)', color: '#b45309' }}>
                     ACTIVE {activeHsdWork}
                   </span>
@@ -1197,6 +1503,20 @@ export default function Dashboard() {
                   </span>
                 </div>
               </div>
+            </div>
+            <div className="hsd-header-sla-grid">
+              <HsdSlaHeaderCard
+                title="INCIDENT SLA"
+                response={data.symphony.incidentsResponseSla}
+                resolution={data.symphony.incidentsResolutionSla}
+                accent="#c62828"
+              />
+              <HsdSlaHeaderCard
+                title="SERVICE REQUEST SLA"
+                response={data.symphony.requestsResponseSla}
+                resolution={data.symphony.requestsResolutionSla}
+                accent="#1565c0"
+              />
             </div>
             <SectionHealthMeta health={data.sections.symphony} />
           </div>
@@ -1208,83 +1528,17 @@ export default function Dashboard() {
                 title={card.label}
                 total={card.total}
                 breakdown={card.breakdown}
-                accent={card.accent}
               />
             ))}
           </div>
 
-          <div className="hsd-bottom-grid">
-            <div className="hsd-sla-grid">
-              <HsdSlaWidget
-                title="INCIDENT SLA"
-                response={data.symphony.incidentsResponseSla}
-                resolution={data.symphony.incidentsResolutionSla}
-                accent="#c62828"
-              />
-              <HsdSlaWidget
-                title="SERVICE REQUEST SLA"
-                response={data.symphony.requestsResponseSla}
-                resolution={data.symphony.requestsResolutionSla}
-                accent="#1565c0"
-              />
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-                minHeight: 0,
-                padding: '14px',
-                borderRadius: '16px',
-                background: 'linear-gradient(180deg, rgba(21,101,192,0.08), rgba(255,255,255,0.56))',
-                border: '1px solid rgba(21,101,192,0.12)'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-                <div>
-                  <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>QUEUE MIX</div>
-                  <div style={{ fontSize: '1rem', fontWeight: 800, marginTop: '4px' }}>Backlog state distribution</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.64rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.58 }}>TOTAL OPEN</div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#1565c0' }}>{totalHsdBacklog}</div>
-                </div>
-              </div>
-
-              <div className="hsd-state-grid">
-                <HsdStatusTile label="NEW" count={hsdBreakdownTotals.new} total={totalHsdBacklog} color="#4f6bed" />
-                <HsdStatusTile label="ASSIGNED" count={hsdBreakdownTotals.assigned} total={totalHsdBacklog} color="#f0b429" />
-                <HsdStatusTile label="IN PROGRESS" count={hsdBreakdownTotals.inProgress} total={totalHsdBacklog} color="#1565c0" />
-                <HsdStatusTile label="PENDING" count={hsdBreakdownTotals.pending} total={totalHsdBacklog} color="#7b8794" />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px', marginTop: 'auto' }}>
-                <div style={{ padding: '10px', borderRadius: '14px', background: 'rgba(255,255,255,0.56)', border: '1px solid rgba(141,110,99,0.12)' }}>
-                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>INC SLA</div>
-                  <div style={{ fontSize: '1.08rem', fontWeight: 800, marginTop: '4px', color: getTonePalette(getMetricTone(data.symphony.incidentsResolutionSla, 92, 98)).text }}>
-                    {formatPercent(data.symphony.incidentsResolutionSla, 2)}
-                  </div>
-                </div>
-                <div style={{ padding: '10px', borderRadius: '14px', background: 'rgba(255,255,255,0.56)', border: '1px solid rgba(141,110,99,0.12)' }}>
-                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>REQ SLA</div>
-                  <div style={{ fontSize: '1.08rem', fontWeight: 800, marginTop: '4px', color: getTonePalette(getMetricTone(data.symphony.requestsResolutionSla, 92, 98)).text }}>
-                    {formatPercent(data.symphony.requestsResolutionSla, 2)}
-                  </div>
-                </div>
-                <div style={{ padding: '10px', borderRadius: '14px', background: 'rgba(255,255,255,0.56)', border: '1px solid rgba(141,110,99,0.12)' }}>
-                  <div style={{ fontSize: '0.6rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>ACTIVE</div>
-                  <div style={{ fontSize: '1.08rem', fontWeight: 800, marginTop: '4px', color: '#1565c0' }}>{activeHsdWork}</div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <SpecialQueueWatchCard />
         </section>
 
         <UnifiedNetworkCard links={data.networks} sectionHealth={data.sections.networks} />
 
-        <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+        <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.9fr) minmax(0, 1fr) auto', alignItems: 'start', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
               <div
                 style={{
@@ -1302,35 +1556,36 @@ export default function Dashboard() {
               </div>
               <div style={{ minWidth: 0 }}>
                 <h2 style={{ fontSize: '1.1rem' }}>Server Fleet</h2>
-                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>WINDOWS / LINUX | HCI VM / PHYSICAL</div>
+                <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>HCI VM / ON PREM | WINDOWS / LINUX</div>
                 <div style={{ fontSize: '0.72rem', opacity: 0.72, marginTop: '6px' }}>
-                  {serverTopologySummary.windows} Windows | {serverTopologySummary.linux} Linux | {serverTopologySummary.hciVm} HCI VM | {serverTopologySummary.physical} Physical
+                  {serverTopologySummary.windows} Windows | {serverTopologySummary.linux} Linux | {serverTopologySummary.hciVm} HCI VM | {serverTopologySummary.onPrem} On Prem
                 </div>
               </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', minWidth: 0 }}>
+              <ServerSummaryDonut label="NORMAL" count={serverSummary.normal} total={data.servers.length} accent={getTonePalette('normal').fill} />
+              <ServerSummaryDonut label="WARNING" count={serverSummary.warning} total={data.servers.length} accent={getTonePalette('warning').fill} />
+              <ServerSummaryDonut label="CRITICAL" count={serverSummary.critical} total={data.servers.length} accent={getTonePalette('critical').fill} />
+              <ServerSummaryDonut label="OFFLINE" count={serverSummary.offline} total={data.servers.length} accent={getTonePalette('offline').fill} />
             </div>
             <SectionHealthMeta health={data.sections.servers} />
           </div>
 
-          <div className="server-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px' }}>
-            <StatusSummaryPill label="Normal" count={serverSummary.normal} tone="normal" />
-            <StatusSummaryPill label="Warning" count={serverSummary.warning} tone="warning" />
-            <StatusSummaryPill label="Critical" count={serverSummary.critical} tone="critical" />
-            <StatusSummaryPill label="Offline" count={serverSummary.offline} tone="offline" />
-          </div>
-
-          <div className="server-group-grid">
-            <div className="server-group-grid__windows-hci">
-              <ServerGroupCard title="Windows / HCI VM" subtitle="Nutanix-backed virtual servers" servers={groupedServers.windowsHci} accent="#1565c0" />
-            </div>
-            <div className="server-group-grid__windows-physical">
-              <ServerGroupCard title="Windows / Physical" subtitle="SolarWinds-only physical estate" servers={groupedServers.windowsPhysical} accent="#8d6e63" />
-            </div>
-            <div className="server-group-grid__linux-hci">
-              <ServerGroupCard title="Linux / HCI VM" subtitle="Virtual Linux workloads with live Nutanix feed" servers={groupedServers.linuxHci} accent="#2e7d32" />
-            </div>
-            <div className="server-group-grid__linux-physical">
-              <ServerGroupCard title="Linux / Physical" subtitle="Bare-metal Linux estate" servers={groupedServers.linuxPhysical} accent="#546e7a" />
-            </div>
+          <div className="server-platform-grid">
+            <ServerPlatformCard
+              title="HCI VM"
+              subtitle="Nutanix-backed virtual estate"
+              accent="#1565c0"
+              windowsServers={groupedServers.windowsHci}
+              linuxServers={groupedServers.linuxHci}
+            />
+            <ServerPlatformCard
+              title="ON PREM"
+              subtitle="SolarWinds-backed non-HCI estate"
+              accent="#8d6e63"
+              windowsServers={groupedServers.windowsOnPrem}
+              linuxServers={groupedServers.linuxOnPrem}
+            />
           </div>
         </section>
       </main>
