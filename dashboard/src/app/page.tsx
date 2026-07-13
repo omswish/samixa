@@ -24,6 +24,14 @@ interface ServerNode {
   memory: number | null;
   disk: string | null;
   backupStatus: 'successful' | 'failed' | 'N/A';
+  sourceOfTruth?: 'nutanix' | 'solarwinds' | null;
+  platform?: 'hci-vm' | 'on-prem' | null;
+  solarwindsNodeId?: number | null;
+  pollingIp?: string | null;
+  machineType?: string | null;
+  hardwareType?: string | null;
+  lastBoot?: string | null;
+  availabilityToday?: number | null;
   history: number[];
 }
 
@@ -250,6 +258,19 @@ function getMetricTone(value: number | null, warning = 75, critical = 90): Visua
   return 'normal';
 }
 
+function getAvailabilityTone(value: number | null | undefined): VisualTone {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'offline';
+  }
+  if (value < 95) {
+    return 'critical';
+  }
+  if (value < 99.95) {
+    return 'warning';
+  }
+  return 'normal';
+}
+
 function getTonePalette(tone: VisualTone) {
   switch (tone) {
     case 'normal':
@@ -324,15 +345,76 @@ function formatServerName(name: string) {
   return name.split('.')[0];
 }
 
+function formatServerBootLabel(lastBoot?: string | null) {
+  if (!lastBoot) {
+    return null;
+  }
+
+  const match = lastBoot.match(/(\d{1,2})\s+([A-Za-z]+)/);
+  if (!match) {
+    return null;
+  }
+
+  return `BOOT ${match[1]} ${match[2].slice(0, 3).toUpperCase()}`;
+}
+
+function getServerHardwareLabel(server: ServerNode) {
+  const hardwareType = server.hardwareType?.toLowerCase();
+  if (hardwareType?.includes('virtual')) {
+    return 'VIRT';
+  }
+  if (hardwareType?.includes('physical')) {
+    return 'PHYS';
+  }
+  if (server.platform === 'hci-vm') {
+    return 'HCI';
+  }
+
+  return null;
+}
+
+function getServerSourceChip(server: ServerNode) {
+  if (server.sourceOfTruth === 'nutanix') {
+    return {
+      label: 'NX',
+      color: '#1565c0',
+      background: 'rgba(21,101,192,0.10)',
+      border: 'rgba(21,101,192,0.18)'
+    };
+  }
+
+  return {
+    label: 'SW45',
+    color: '#8d6e63',
+    background: 'rgba(141,110,99,0.10)',
+    border: 'rgba(141,110,99,0.18)'
+  };
+}
+
 function isWindowsServerName(name: string) {
   return name.toLowerCase().endsWith('.abgplanet.abg.com');
 }
 
 function isHciVm(server: ServerNode) {
+  if (server.platform === 'hci-vm' || server.sourceOfTruth === 'nutanix') {
+    return true;
+  }
+  if (server.platform === 'on-prem' || server.sourceOfTruth === 'solarwinds') {
+    return false;
+  }
+
   return server.disk !== null || server.backupStatus !== 'N/A';
 }
 
 function getServerOsFamily(server: ServerNode) {
+  const machineType = server.machineType?.toLowerCase();
+  if (machineType?.includes('windows')) {
+    return 'Windows';
+  }
+  if (machineType?.includes('linux')) {
+    return 'Linux';
+  }
+
   return isWindowsServerName(server.name) ? 'Windows' : 'Linux';
 }
 
@@ -761,15 +843,65 @@ function HsdSlaWidget({
   );
 }
 
+function CompactMetaPill({
+  label,
+  color,
+  background,
+  border
+}: {
+  label: string;
+  color: string;
+  background: string;
+  border: string;
+}) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '3px 6px',
+        borderRadius: '999px',
+        fontSize: '0.5rem',
+        fontWeight: 800,
+        letterSpacing: '0.08em',
+        color,
+        background,
+        border: `1px solid ${border}`
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function CompactServerRow({ server }: { server: ServerNode }) {
   const visual = getServerVisualState(server);
   const palette = getTonePalette(visual.tone);
+  const sourceChip = getServerSourceChip(server);
+  const hardwareLabel = getServerHardwareLabel(server);
+  const bootLabel = formatServerBootLabel(server.lastBoot);
+  const backupLabel =
+    server.backupStatus === 'successful' ? 'BKP OK' :
+    server.backupStatus === 'failed' ? 'BKP FAIL' :
+    'SW45';
+  const backupTone =
+    server.backupStatus === 'successful' ? getTonePalette('normal') :
+    server.backupStatus === 'failed' ? getTonePalette('critical') :
+    { text: '#8d6e63', bg: 'rgba(141,110,99,0.10)', border: 'rgba(141,110,99,0.18)', fill: '#8d6e63', soft: 'rgba(141,110,99,0.18)' };
+  const tertiaryMetric = server.disk !== null
+    ? { label: 'DSK', value: visual.diskPct, tone: getMetricTone(visual.diskPct) }
+    : { label: 'AVL', value: server.availabilityToday ?? null, tone: getAvailabilityTone(server.availabilityToday) };
+  const metrics: Array<{ label: string; value: number | null; tone: VisualTone }> = [
+    { label: 'CPU', value: visual.cpuPct, tone: getMetricTone(visual.cpuPct) },
+    { label: 'RAM', value: visual.memoryPct, tone: getMetricTone(visual.memoryPct) },
+    tertiaryMetric
+  ];
 
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: '128px minmax(0, 1fr) 50px',
+        gridTemplateColumns: '148px minmax(0, 1fr) 82px',
         alignItems: 'center',
         gap: '6px',
         padding: '6px 8px',
@@ -782,36 +914,55 @@ function CompactServerRow({ server }: { server: ServerNode }) {
         <div style={{ fontSize: '0.74rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
           {formatServerName(server.name)}
         </div>
-        <div style={{ fontSize: '0.54rem', letterSpacing: '0.08em', fontWeight: 700, opacity: 0.62, marginTop: '3px' }}>
-          {getServerOsFamily(server)} | {getServerPlatform(server)}
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '5px' }}>
+          <CompactMetaPill label={sourceChip.label} color={sourceChip.color} background={sourceChip.background} border={sourceChip.border} />
+          {hardwareLabel ? (
+            <CompactMetaPill label={hardwareLabel} color="#546e7a" background="rgba(84,110,122,0.10)" border="rgba(84,110,122,0.18)" />
+          ) : null}
+          {bootLabel ? (
+            <CompactMetaPill label={bootLabel} color="#6d4c41" background="rgba(109,76,65,0.08)" border="rgba(109,76,65,0.14)" />
+          ) : null}
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '8px' }}>
-        {[
-          { label: 'CPU', value: visual.cpuPct },
-          { label: 'RAM', value: visual.memoryPct },
-          { label: 'DSK', value: visual.diskPct }
-        ].map((metric) => (
+        {metrics.map((metric) => (
           <div key={metric.label} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '6px' }}>
               <span style={{ fontSize: '0.5rem', fontWeight: 800, opacity: 0.58 }}>{metric.label}</span>
-              <span style={{ fontSize: '0.6rem', fontWeight: 800, color: getTonePalette(getMetricTone(metric.value)).text }}>
+              <span style={{ fontSize: '0.6rem', fontWeight: 800, color: getTonePalette(metric.tone).text }}>
                 {formatSmallNumber(metric.value, metric.value === null ? '' : '%')}
               </span>
             </div>
             <div style={{ width: '100%', height: '4px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
-              <div style={{ width: `${Math.max(0, Math.min(100, metric.value ?? 0))}%`, height: '100%', background: getTonePalette(getMetricTone(metric.value)).fill }} />
+              <div style={{ width: `${Math.max(0, Math.min(100, metric.value ?? 0))}%`, height: '100%', background: getTonePalette(metric.tone).fill }} />
             </div>
           </div>
         ))}
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
-        <div style={{ width: '46px', height: '14px' }}>
+        <div style={{ width: '74px', height: '16px' }}>
           <UptimeChart history={server.history || []} color={palette.fill} hideNoDataText />
         </div>
-        <span style={{ fontSize: '0.52rem', fontWeight: 700, opacity: 0.62 }}>{server.backupStatus === 'successful' ? 'BKP' : server.backupStatus === 'failed' ? 'FAIL' : 'N/A'}</span>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: '58px',
+            padding: '3px 6px',
+            borderRadius: '999px',
+            fontSize: '0.5rem',
+            fontWeight: 800,
+            letterSpacing: '0.08em',
+            color: backupTone.text,
+            background: backupTone.bg,
+            border: `1px solid ${backupTone.border}`
+          }}
+        >
+          {backupLabel}
+        </span>
       </div>
     </div>
   );

@@ -7,6 +7,8 @@ type SectionKey = 'nutanix' | 'servers' | 'networks' | 'symphony';
 type SectionStatus = 'ok' | 'stale' | 'error' | 'never';
 type SourceStatus = SectionStatus | 'partial';
 type AssetStatus = 'operational' | 'degraded' | 'down';
+type ServerSourceOfTruth = 'nutanix' | 'solarwinds';
+type ServerPlatform = 'hci-vm' | 'on-prem';
 
 interface ServerNode {
   id: string;
@@ -17,6 +19,14 @@ interface ServerNode {
   memory: number | null;
   disk: string | null;
   backupStatus: 'successful' | 'failed' | 'N/A';
+  sourceOfTruth: ServerSourceOfTruth | null;
+  platform: ServerPlatform | null;
+  solarwindsNodeId: number | null;
+  pollingIp: string | null;
+  machineType: string | null;
+  hardwareType: string | null;
+  lastBoot: string | null;
+  availabilityToday: number | null;
   history: number[];
 }
 
@@ -139,6 +149,12 @@ interface UpdateMeta {
   error?: string;
 }
 
+interface DefaultServerMetadata {
+  sourceOfTruth: ServerSourceOfTruth;
+  platform: ServerPlatform;
+  solarwindsNodeId: number | null;
+}
+
 const STATE_KEY = 'dashboard_state';
 const SECTION_KEYS: SectionKey[] = ['nutanix', 'servers', 'networks', 'symphony'];
 const SOURCE_SECTION_KEYS: Record<CollectorSource, SectionKey[]> = {
@@ -147,23 +163,66 @@ const SOURCE_SECTION_KEYS: Record<CollectorSource, SectionKey[]> = {
   symphony: ['symphony']
 };
 
+const DEFAULT_SERVER_METADATA: Record<string, DefaultServerMetadata> = {
+  'HIL-HIDDOR-AV01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 651 },
+  'HIL-HIDDOR-BK01.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 1028 },
+  'HIL-HIDDOR-CSCTS1.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 311 },
+  'HIL-HIDDOR-CSCTS2.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 319 },
+  'HILHIDDORDT0320.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 299 },
+  'HIL-HIDDOR-FS01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 216 },
+  'HILHIDDORILMSAP': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1026 },
+  'HILHIDDORILMSDB': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1027 },
+  'HIL-HIDDOR-PIMW.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 221 },
+  'HIL-HIDDOR-PSDM.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 568 },
+  'HIL-HIDDOR-US01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1058 },
+  'HIL-HIDDOR-US02.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 349 },
+  'HIL-HIDDOR-US03.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 347 },
+  'HIL-HIDDOR-US04.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 652 },
+  'HIL-HIDDOR-US05.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1024 },
+  'HIL-HIDDOR-US06.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1025 }
+};
+
+function createDefaultServer(id: string, name: string): ServerNode {
+  const metadata = DEFAULT_SERVER_METADATA[name] ?? { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: null };
+
+  return {
+    id,
+    name,
+    location: 'Utkal DC',
+    status: 'operational',
+    cpu: null,
+    memory: null,
+    disk: null,
+    backupStatus: 'N/A',
+    sourceOfTruth: metadata.sourceOfTruth,
+    platform: metadata.platform,
+    solarwindsNodeId: metadata.solarwindsNodeId,
+    pollingIp: null,
+    machineType: null,
+    hardwareType: null,
+    lastBoot: null,
+    availabilityToday: null,
+    history: []
+  };
+}
+
 const DEFAULT_SERVERS: ServerNode[] = [
-  { id: 'sw-srv-1', name: 'HIL-HIDDOR-AV01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-2', name: 'HIL-HIDDOR-BK01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-3', name: 'HIL-HIDDOR-CSCTS1.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-4', name: 'HIL-HIDDOR-CSCTS2.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-5', name: 'HILHIDDORDT0320.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-6', name: 'HIL-HIDDOR-FS01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-7', name: 'HILHIDDORILMSAP', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-8', name: 'HILHIDDORILMSDB', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-9', name: 'HIL-HIDDOR-PIMW.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-10', name: 'HIL-HIDDOR-PSDM.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-11', name: 'HIL-HIDDOR-US01.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-12', name: 'HIL-HIDDOR-US02.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-13', name: 'HIL-HIDDOR-US03.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-14', name: 'HIL-HIDDOR-US04.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-15', name: 'HIL-HIDDOR-US05.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] },
-  { id: 'sw-srv-16', name: 'HIL-HIDDOR-US06.abgplanet.abg.com', location: 'Utkal DC', status: 'operational', cpu: null, memory: null, disk: null, backupStatus: 'N/A', history: [] }
+  createDefaultServer('sw-srv-1', 'HIL-HIDDOR-AV01.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-2', 'HIL-HIDDOR-BK01.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-3', 'HIL-HIDDOR-CSCTS1.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-4', 'HIL-HIDDOR-CSCTS2.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-5', 'HILHIDDORDT0320.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-6', 'HIL-HIDDOR-FS01.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-7', 'HILHIDDORILMSAP'),
+  createDefaultServer('sw-srv-8', 'HILHIDDORILMSDB'),
+  createDefaultServer('sw-srv-9', 'HIL-HIDDOR-PIMW.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-10', 'HIL-HIDDOR-PSDM.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-11', 'HIL-HIDDOR-US01.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-12', 'HIL-HIDDOR-US02.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-13', 'HIL-HIDDOR-US03.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-14', 'HIL-HIDDOR-US04.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-15', 'HIL-HIDDOR-US05.abgplanet.abg.com'),
+  createDefaultServer('sw-srv-16', 'HIL-HIDDOR-US06.abgplanet.abg.com')
 ];
 
 const DEFAULT_NETWORKS: NetworkLink[] = [
@@ -384,6 +443,14 @@ function mergeServers(incomingServers: any[]): ServerNode[] {
     target.status = normalizeAssetStatus(target.status) ?? target.status;
     target.history = Array.isArray(target.history) ? target.history : [];
     target.backupStatus = target.backupStatus === 'failed' || target.backupStatus === 'successful' ? target.backupStatus : 'N/A';
+    target.sourceOfTruth = normalizeServerSource(target.sourceOfTruth);
+    target.platform = normalizeServerPlatform(target.platform);
+    target.solarwindsNodeId = typeof target.solarwindsNodeId === 'number' ? target.solarwindsNodeId : null;
+    target.pollingIp = typeof target.pollingIp === 'string' ? target.pollingIp : null;
+    target.machineType = typeof target.machineType === 'string' ? target.machineType : null;
+    target.hardwareType = typeof target.hardwareType === 'string' ? target.hardwareType : null;
+    target.lastBoot = typeof target.lastBoot === 'string' ? target.lastBoot : null;
+    target.availabilityToday = typeof target.availabilityToday === 'number' ? target.availabilityToday : null;
   }
 
   return merged;
@@ -464,17 +531,40 @@ function normalizeAssetStatus(status?: string | null): AssetStatus | undefined {
   }
 
   const normalized = status.toLowerCase();
-  if (normalized === 'ok' || normalized === 'up' || normalized === 'operational') {
-    return 'operational';
-  }
-  if (normalized === 'warning' || normalized === 'degraded') {
+  if (normalized.includes('warning') || normalized.includes('degraded') || normalized.includes('unknown')) {
     return 'degraded';
   }
-  if (normalized === 'critical' || normalized === 'down') {
+  if (normalized.includes('critical') || normalized.includes('down')) {
     return 'down';
+  }
+  if (normalized.includes('ok') || normalized.includes('up') || normalized.includes('operational')) {
+    return 'operational';
   }
 
   return undefined;
+}
+
+function normalizeServerSource(source?: string | null): ServerSourceOfTruth | null {
+  if (source === 'nutanix' || source === 'solarwinds') {
+    return source;
+  }
+
+  return null;
+}
+
+function normalizeServerPlatform(platform?: string | null): ServerPlatform | null {
+  if (platform === 'hci-vm' || platform === 'on-prem') {
+    return platform;
+  }
+
+  return null;
+}
+
+function isNutanixBackedServer(server: ServerNode): boolean {
+  return server.sourceOfTruth === 'nutanix'
+    || server.platform === 'hci-vm'
+    || server.disk !== null
+    || server.backupStatus !== 'N/A';
 }
 
 function markSectionAttempt(sectionKey: SectionKey, attemptedAt: string): void {
@@ -669,6 +759,8 @@ export function updateNutanix(data: {
       if (vm.backupStatus !== undefined) {
         server.backupStatus = vm.backupStatus;
       }
+      server.sourceOfTruth = 'nutanix';
+      server.platform = 'hci-vm';
       if (vm.cpu !== undefined) {
         server.cpu = vm.cpu;
         server.history = pushToHistory(server.history, vm.cpu);
@@ -694,7 +786,20 @@ export function updateSolarWinds(data: {
       networks?: UpdateMeta;
     };
   };
-  servers?: Array<{ name: string; cpu?: number; memory?: number; status?: string }>;
+  servers?: Array<{
+    name: string;
+    cpu?: number;
+    memory?: number;
+    status?: string;
+    nodeId?: number;
+    pollingIp?: string;
+    machineType?: string;
+    hardwareType?: string;
+    lastBoot?: string;
+    availabilityToday?: number;
+    sourceOfTruth?: ServerSourceOfTruth;
+    platform?: ServerPlatform;
+  }>;
   networks?: Array<{
     id: string;
     latency?: number;
@@ -755,15 +860,39 @@ export function updateSolarWinds(data: {
         continue;
       }
 
-      if (incoming.cpu !== undefined) {
-        server.cpu = incoming.cpu;
-        server.history = pushToHistory(server.history, incoming.cpu);
+      if (incoming.nodeId !== undefined) {
+        server.solarwindsNodeId = incoming.nodeId;
       }
-      if (incoming.memory !== undefined) {
-        server.memory = incoming.memory;
+      if (incoming.pollingIp !== undefined) {
+        server.pollingIp = incoming.pollingIp;
       }
-      if (incoming.status !== undefined) {
-        server.status = normalizeAssetStatus(incoming.status) ?? server.status;
+      if (incoming.machineType !== undefined) {
+        server.machineType = incoming.machineType;
+      }
+      if (incoming.hardwareType !== undefined) {
+        server.hardwareType = incoming.hardwareType;
+      }
+      if (incoming.lastBoot !== undefined) {
+        server.lastBoot = incoming.lastBoot;
+      }
+      if (incoming.availabilityToday !== undefined) {
+        server.availabilityToday = incoming.availabilityToday;
+      }
+
+      if (!isNutanixBackedServer(server)) {
+        server.sourceOfTruth = incoming.sourceOfTruth ?? 'solarwinds';
+        server.platform = incoming.platform ?? 'on-prem';
+
+        if (incoming.cpu !== undefined) {
+          server.cpu = incoming.cpu;
+          server.history = pushToHistory(server.history, incoming.cpu);
+        }
+        if (incoming.memory !== undefined) {
+          server.memory = incoming.memory;
+        }
+        if (incoming.status !== undefined) {
+          server.status = normalizeAssetStatus(incoming.status) ?? server.status;
+        }
       }
     }
 

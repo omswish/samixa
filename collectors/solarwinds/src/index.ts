@@ -59,6 +59,14 @@ interface ServerMetric {
   cpu?: number;
   memory?: number;
   status?: AssetStatus;
+  nodeId?: number;
+  pollingIp?: string;
+  machineType?: string;
+  hardwareType?: string;
+  lastBoot?: string;
+  availabilityToday?: number;
+  sourceOfTruth?: 'solarwinds';
+  platform?: 'on-prem';
 }
 
 interface NetworkMetric {
@@ -151,6 +159,52 @@ interface InterfaceDetailSnapshot {
   dailyTransmitUtilization?: number;
   dailyReceiveUtilization?: number;
 }
+
+interface ServerInventoryEntry {
+  name: string;
+  nodeId: number;
+}
+
+interface NodeDetailsEnvelope {
+  d?: {
+    NodeStatusAltText?: string;
+    NodeStatusDescription?: string;
+    IPAddressString?: string;
+    HrefIPAddress?: string;
+    MachineType?: string;
+    SysName?: string;
+    LastBoot?: string;
+    HardwareType?: string;
+    CpuNo?: number;
+    EffectiveCategory?: string;
+  };
+}
+
+interface PerfstackMetricResponse {
+  measurements?: Array<{
+    dateTimeStamp?: string;
+    value?: number | null;
+  }>;
+}
+
+const SERVER_NODE_MAP: ServerInventoryEntry[] = [
+  { name: 'HIL-HIDDOR-AV01.abgplanet.abg.com', nodeId: 651 },
+  { name: 'HIL-HIDDOR-BK01', nodeId: 1028 },
+  { name: 'HIL-HIDDOR-CSCTS1', nodeId: 311 },
+  { name: 'HIL-HIDDOR-CSCTS2', nodeId: 319 },
+  { name: 'HILHIDDORDT0320', nodeId: 299 },
+  { name: 'HIL-HIDDOR-FS01.abgplanet.abg.com', nodeId: 216 },
+  { name: 'HILHIDDORILMSAP', nodeId: 1026 },
+  { name: 'HILHIDDORILMSDB', nodeId: 1027 },
+  { name: 'HIL-HIDDOR-PIMW.abgplanet.abg.com', nodeId: 221 },
+  { name: 'HIL-HIDDOR-PSDM.abgplanet.abg.com', nodeId: 568 },
+  { name: 'HIL-HIDDOR-US01', nodeId: 1058 },
+  { name: 'HIL-HIDDOR-US02', nodeId: 349 },
+  { name: 'HIL-HIDDOR-US03', nodeId: 347 },
+  { name: 'HIL-HIDDOR-US04', nodeId: 652 },
+  { name: 'HIL-HIDDOR-US05', nodeId: 1024 },
+  { name: 'HIL-HIDDOR-US06', nodeId: 1025 }
+];
 
 const hostConfigs: Record<HostKey, HostConfig> = {
   servers: {
@@ -248,7 +302,7 @@ function parseAssetStatus(value: string | undefined | null): AssetStatus | undef
   }
 
   const normalized = value.toLowerCase();
-  if (normalized.includes('warning') || normalized.includes('degraded')) {
+  if (normalized.includes('warning') || normalized.includes('degraded') || normalized.includes('unknown')) {
     return 'degraded';
   }
   if (normalized.includes('down') || normalized.includes('critical')) {
@@ -523,6 +577,41 @@ async function fetchJsonFromPage<T>(page: Page, url: string, init?: { method?: s
   return JSON.parse(result.text) as T;
 }
 
+async function postJsonWithXsrfFromPage<T>(page: Page, url: string, body: object): Promise<T> {
+  const result = await page.evaluate(async ({ url, body }) => {
+    const xsrfToken = document.cookie
+      .split('; ')
+      .find((part) => part.startsWith('XSRF-TOKEN='))
+      ?.split('=')
+      .slice(1)
+      .join('=');
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=UTF-8',
+        Accept: 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(xsrfToken ? { 'X-XSRF-TOKEN': decodeURIComponent(xsrfToken) } : {})
+      },
+      credentials: 'include',
+      body: JSON.stringify(body)
+    });
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      text: await response.text()
+    };
+  }, { url, body });
+
+  if (!result.ok) {
+    throw new Error(`SolarWinds request failed (${result.status}) for ${url}`);
+  }
+
+  return JSON.parse(result.text) as T;
+}
+
 async function fetchNetworkEntitySnapshot(page: Page, nodeNumericId: number): Promise<NetworkEntitySnapshot> {
   const result = await fetchJsonFromPage<{ data?: Array<{ displayName?: string; ipAddress?: string; status?: number; statusDescription?: string }> }>(
     page,
@@ -584,6 +673,101 @@ async function fetchAvailabilityToday(page: Page, nodeNumericId: number): Promis
   return parsePercentText(todayRow[1]);
 }
 
+async function fetchServerNodeDetails(page: Page, nodeId: number): Promise<NodeDetailsEnvelope['d']> {
+  const result = await postJsonWithXsrfFromPage<NodeDetailsEnvelope>(
+    page,
+    '/Orion/Services/AsyncResources.asmx/GetNodeDetails',
+    { nodeId, viewLimitationId: 0 }
+  );
+
+  return result.d;
+}
+
+function buildPerfstackMetricUrl(nodeId: number, metricId: string): string {
+  const endTime = new Date();
+  const startTime = new Date(endTime.getTime() - 12 * 60 * 60 * 1000);
+
+  return `/api2/perfstack/metrics/0_Orion.Nodes_${nodeId}-${metricId}/?displayNameSource=&endTime=${encodeURIComponent(endTime.toISOString())}&groupBy=&lang=en-gb&limitationId=&resolution=180&startTime=${encodeURIComponent(startTime.toISOString())}&viewId=2`;
+}
+
+function extractLatestMeasurementValue(metric: PerfstackMetricResponse): number | undefined {
+  const measurements = Array.isArray(metric.measurements) ? metric.measurements : [];
+  const latest = [...measurements]
+    .reverse()
+    .find((measurement) => typeof measurement.value === 'number' && !Number.isNaN(measurement.value));
+
+  if (typeof latest?.value !== 'number') {
+    return undefined;
+  }
+
+  return Number(latest.value.toFixed(2));
+}
+
+async function fetchLatestPerfstackMetric(page: Page, nodeId: number, metricIds: string[]): Promise<number | undefined> {
+  for (const metricId of metricIds) {
+    const metric = await fetchJsonFromPage<PerfstackMetricResponse>(page, buildPerfstackMetricUrl(nodeId, metricId));
+    const latestValue = extractLatestMeasurementValue(metric);
+    if (latestValue !== undefined) {
+      return latestValue;
+    }
+  }
+
+  return undefined;
+}
+
+async function discoverServerInventory(page: Page): Promise<ServerInventoryEntry[]> {
+  const links = await page.locator('a[href*="NodeDetails.aspx?NetObject=N:"]').evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      text: (node.textContent || '').replace(/\s+/g, ' ').trim(),
+      href: node.getAttribute('href') || ''
+    }))
+  );
+
+  const inventory = new Map<string, ServerInventoryEntry>();
+  for (const link of links) {
+    const name = findKnownServerName(link.text);
+    const nodeIdMatch = link.href.match(/NetObject=N:(\d+)/i);
+    if (!name || !nodeIdMatch) {
+      continue;
+    }
+
+    if (!inventory.has(name)) {
+      inventory.set(name, {
+        name,
+        nodeId: Number.parseInt(nodeIdMatch[1], 10)
+      });
+    }
+  }
+
+  // The SummaryView widget set is not deterministic on every load, so fall back
+  // to the verified node inventory when a server link is absent from the page.
+  return SERVER_NODE_MAP.map((entry) => inventory.get(entry.name) ?? entry);
+}
+
+async function scrapeServerNode(page: Page, entry: ServerInventoryEntry): Promise<ServerMetric> {
+  const [details, availabilityToday, cpu, memory] = await Promise.all([
+    fetchServerNodeDetails(page, entry.nodeId),
+    fetchAvailabilityToday(page, entry.nodeId),
+    fetchLatestPerfstackMetric(page, entry.nodeId, ['Orion.CPUMultiLoad.AvgLoad', 'Orion.CPULoad.AvgLoad']),
+    fetchLatestPerfstackMetric(page, entry.nodeId, ['Orion.CPULoad.AvgPercentMemoryUsed'])
+  ]);
+
+  return {
+    name: entry.name,
+    nodeId: entry.nodeId,
+    cpu,
+    memory,
+    status: parseAssetStatus(details?.NodeStatusDescription) ?? parseAssetStatus(details?.NodeStatusAltText),
+    pollingIp: details?.IPAddressString || details?.HrefIPAddress,
+    machineType: details?.MachineType,
+    hardwareType: details?.HardwareType,
+    lastBoot: details?.LastBoot,
+    availabilityToday,
+    sourceOfTruth: 'solarwinds',
+    platform: 'on-prem'
+  };
+}
+
 async function scrapeInterfaceDetailPage(context: BrowserContext, interfaceId: number): Promise<InterfaceDetailSnapshot> {
   const detailPage = await context.newPage();
 
@@ -601,19 +785,10 @@ async function scrapeInterfaceDetailPage(context: BrowserContext, interfaceId: n
 }
 
 async function scrapeServers(page: Page): Promise<ServerMetric[]> {
-  const serverMap = new Map<string, ServerMetric>();
-  const tableTexts = await page.locator('table.NeedsZebraStripes, table.sw-custom-query-table').evaluateAll((nodes) =>
-    nodes.map((node) => (node.textContent || '').replace(/\s+/g, ' ').trim())
-  );
-
-  for (const tableText of tableTexts) {
-    parseRankedServerTable(tableText, /^NODE MEMORY USED\s*/i, 'memory', serverMap);
-    parseRankedServerTable(tableText, /^NODE AVERAGE CPU LOAD\s*/i, 'cpu', serverMap);
-  }
-
-  const servers = [...serverMap.values()];
+  const inventory = await discoverServerInventory(page);
+  const servers = await Promise.all(inventory.map((entry) => scrapeServerNode(page, entry)));
   if (servers.length === 0) {
-    throw new Error('SolarWinds server summary did not expose any recognized server rows');
+    throw new Error('SolarWinds server scrape did not expose any recognized server rows');
   }
 
   return servers;
