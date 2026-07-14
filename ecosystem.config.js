@@ -4,6 +4,7 @@ module.exports = {
       name: 'api-gateway',
       script: './api-gateway/dist/index.js',
       env: {
+        HOST: '0.0.0.0',
         PORT: 4000,
         DB_PATH: '../data/itdash.db',
         NODE_ENV: 'production'
@@ -33,12 +34,11 @@ module.exports = {
     {
       name: 'dashboard-ui',
       script: '../node_modules/next/dist/bin/next',
-      args: 'start',
+      args: 'start -H 0.0.0.0',
       cwd: './dashboard',
       env: {
         PORT: 3000,
-        NODE_ENV: 'production',
-        NEXT_PUBLIC_API_URL: 'http://localhost:4000'
+        NODE_ENV: 'production'
       }
     }
   ]

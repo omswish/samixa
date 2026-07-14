@@ -11,7 +11,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const port = process.env.PORT || 4000;
+const port = Number(process.env.PORT || 4000);
+const host = process.env.HOST || '0.0.0.0';
 const server = http.createServer(app);
 
 // WebSocket Server
@@ -106,6 +107,6 @@ app.post('/api/update', (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`API Gateway central hub listening on http://localhost:${port}`);
+server.listen(port, host, () => {
+  console.log(`API Gateway central hub listening on http://${host}:${port}`);
 });

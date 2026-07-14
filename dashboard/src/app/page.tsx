@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import UnifiedNetworkCard from '../components/UnifiedNetworkCard';
 import UptimeChart from '../components/UptimeChart';
 import {
+  Activity,
   AlertOctagon,
   AlertTriangle,
   CheckCircle2,
@@ -1567,6 +1568,261 @@ function SectionHealthMeta({ health }: { health: SectionHealth }) {
   );
 }
 
+function MobileSectionHealthBadge({ health }: { health: SectionHealth }) {
+  const badgeStyle = getHealthBadgeStyle(health.status);
+
+  return (
+    <span
+      style={{
+        ...badgeStyle,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '4px 8px',
+        borderRadius: '999px',
+        fontSize: '0.58rem',
+        fontWeight: 800,
+        letterSpacing: '0.05em',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        maxWidth: '100%'
+      }}
+      title={health.lastError || undefined}
+    >
+      <span className={`pulse-dot ${getHealthPulseClass(health.status)}`} />
+      {`${getHealthText(health.status).toUpperCase()} | ${formatSyncTime(health.lastSuccessAt)}`}
+    </span>
+  );
+}
+
+function MobileSectionHeader({
+  icon,
+  title,
+  subtitle,
+  health
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  health: SectionHealth;
+}) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', minWidth: 0, flex: '1 1 180px' }}>
+        <div
+          style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '14px',
+            background: 'rgba(255,255,255,0.62)',
+            border: '1px solid rgba(141,110,99,0.10)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flex: '0 0 auto'
+          }}
+        >
+          {icon}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.98rem', fontWeight: 800, lineHeight: 1.15 }}>{title}</div>
+          <div style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.08em', opacity: 0.6, marginTop: '3px' }}>{subtitle}</div>
+        </div>
+      </div>
+
+      <MobileSectionHealthBadge health={health} />
+    </div>
+  );
+}
+
+function formatTrafficMbps(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'N/A';
+  }
+
+  const digits = value < 10 ? 1 : 0;
+  return `${value.toFixed(digits)} Mbps`;
+}
+
+function getNetworkPeakValue(values: Array<number | null | undefined>) {
+  const valid = values.filter((value): value is number => value !== null && value !== undefined && !Number.isNaN(value));
+  return valid.length ? Math.max(...valid) : null;
+}
+
+function getMobileNetworkTone(link: NetworkLink): VisualTone {
+  const operationalState = (link.operationalStatus || '').toLowerCase();
+  const administrativeState = (link.administrativeStatus || '').toLowerCase();
+
+  if (link.status === 'down' || operationalState.includes('down')) {
+    return 'critical';
+  }
+  if (link.status === 'degraded' || administrativeState.includes('down')) {
+    return 'warning';
+  }
+
+  const peakUtilization = getNetworkPeakValue([
+    link.realtimeTransmitUtilization,
+    link.realtimeReceiveUtilization,
+    link.dailyTransmitUtilization,
+    link.dailyReceiveUtilization,
+    link.transmitUtilization,
+    link.receiveUtilization,
+    link.utilization
+  ]);
+
+  if (peakUtilization !== null && peakUtilization >= 85) {
+    return 'critical';
+  }
+  if (peakUtilization !== null && peakUtilization >= 60) {
+    return 'warning';
+  }
+
+  return 'normal';
+}
+
+function getMobileNetworkStatusLabel(link: NetworkLink) {
+  const normalized = (link.operationalStatus || link.status || '').toLowerCase();
+  if (normalized.includes('down')) {
+    return 'Down';
+  }
+  if (normalized.includes('warn') || normalized.includes('degrad')) {
+    return 'Warning';
+  }
+  if (normalized.includes('up') || normalized.includes('operational') || normalized.includes('ok')) {
+    return 'Up';
+  }
+
+  return link.status === 'down' ? 'Down' : link.status === 'degraded' ? 'Warning' : 'Up';
+}
+
+function getMobileNetworkLabel(link: NetworkLink) {
+  return link.interfaceName || link.alias || link.displayName || link.provider;
+}
+
+function MobileNetworkLinkCard({ link }: { link: NetworkLink }) {
+  const tone = getMobileNetworkTone(link);
+  const palette = getTonePalette(tone);
+  const txUtil = link.realtimeTransmitUtilization ?? link.transmitUtilization ?? null;
+  const rxUtil = link.realtimeReceiveUtilization ?? link.receiveUtilization ?? null;
+  const peakUtil = getNetworkPeakValue([txUtil, rxUtil]);
+  const averageUtil = getNetworkPeakValue([link.dailyTransmitUtilization, link.dailyReceiveUtilization]);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        padding: '12px',
+        borderRadius: '16px',
+        background: 'rgba(255,255,255,0.60)',
+        border: `1px solid ${palette.border}`,
+        boxShadow: `inset 0 0 0 1px ${palette.bg}`
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.68rem', fontWeight: 800, letterSpacing: '0.08em', color: palette.text }}>{link.provider}</div>
+          <div style={{ fontSize: '1rem', fontWeight: 800, lineHeight: 1.2, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={getMobileNetworkLabel(link)}>
+            {getMobileNetworkLabel(link)}
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '4px 8px',
+                borderRadius: '999px',
+                fontSize: '0.56rem',
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                color: palette.text,
+                background: palette.bg,
+                border: `1px solid ${palette.border}`
+              }}
+            >
+              <span style={{ width: '6px', height: '6px', borderRadius: '999px', background: palette.fill }} />
+              {(link.alias || link.provider).toUpperCase()} {getMobileNetworkStatusLabel(link).toUpperCase()}
+            </span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '4px 8px',
+                borderRadius: '999px',
+                fontSize: '0.56rem',
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                color: 'var(--text-secondary)',
+                background: 'rgba(255,255,255,0.76)',
+                border: '1px solid rgba(141,110,99,0.12)'
+              }}
+            >
+              {link.portSpeed || (link.configuredSpeedMbps ? `${link.configuredSpeedMbps.toFixed(0)} Mbps` : 'N/A')}
+            </span>
+          </div>
+        </div>
+
+        <div
+          style={{
+            minWidth: '72px',
+            padding: '8px 10px',
+            borderRadius: '12px',
+            background: palette.bg,
+            border: `1px solid ${palette.border}`
+          }}
+        >
+          <div style={{ fontSize: '0.54rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.62 }}>UTIL NOW</div>
+          <div style={{ fontSize: '1rem', fontWeight: 800, lineHeight: 1.1, color: palette.text, marginTop: '4px' }}>{formatPercent(peakUtil, peakUtil !== null && peakUtil < 10 ? 1 : 0)}</div>
+          <div style={{ fontSize: '0.54rem', opacity: 0.64, marginTop: '3px' }}>AVG {formatPercent(averageUtil, averageUtil !== null && averageUtil < 10 ? 1 : 0)}</div>
+        </div>
+      </div>
+
+      <div className="dashboard-mobile-grid-two" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+        <div
+          style={{
+            padding: '10px',
+            borderRadius: '14px',
+            background: 'rgba(255,255,255,0.78)',
+            border: '1px solid rgba(141,110,99,0.10)'
+          }}
+        >
+          <div style={{ fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.58 }}>TX NOW</div>
+          <div style={{ fontSize: '1.2rem', fontWeight: 800, lineHeight: 1.1, marginTop: '4px' }}>{formatTrafficMbps(link.currentTrafficTransmitMbps)}</div>
+          <div style={{ fontSize: '0.62rem', opacity: 0.66, marginTop: '4px' }}>{`${formatPercent(txUtil, 1)} util`}</div>
+        </div>
+        <div
+          style={{
+            padding: '10px',
+            borderRadius: '14px',
+            background: 'rgba(255,255,255,0.78)',
+            border: '1px solid rgba(141,110,99,0.10)'
+          }}
+        >
+          <div style={{ fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.58 }}>RX NOW</div>
+          <div style={{ fontSize: '1.2rem', fontWeight: 800, lineHeight: 1.1, marginTop: '4px' }}>{formatTrafficMbps(link.currentTrafficReceiveMbps)}</div>
+          <div style={{ fontSize: '0.62rem', opacity: 0.66, marginTop: '4px' }}>{`${formatPercent(rxUtil, 1)} util`}</div>
+        </div>
+      </div>
+
+      <div style={{ width: '100%', height: '56px', padding: '4px 0', borderRadius: '12px', background: 'rgba(255,255,255,0.78)', border: '1px solid rgba(141,110,99,0.08)' }}>
+        <UptimeChart history={link.history || []} color={palette.fill} threshold={80} fixedDomain={[0, 100]} hideNoDataText />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', fontSize: '0.58rem', opacity: 0.68 }}>
+        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {link.lastStatusChange ? `Change ${link.lastStatusChange}` : 'No status timestamp'}
+        </span>
+        <span style={{ whiteSpace: 'nowrap' }}>
+          {`TX ${formatPercent(link.dailyTransmitUtilization, 1)} | RX ${formatPercent(link.dailyReceiveUtilization, 1)}`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function StatusSummaryPill({ label, count, tone }: { label: string; count: number; tone: VisualTone }) {
   const palette = getTonePalette(tone);
 
@@ -1952,7 +2208,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     const connectWS = () => {
-      const apiHost = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+      const configuredApiHost = process.env.NEXT_PUBLIC_API_URL;
+      const apiHost = configuredApiHost && !configuredApiHost.includes('localhost')
+        ? configuredApiHost
+        : `${window.location.protocol}//${window.location.hostname}:4000`;
       const wsUrl = apiHost.replace(/^http/, 'ws');
 
       console.log(`Connecting to WebSocket gateway at ${wsUrl}`);
@@ -2107,9 +2366,34 @@ export default function Dashboard() {
   ];
 
   const hciCurrentCpu = data.nutanix.historyCpu.length ? data.nutanix.historyCpu[data.nutanix.historyCpu.length - 1] : 0;
+  const detailedNetworkLinks = data.networks.filter((link) =>
+    Boolean(
+      link.interfaceName ||
+      link.alias ||
+      link.currentTrafficTransmitMbps !== undefined ||
+      link.currentTrafficReceiveMbps !== undefined ||
+      link.realtimeTransmitUtilization !== undefined ||
+      link.realtimeReceiveUtilization !== undefined
+    )
+  );
+  const mobileNetworkLinks = (detailedNetworkLinks.length ? detailedNetworkLinks : data.networks).slice(0, 2);
+  const nonNormalServers = serverFleetOrdered.filter((server) => getServerVisualState(server).tone !== 'normal');
+  const mobileServerList = (nonNormalServers.length
+    ? [...nonNormalServers, ...serverFleetOrdered.filter((server) => getServerVisualState(server).tone === 'normal')]
+    : serverFleetOrdered
+  ).slice(0, 6);
+  const ticketBacklogTotal = Math.max(
+    1,
+    data.symphony.openIncidents +
+      data.symphony.serviceRequests +
+      data.symphony.workOrders +
+      data.symphony.changeRecords
+  );
+  const specialQueueTotal = Math.max(1, specialQueues.reduce((sum, queue) => sum + queue.value, 0));
 
   return (
-    <div className="dashboard-shell" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '100vh' }}>
+    <>
+    <div className="dashboard-shell dashboard-shell--desktop" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '100vh' }}>
       <header className="glass-panel dashboard-header dashboard-header--wall" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '8px 16px' }}>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: '1rem', color: 'var(--text-primary)', fontWeight: 700, letterSpacing: '0.04em' }}>UTKAL IT DASHBOARD</h1>
@@ -2332,5 +2616,133 @@ export default function Dashboard() {
         </div>
       </footer>
     </div>
+    <div className="dashboard-mobile-shell">
+      <header className="glass-panel dashboard-mobile-header">
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', fontWeight: 800, letterSpacing: '0.04em', textAlign: 'center' }}>UTKAL IT DASHBOARD</h1>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '7px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.52)', border: '1px solid rgba(141,110,99,0.12)', fontSize: '0.94rem', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
+            <Clock size={15} style={{ color: 'var(--primary)' }} />
+            <span>{time}</span>
+          </div>
+        </div>
+      </header>
+
+      <main className="dashboard-mobile-stack">
+        <section className="glass-panel dashboard-mobile-card">
+          <MobileSectionHeader icon={<Server size={18} style={{ color: '#2e7d32' }} />} title="UAIL HCI" subtitle="LIVE CLUSTER METRICS" health={data.sections.nutanix} />
+          <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <HciHeaderChip
+                label="CLUSTER"
+                value=""
+                detail=""
+                color="#2e7d32"
+                extra={data.nutanix.nodes?.length ? <HciNodeMarkers nodes={data.nutanix.nodes.slice(0, data.nutanix.nodesCount || data.nutanix.nodes.length)} /> : null}
+              />
+            </div>
+            <HciHeaderChip
+              label="CPU"
+              value={formatPercent(hciCurrentCpu, hciCurrentCpu < 10 ? 1 : 0)}
+              detail="Current load"
+              color={getTonePalette(getMetricTone(hciCurrentCpu)).fill}
+              barValue={hciCurrentCpu}
+              barTone={getMetricTone(hciCurrentCpu)}
+            />
+            <HciHeaderChip
+              label="MEMORY"
+              value={formatPercent(data.nutanix.logicalMemoryUsage || 0)}
+              detail={`${data.nutanix.memoryUsedGib || 0} / ${data.nutanix.memoryCapacityGib || 0} GiB`}
+              color={getTonePalette(getMetricTone(data.nutanix.logicalMemoryUsage || 0)).fill}
+              barValue={data.nutanix.logicalMemoryUsage || 0}
+              barTone={getMetricTone(data.nutanix.logicalMemoryUsage || 0)}
+            />
+            <div style={{ gridColumn: '1 / -1' }}>
+              <HciHeaderChip
+                label="STORAGE"
+                value={formatPercent(data.nutanix.storageUsage, 0)}
+                detail={`${data.nutanix.storageUsedTib || 0} / ${data.nutanix.storageCapacityTib || 0} TiB`}
+                color={getTonePalette(getMetricTone(data.nutanix.storageUsage)).fill}
+                barValue={data.nutanix.storageUsage}
+                barTone={getMetricTone(data.nutanix.storageUsage)}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="glass-panel dashboard-mobile-card">
+          <MobileSectionHeader icon={<Ticket size={18} style={{ color: '#1565c0' }} />} title="Hindalco Service Desk" subtitle="hsd.adityabirla.com" health={data.sections.symphony} />
+          <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
+            <HsdWorkCard label="INCIDENTS" total={data.symphony.openIncidents} breakdown={data.symphony.openIncidentsBreakdown} accent="#c62828" />
+            <HsdWorkCard label="SERVICE REQUESTS" total={data.symphony.serviceRequests} breakdown={data.symphony.serviceRequestsBreakdown} accent="#1565c0" />
+            <HsdStatusTile label="WORK ORDERS" count={data.symphony.workOrders} total={ticketBacklogTotal} color="#6d4c41" />
+            <HsdStatusTile label="CHANGES" count={data.symphony.changeRecords} total={ticketBacklogTotal} color="#4f6bed" />
+          </div>
+          <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
+            <HsdSlaWidget title="INCIDENT SLA" response={data.symphony.incidentsResponseSla} resolution={data.symphony.incidentsResolutionSla} accent="#c62828" />
+            <HsdSlaWidget title="SERVICE REQUEST SLA" response={data.symphony.requestsResponseSla} resolution={data.symphony.requestsResolutionSla} accent="#1565c0" />
+          </div>
+          <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
+            {specialQueues.map((queue) => (
+              <HsdStatusTile key={queue.label} label={queue.label} count={queue.value} total={specialQueueTotal} color={queue.accent} />
+            ))}
+          </div>
+        </section>
+
+        <section className="glass-panel dashboard-mobile-card">
+          <MobileSectionHeader icon={<Activity size={18} style={{ color: 'var(--primary)' }} />} title="Network Fabric" subtitle="REAL-TIME LINK VIEW" health={data.sections.networks} />
+          <div className="dashboard-mobile-list" style={{ marginTop: '12px' }}>
+            {mobileNetworkLinks.map((link) => (
+              <MobileNetworkLinkCard key={link.id} link={link} />
+            ))}
+          </div>
+        </section>
+
+        <section className="glass-panel dashboard-mobile-card">
+          <MobileSectionHeader icon={<Layers size={18} style={{ color: 'var(--primary)' }} />} title="Servers" subtitle="LIVE MONITORING" health={data.sections.servers} />
+          <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
+            <StatusSummaryPill label="Normal" count={serverSummary.normal} tone="normal" />
+            <StatusSummaryPill label="Warning" count={serverSummary.warning} tone="warning" />
+            <StatusSummaryPill label="Critical" count={serverSummary.critical} tone="critical" />
+            <StatusSummaryPill label="Offline" count={serverSummary.offline} tone="offline" />
+          </div>
+          <div className="dashboard-mobile-list" style={{ marginTop: '12px' }}>
+            {mobileServerList.map((server) => (
+              <ServerNodeCard key={server.id} server={server} />
+            ))}
+          </div>
+        </section>
+      </main>
+
+      <footer className="glass-panel dashboard-mobile-footer">
+        <div style={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.04em' }}>SYSTEM STATUS: {overallSystemStatus}</div>
+        <div className="dashboard-mobile-source-grid">
+          {Object.values(data.sources).map((source) => {
+            const badgeStyle = getHealthBadgeStyle(source.status);
+            return (
+              <span
+                key={source.source}
+                style={{
+                  ...badgeStyle,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 8px',
+                  borderRadius: '999px',
+                  fontSize: '0.62rem',
+                  fontWeight: 700
+                }}
+                title={source.lastError || undefined}
+              >
+                <span className={`pulse-dot ${getHealthPulseClass(source.status)}`} />
+                {`${source.label}: ${getHealthText(source.status)} | ${formatSyncTime(source.lastSuccessAt)}`}
+              </span>
+            );
+          })}
+        </div>
+      </footer>
+    </div>
+    </>
   );
 }

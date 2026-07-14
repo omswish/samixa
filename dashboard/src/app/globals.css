@@ -68,6 +68,51 @@ h1, h2, h3, h4, h5, h6 {
   overflow: hidden;
 }
 
+.dashboard-mobile-shell {
+  display: none;
+  min-height: 100vh;
+  padding: 12px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-mobile-header,
+.dashboard-mobile-footer,
+.dashboard-mobile-card {
+  flex: 0 0 auto;
+}
+
+.dashboard-mobile-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-mobile-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-mobile-grid-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-mobile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-mobile-source-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .dashboard-header,
 .dashboard-footer {
   flex: 0 0 auto;
@@ -364,6 +409,97 @@ h1, h2, h3, h4, h5, h6 {
 
   .network-detail-list {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1024px) and (orientation: portrait) {
+  body {
+    overflow: auto;
+  }
+
+  .dashboard-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .dashboard-wall-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "left"
+      "servers";
+    align-items: start;
+  }
+
+  .dashboard-left-stack {
+    display: grid;
+    align-content: start;
+  }
+
+  .dashboard-left-stack > * {
+    flex: none !important;
+    min-height: auto !important;
+  }
+
+  .dashboard-panel,
+  .server-table-list {
+    overflow: visible;
+  }
+
+  .dashboard-hci-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-hci-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hsd-modern-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hsd-footer-row,
+  .network-detail-list,
+  .network-link-top-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .server-fleet-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-header--wall {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dashboard-hci-strip,
+  .hsd-modern-grid,
+  .hsd-footer-row,
+  .server-fleet-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px), (max-width: 1180px) and (orientation: portrait) {
+  .dashboard-shell--desktop {
+    display: none !important;
+  }
+
+  .dashboard-mobile-shell {
+    display: flex;
+  }
+}
+
+@media (max-width: 520px) {
+  .dashboard-mobile-grid-two {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-mobile-header {
+    align-items: stretch;
   }
 }
 
