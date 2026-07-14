@@ -14,6 +14,10 @@ const SYM_URL = process.env.SYM_URL || 'https://hsd.adityabirla.com/MDLIncidentM
 const SYM_DEBUG = /^(1|true)$/i.test(process.env.SYM_DEBUG || '');
 const POLL_INTERVAL = 60000; // 60 seconds (tickets poll less frequently)
 const NAVIGATION_TIMEOUT = 30000;
+const QUEUE_NAVIGATION_TIMEOUT = 45000;
+const QUEUE_READY_TIMEOUT = 45000;
+const MAX_QUEUE_ATTEMPTS = 3;
+const MAX_SCRAPE_ATTEMPTS = 2;
 const USERNAME_SELECTOR = '#i0116, input[type="email"], input[name="loginfmt"]';
 const PASSWORD_SELECTOR = '#i0118, input[type="password"], input[name="passwd"]';
 const SUBMIT_SELECTOR = '#idSIButton9, input[type="submit"]';
@@ -70,6 +74,25 @@ async function reportFailure(attemptedAt: string, error: string) {
 
 function buildBootstrapRequiredMessage(reason: string): string {
   return `${reason} Run npm run login --workspace collectors/symphony to seed or refresh the Symphony session.`;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isRetryableSymphonyError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return [
+    'timeout',
+    'net::err',
+    'session closed',
+    'target page, context or browser has been closed',
+    'did not render expected data elements'
+  ].some((fragment) => message.includes(fragment));
 }
 
 async function ensureBrowser(): Promise<Browser> {
@@ -200,6 +223,22 @@ async function dismissDuplicateLoginPopup(page: Page) {
   await page.waitForTimeout(5000);
 }
 
+async function assertSessionIsAuthenticated(page: Page, contextLabel: string) {
+  if (await isLoginPromptVisible(page)) {
+    throw new Error(buildBootstrapRequiredMessage(`Symphony ${contextLabel} requires a refreshed authenticated session.`));
+  }
+
+  const bodyText = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
+  if (
+    bodyText.includes('session has expired')
+    || bodyText.includes('your session has expired')
+    || bodyText.includes('please login')
+    || bodyText.includes('sign in')
+  ) {
+    throw new Error(buildBootstrapRequiredMessage(`Symphony ${contextLabel} redirected to a login/session-expired page.`));
+  }
+}
+
 async function ensureAuthenticatedPage(): Promise<{ context: BrowserContext; page: Page }> {
   const { context, hasSavedSession } = await createContext();
   const page = await context.newPage();
@@ -244,6 +283,22 @@ async function getCount(page: Page, selector: string): Promise<number | null> {
   const txt = await locator.innerText();
   const val = parseInt(txt.trim(), 10);
   return Number.isNaN(val) ? null : val;
+}
+
+async function waitForQueueGrid(page: Page, tableId: string) {
+  await page.waitForFunction(({ tableId, gridReadySelector }) => {
+    const table = document.getElementById(tableId);
+    const summary = document.getElementById('divRecords');
+    if (table || summary || document.querySelector(gridReadySelector)) {
+      return true;
+    }
+
+    const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+    return /no data/i.test(bodyText) || /of\s+\d+/i.test(bodyText);
+  }, { tableId, gridReadySelector: GRID_READY_SELECTOR }, { timeout: QUEUE_READY_TIMEOUT });
+
+  await page.waitForTimeout(800);
+  await assertSessionIsAuthenticated(page, 'queue page');
 }
 
 async function parseChartBuckets(page: Page, selector: string, labels: string[]): Promise<Record<string, number>> {
@@ -332,12 +387,11 @@ async function setGridPageSize(page: Page, totalRows: number) {
     page.waitForLoadState('domcontentloaded', { timeout: 15000 }),
     dropdown.selectOption('100')
   ]);
-  await page.locator(GRID_READY_SELECTOR).first().waitFor({ state: 'visible', timeout: 30000 });
-  await page.waitForTimeout(1000);
+  await waitForQueueGrid(page, 'BodyContentPlaceHolder_gvMyTickets');
 }
 
 async function readGridRows(page: Page, tableId: string): Promise<{ rows: GridRow[]; totalRows: number }> {
-  await page.locator(GRID_READY_SELECTOR).first().waitFor({ state: 'visible', timeout: 30000 });
+  await waitForQueueGrid(page, tableId);
 
   const totalRowsBeforeResize = await page.evaluate(() => {
     const summaryText = (document.getElementById('divRecords')?.textContent || '').replace(/\s+/g, ' ').trim();
@@ -346,6 +400,7 @@ async function readGridRows(page: Page, tableId: string): Promise<{ rows: GridRo
   });
 
   await setGridPageSize(page, totalRowsBeforeResize);
+  await waitForQueueGrid(page, tableId);
 
   const extracted = await page.evaluate((currentTableId) => {
     const table = document.getElementById(currentTableId) as HTMLTableElement | null;
@@ -380,28 +435,51 @@ async function readGridRows(page: Page, tableId: string): Promise<{ rows: GridRo
   return extracted;
 }
 
+async function openQueuePage(page: Page, queueUrl: string, tableId: string, queueLabel: string) {
+  for (let attempt = 1; attempt <= MAX_QUEUE_ATTEMPTS; attempt += 1) {
+    try {
+      await page.goto(queueUrl, { waitUntil: 'domcontentloaded', timeout: QUEUE_NAVIGATION_TIMEOUT });
+      await dismissDuplicateLoginPopup(page);
+      await assertSessionIsAuthenticated(page, `${queueLabel} queue`);
+      await waitForQueueGrid(page, tableId);
+      return;
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const isLastAttempt = attempt === MAX_QUEUE_ATTEMPTS;
+      if (isLastAttempt || !isRetryableSymphonyError(error)) {
+        throw new Error(`Symphony ${queueLabel} queue scrape failed: ${message}`);
+      }
+
+      console.warn(`[${new Date().toISOString()}] Symphony ${queueLabel} queue attempt ${attempt} failed: ${message}. Retrying...`);
+      await page.waitForTimeout(1500 * attempt);
+    }
+  }
+}
+
+async function scrapeQueueRows(page: Page, queueUrl: string, tableId: string, queueLabel: string): Promise<GridRow[]> {
+  const queuePage = await page.context().newPage();
+
+  try {
+    await openQueuePage(queuePage, queueUrl, tableId, queueLabel);
+    const grid = await readGridRows(queuePage, tableId);
+    return grid.rows;
+  } finally {
+    await queuePage.close().catch(() => undefined);
+  }
+}
+
 async function scrapeSpecialQueues(page: Page): Promise<SpecialQueueCounts> {
   const incidentUrl = await getQueueUrl(page, 'IM_WorkgroupTickets.aspx?dashboard=true');
   const requestUrl = await getQueueUrl(page, 'SR_WorkgroupTickets.aspx?dashboard=true');
-  const incidentPage = await page.context().newPage();
-  const requestPage = await page.context().newPage();
+  const incidentRows = await scrapeQueueRows(page, incidentUrl, 'BodyContentPlaceHolder_gvMyTickets', 'incident');
+  const requestRows = await scrapeQueueRows(page, requestUrl, 'BodyContentPlaceHolder_gvMyTickets', 'service request');
 
-  try {
-    await incidentPage.goto(incidentUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
-    await requestPage.goto(requestUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
-
-    const incidentGrid = await readGridRows(incidentPage, 'BodyContentPlaceHolder_gvMyTickets');
-    const requestGrid = await readGridRows(requestPage, 'BodyContentPlaceHolder_gvMyTickets');
-
-    return {
-      priority1Incidents: incidentGrid.rows.filter((row) => /^P1\b/i.test(row.Priority || '')).length,
-      priority2Incidents: incidentGrid.rows.filter((row) => /^P2\b/i.test(row.Priority || '')).length,
-      onboardingRequests: requestGrid.rows.filter((row) => /on-?boarding|off-?boarding/i.test(row.Category || '')).length,
-      securityRequests: requestGrid.rows.filter((row) => /security/i.test(row.Category || '')).length
-    };
-  } finally {
-    await Promise.allSettled([incidentPage.close(), requestPage.close()]);
-  }
+  return {
+    priority1Incidents: incidentRows.filter((row) => /^P1\b/i.test(row.Priority || '')).length,
+    priority2Incidents: incidentRows.filter((row) => /^P2\b/i.test(row.Priority || '')).length,
+    onboardingRequests: requestRows.filter((row) => /on-?boarding|off-?boarding/i.test(row.Category || '')).length,
+    securityRequests: requestRows.filter((row) => /security/i.test(row.Category || '')).length
+  };
 }
 
 async function parseSla(page: Page, renderTargetId: string): Promise<number | null> {
@@ -528,6 +606,44 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string) {
   };
 }
 
+async function collectSymphonyData(attemptedAt: string) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_SCRAPE_ATTEMPTS; attempt += 1) {
+    let context: BrowserContext | undefined;
+    let page: Page | undefined;
+
+    try {
+      const authenticated = await ensureAuthenticatedPage();
+      context = authenticated.context;
+      page = authenticated.page;
+      return await scrapeSymphonyPage(page, attemptedAt);
+    } catch (error) {
+      lastError = error;
+      const message = getErrorMessage(error);
+
+      if (page) {
+        await captureDebugArtifacts(page, `symphony_error_attempt_${attempt}`);
+      }
+
+      const isLastAttempt = attempt === MAX_SCRAPE_ATTEMPTS;
+      if (isLastAttempt || !isRetryableSymphonyError(error)) {
+        throw error;
+      }
+
+      console.warn(`[${new Date().toISOString()}] Symphony scrape attempt ${attempt} failed: ${message}. Resetting browser and retrying...`);
+      await closeBrowser();
+      await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+    } finally {
+      if (context) {
+        await context.close().catch(() => undefined);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 async function scrapeSymphony() {
   if (cycleInProgress) {
     console.warn(`[${new Date().toISOString()}] Previous Symphony cycle is still running. Skipping overlap.`);
@@ -539,27 +655,15 @@ async function scrapeSymphony() {
   const attemptedAt = new Date().toISOString();
   console.log(`[${attemptedAt}] Starting Symphony HSD scraping session...`);
 
-  let context: BrowserContext | undefined;
-  let page: Page | undefined;
   try {
-    const authenticated = await ensureAuthenticatedPage();
-    context = authenticated.context;
-    page = authenticated.page;
-
-    const symphonyData = await scrapeSymphonyPage(page, attemptedAt);
+    const symphonyData = await collectSymphonyData(attemptedAt);
     console.log('Symphony Data Scraped Successfully:', JSON.stringify(symphonyData, null, 2));
     await postUpdate({ symphony: symphonyData });
     console.log(`[${new Date().toISOString()}] Symphony metrics posted successfully.`);
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}] Error in Symphony scraper:`, err.message);
     await reportFailure(attemptedAt, err.message);
-    if (page) {
-      await captureDebugArtifacts(page, 'symphony_error');
-    }
   } finally {
-    if (context) {
-      await context.close();
-    }
     cycleInProgress = false;
     const elapsed = Date.now() - cycleStartedAt;
     scheduleNextCycle(Math.max(1000, POLL_INTERVAL - elapsed));
