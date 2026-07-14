@@ -13,6 +13,7 @@ import {
   Power,
   RefreshCw,
   Server,
+  SlidersHorizontal,
   Ticket
 } from 'lucide-react';
 
@@ -169,6 +170,80 @@ interface DashboardState {
     symphony: SourceHealth;
   };
   lastUpdate: string;
+}
+
+type SectionFilterKey = 'hci' | 'hsd' | 'network' | 'servers';
+type ServerStatusFilter = VisualTone;
+type ServerPlatformFilter = 'HCI VM' | 'On Prem';
+type ServerOsFilter = 'Windows' | 'Linux';
+type ServerSourceFilter = 'nutanix' | 'solarwinds' | 'fallback';
+type NetworkCarrierFilter = 'Jio' | 'RailTel' | 'Other';
+type NetworkPathFilter = 'ISP' | 'SDWAN';
+type NetworkStateFilter = 'up' | 'warning' | 'down';
+type HsdWorkFilter = 'INCIDENTS' | 'SERVICE REQUESTS' | 'WORK ORDERS' | 'CHANGES';
+type HsdQueueFilter = 'P1' | 'P2' | 'ONBOARD' | 'SECURITY';
+
+interface DashboardFilters {
+  sections: Record<SectionFilterKey, boolean>;
+  serverStatuses: ServerStatusFilter[];
+  serverPlatforms: ServerPlatformFilter[];
+  serverOs: ServerOsFilter[];
+  serverSources: ServerSourceFilter[];
+  networkCarriers: NetworkCarrierFilter[];
+  networkPaths: NetworkPathFilter[];
+  networkStates: NetworkStateFilter[];
+  hsdWorkTypes: HsdWorkFilter[];
+  hsdQueueTypes: HsdQueueFilter[];
+}
+
+const ALL_SERVER_STATUSES: ServerStatusFilter[] = ['normal', 'warning', 'critical', 'offline'];
+const ALL_SERVER_PLATFORMS: ServerPlatformFilter[] = ['HCI VM', 'On Prem'];
+const ALL_SERVER_OS: ServerOsFilter[] = ['Windows', 'Linux'];
+const ALL_SERVER_SOURCES: ServerSourceFilter[] = ['nutanix', 'solarwinds', 'fallback'];
+const ALL_NETWORK_CARRIERS: NetworkCarrierFilter[] = ['Jio', 'RailTel', 'Other'];
+const ALL_NETWORK_PATHS: NetworkPathFilter[] = ['ISP', 'SDWAN'];
+const ALL_NETWORK_STATES: NetworkStateFilter[] = ['up', 'warning', 'down'];
+const ALL_HSD_WORK_TYPES: HsdWorkFilter[] = ['INCIDENTS', 'SERVICE REQUESTS', 'WORK ORDERS', 'CHANGES'];
+const ALL_HSD_QUEUE_TYPES: HsdQueueFilter[] = ['P1', 'P2', 'ONBOARD', 'SECURITY'];
+
+function createDefaultFilters(): DashboardFilters {
+  return {
+    sections: {
+      hci: true,
+      hsd: true,
+      network: true,
+      servers: true
+    },
+    serverStatuses: [...ALL_SERVER_STATUSES],
+    serverPlatforms: [...ALL_SERVER_PLATFORMS],
+    serverOs: [...ALL_SERVER_OS],
+    serverSources: [...ALL_SERVER_SOURCES],
+    networkCarriers: [...ALL_NETWORK_CARRIERS],
+    networkPaths: [...ALL_NETWORK_PATHS],
+    networkStates: [...ALL_NETWORK_STATES],
+    hsdWorkTypes: [...ALL_HSD_WORK_TYPES],
+    hsdQueueTypes: [...ALL_HSD_QUEUE_TYPES]
+  };
+}
+
+function createIssuesOnlyFilters(): DashboardFilters {
+  return {
+    sections: {
+      hci: true,
+      hsd: true,
+      network: true,
+      servers: true
+    },
+    serverStatuses: ['warning', 'critical', 'offline'],
+    serverPlatforms: [...ALL_SERVER_PLATFORMS],
+    serverOs: [...ALL_SERVER_OS],
+    serverSources: [...ALL_SERVER_SOURCES],
+    networkCarriers: [...ALL_NETWORK_CARRIERS],
+    networkPaths: [...ALL_NETWORK_PATHS],
+    networkStates: ['warning', 'down'],
+    hsdWorkTypes: ['INCIDENTS', 'SERVICE REQUESTS'],
+    hsdQueueTypes: ['P1', 'P2', 'ONBOARD', 'SECURITY']
+  };
 }
 
 function formatSyncTime(timestamp: string | null) {
@@ -530,6 +605,78 @@ function formatHealthErrorSummary(message: string | null) {
   }
 
   return normalized.length > 44 ? `${normalized.slice(0, 41)}...` : normalized;
+}
+
+function toggleArraySelection<T extends string>(values: T[], value: T, allValues: readonly T[]) {
+  const next = values.includes(value)
+    ? values.filter((entry) => entry !== value)
+    : [...values, value];
+
+  if (next.length === 0) {
+    return [...allValues];
+  }
+
+  return next;
+}
+
+function getServerSourceFilter(server: ServerNode): ServerSourceFilter {
+  if (server.usingFallback && server.effectiveTelemetrySource === 'solarwinds') {
+    return 'fallback';
+  }
+
+  return server.sourceOfTruth === 'nutanix' ? 'nutanix' : 'solarwinds';
+}
+
+function getNetworkCarrierFilter(link: NetworkLink): NetworkCarrierFilter {
+  const haystack = `${link.provider} ${link.alias || ''} ${link.interfaceName || ''} ${link.displayName || ''}`.toLowerCase();
+  if (haystack.includes('jio') || haystack.includes('rjio')) {
+    return 'Jio';
+  }
+  if (haystack.includes('railtel')) {
+    return 'RailTel';
+  }
+
+  return 'Other';
+}
+
+function getNetworkPathFilter(link: NetworkLink): NetworkPathFilter {
+  const haystack = `${link.provider} ${link.interfaceName || ''} ${link.linkType || ''}`.toLowerCase();
+  if (haystack.includes('sdwan') || haystack.includes('wan0') || haystack.includes('wan1')) {
+    return 'SDWAN';
+  }
+
+  return 'ISP';
+}
+
+function getNetworkStateFilter(link: NetworkLink): NetworkStateFilter {
+  const operationalState = (link.operationalStatus || '').toLowerCase();
+  const administrativeState = (link.administrativeStatus || '').toLowerCase();
+
+  if (link.status === 'down' || operationalState.includes('down')) {
+    return 'down';
+  }
+  if (link.status === 'degraded' || administrativeState.includes('down')) {
+    return 'warning';
+  }
+
+  return 'up';
+}
+
+function countActiveFilters(filters: DashboardFilters) {
+  let count = 0;
+
+  count += Object.values(filters.sections).filter((visible) => !visible).length;
+  if (filters.serverStatuses.length !== ALL_SERVER_STATUSES.length) count += 1;
+  if (filters.serverPlatforms.length !== ALL_SERVER_PLATFORMS.length) count += 1;
+  if (filters.serverOs.length !== ALL_SERVER_OS.length) count += 1;
+  if (filters.serverSources.length !== ALL_SERVER_SOURCES.length) count += 1;
+  if (filters.networkCarriers.length !== ALL_NETWORK_CARRIERS.length) count += 1;
+  if (filters.networkPaths.length !== ALL_NETWORK_PATHS.length) count += 1;
+  if (filters.networkStates.length !== ALL_NETWORK_STATES.length) count += 1;
+  if (filters.hsdWorkTypes.length !== ALL_HSD_WORK_TYPES.length) count += 1;
+  if (filters.hsdQueueTypes.length !== ALL_HSD_QUEUE_TYPES.length) count += 1;
+
+  return count;
 }
 
 function HciHeaderChip({
@@ -1568,6 +1715,253 @@ function SectionHealthMeta({ health }: { health: SectionHealth }) {
   );
 }
 
+function FilterChip({
+  label,
+  active,
+  onClick,
+  accent = '#8d6e63'
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  accent?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '34px',
+        padding: '8px 10px',
+        borderRadius: '999px',
+        border: `1px solid ${active ? `${accent}33` : 'rgba(141,110,99,0.14)'}`,
+        background: active ? `${accent}18` : 'rgba(255,255,255,0.72)',
+        color: active ? accent : 'var(--text-secondary)',
+        fontSize: '0.68rem',
+        fontWeight: 800,
+        letterSpacing: '0.06em',
+        cursor: 'pointer',
+        transition: 'background 0.2s ease, border-color 0.2s ease, color 0.2s ease'
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function FilterGroup({
+  title,
+  children
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.1em', opacity: 0.62 }}>{title}</div>
+      <div className="dashboard-filter-chip-grid">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function EmptyFilterState({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        padding: '16px 14px',
+        borderRadius: '14px',
+        background: 'rgba(255,255,255,0.54)',
+        border: '1px dashed rgba(141,110,99,0.18)',
+        fontSize: '0.78rem',
+        opacity: 0.68
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function FilterPanel({
+  open,
+  activeCount,
+  filters,
+  onClose,
+  onReset,
+  onIssuesOnly,
+  onSectionToggle,
+  onToggleServerStatus,
+  onToggleServerPlatform,
+  onToggleServerOs,
+  onToggleServerSource,
+  onToggleNetworkCarrier,
+  onToggleNetworkPath,
+  onToggleNetworkState,
+  onToggleHsdWorkType,
+  onToggleHsdQueueType
+}: {
+  open: boolean;
+  activeCount: number;
+  filters: DashboardFilters;
+  onClose: () => void;
+  onReset: () => void;
+  onIssuesOnly: () => void;
+  onSectionToggle: (key: SectionFilterKey) => void;
+  onToggleServerStatus: (value: ServerStatusFilter) => void;
+  onToggleServerPlatform: (value: ServerPlatformFilter) => void;
+  onToggleServerOs: (value: ServerOsFilter) => void;
+  onToggleServerSource: (value: ServerSourceFilter) => void;
+  onToggleNetworkCarrier: (value: NetworkCarrierFilter) => void;
+  onToggleNetworkPath: (value: NetworkPathFilter) => void;
+  onToggleNetworkState: (value: NetworkStateFilter) => void;
+  onToggleHsdWorkType: (value: HsdWorkFilter) => void;
+  onToggleHsdQueueType: (value: HsdQueueFilter) => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="dashboard-filter-backdrop" onClick={onClose}>
+      <div className="dashboard-filter-panel" onClick={(event) => event.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 800 }}>Filters</div>
+            <div style={{ fontSize: '0.68rem', opacity: 0.62, marginTop: '3px' }}>
+              {activeCount > 0 ? `${activeCount} active group${activeCount > 1 ? 's' : ''}` : 'Showing all items'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              minHeight: '36px',
+              padding: '8px 12px',
+              borderRadius: '999px',
+              border: '1px solid rgba(141,110,99,0.16)',
+              background: 'rgba(255,255,255,0.72)',
+              fontSize: '0.68rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              cursor: 'pointer'
+            }}
+          >
+            DONE
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={onReset}
+            style={{
+              minHeight: '36px',
+              padding: '8px 12px',
+              borderRadius: '999px',
+              border: '1px solid rgba(141,110,99,0.16)',
+              background: 'rgba(255,255,255,0.72)',
+              fontSize: '0.68rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              cursor: 'pointer'
+            }}
+          >
+            RESET
+          </button>
+          <button
+            type="button"
+            onClick={onIssuesOnly}
+            style={{
+              minHeight: '36px',
+              padding: '8px 12px',
+              borderRadius: '999px',
+              border: '1px solid rgba(198,40,40,0.18)',
+              background: 'rgba(198,40,40,0.10)',
+              color: '#b71c1c',
+              fontSize: '0.68rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              cursor: 'pointer'
+            }}
+          >
+            ISSUES ONLY
+          </button>
+        </div>
+
+        <FilterGroup title="SECTIONS">
+          <FilterChip label="HCI" active={filters.sections.hci} onClick={() => onSectionToggle('hci')} accent="#2e7d32" />
+          <FilterChip label="HSD" active={filters.sections.hsd} onClick={() => onSectionToggle('hsd')} accent="#1565c0" />
+          <FilterChip label="NETWORK" active={filters.sections.network} onClick={() => onSectionToggle('network')} accent="#8d6e63" />
+          <FilterChip label="SERVERS" active={filters.sections.servers} onClick={() => onSectionToggle('servers')} accent="#5d4037" />
+        </FilterGroup>
+
+        <FilterGroup title="SERVER STATUS">
+          <FilterChip label="NORMAL" active={filters.serverStatuses.includes('normal')} onClick={() => onToggleServerStatus('normal')} accent="#2e7d32" />
+          <FilterChip label="WARNING" active={filters.serverStatuses.includes('warning')} onClick={() => onToggleServerStatus('warning')} accent="#f57f17" />
+          <FilterChip label="CRITICAL" active={filters.serverStatuses.includes('critical')} onClick={() => onToggleServerStatus('critical')} accent="#c62828" />
+          <FilterChip label="OFFLINE" active={filters.serverStatuses.includes('offline')} onClick={() => onToggleServerStatus('offline')} accent="#607d8b" />
+        </FilterGroup>
+
+        <FilterGroup title="SERVER PLATFORM">
+          <FilterChip label="HCI VM" active={filters.serverPlatforms.includes('HCI VM')} onClick={() => onToggleServerPlatform('HCI VM')} accent="#1565c0" />
+          <FilterChip label="ON PREM" active={filters.serverPlatforms.includes('On Prem')} onClick={() => onToggleServerPlatform('On Prem')} accent="#ef6c00" />
+        </FilterGroup>
+
+        <FilterGroup title="SERVER OS">
+          <FilterChip label="WINDOWS" active={filters.serverOs.includes('Windows')} onClick={() => onToggleServerOs('Windows')} accent="#1565c0" />
+          <FilterChip label="LINUX" active={filters.serverOs.includes('Linux')} onClick={() => onToggleServerOs('Linux')} accent="#2e7d32" />
+        </FilterGroup>
+
+        <FilterGroup title="SERVER SOURCE">
+          <FilterChip label="NUTANIX" active={filters.serverSources.includes('nutanix')} onClick={() => onToggleServerSource('nutanix')} accent="#1565c0" />
+          <FilterChip label="SW45" active={filters.serverSources.includes('solarwinds')} onClick={() => onToggleServerSource('solarwinds')} accent="#8d6e63" />
+          <FilterChip label="FALLBACK" active={filters.serverSources.includes('fallback')} onClick={() => onToggleServerSource('fallback')} accent="#ef6c00" />
+        </FilterGroup>
+
+        <FilterGroup title="NETWORK CARRIER">
+          <FilterChip label="JIO" active={filters.networkCarriers.includes('Jio')} onClick={() => onToggleNetworkCarrier('Jio')} accent="#2e7d32" />
+          <FilterChip label="RAILTEL" active={filters.networkCarriers.includes('RailTel')} onClick={() => onToggleNetworkCarrier('RailTel')} accent="#1565c0" />
+          <FilterChip label="OTHER" active={filters.networkCarriers.includes('Other')} onClick={() => onToggleNetworkCarrier('Other')} accent="#546e7a" />
+        </FilterGroup>
+
+        <FilterGroup title="NETWORK PATH">
+          <FilterChip label="ISP" active={filters.networkPaths.includes('ISP')} onClick={() => onToggleNetworkPath('ISP')} accent="#8d6e63" />
+          <FilterChip label="SDWAN" active={filters.networkPaths.includes('SDWAN')} onClick={() => onToggleNetworkPath('SDWAN')} accent="#1565c0" />
+        </FilterGroup>
+
+        <FilterGroup title="NETWORK STATE">
+          <FilterChip label="UP" active={filters.networkStates.includes('up')} onClick={() => onToggleNetworkState('up')} accent="#2e7d32" />
+          <FilterChip label="WARNING" active={filters.networkStates.includes('warning')} onClick={() => onToggleNetworkState('warning')} accent="#f57f17" />
+          <FilterChip label="DOWN" active={filters.networkStates.includes('down')} onClick={() => onToggleNetworkState('down')} accent="#c62828" />
+        </FilterGroup>
+
+        <FilterGroup title="HSD WORK TYPE">
+          {ALL_HSD_WORK_TYPES.map((value) => (
+            <FilterChip
+              key={value}
+              label={value}
+              active={filters.hsdWorkTypes.includes(value)}
+              onClick={() => onToggleHsdWorkType(value)}
+              accent={value === 'INCIDENTS' ? '#c62828' : value === 'SERVICE REQUESTS' ? '#1565c0' : value === 'WORK ORDERS' ? '#6d4c41' : '#4f6bed'}
+            />
+          ))}
+        </FilterGroup>
+
+        <FilterGroup title="HSD SPECIAL QUEUES">
+          <FilterChip label="P1" active={filters.hsdQueueTypes.includes('P1')} onClick={() => onToggleHsdQueueType('P1')} accent="#c62828" />
+          <FilterChip label="P2" active={filters.hsdQueueTypes.includes('P2')} onClick={() => onToggleHsdQueueType('P2')} accent="#ef6c00" />
+          <FilterChip label="ONBOARD" active={filters.hsdQueueTypes.includes('ONBOARD')} onClick={() => onToggleHsdQueueType('ONBOARD')} accent="#1565c0" />
+          <FilterChip label="SECURITY" active={filters.hsdQueueTypes.includes('SECURITY')} onClick={() => onToggleHsdQueueType('SECURITY')} accent="#455a64" />
+        </FilterGroup>
+      </div>
+    </div>
+  );
+}
+
 function MobileSectionHealthBadge({ health }: { health: SectionHealth }) {
   const badgeStyle = getHealthBadgeStyle(health.status);
 
@@ -2192,6 +2586,8 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardState | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [time, setTime] = useState('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filters, setFilters] = useState<DashboardFilters>(createDefaultFilters);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -2254,6 +2650,21 @@ export default function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!filtersOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFiltersOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filtersOpen]);
+
   if (!data) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', justifyContent: 'center', alignItems: 'center', gap: '16px' }}>
@@ -2264,7 +2675,72 @@ export default function Dashboard() {
   }
 
   const overallSystemStatus = getSystemStatusText(data);
-  const serverStates = data.servers.map((server) => getServerVisualState(server));
+  const filteredServers = data.servers.filter((server) => {
+    const visual = getServerVisualState(server);
+    return (
+      filters.serverStatuses.includes(visual.tone) &&
+      filters.serverPlatforms.includes(getServerPlatform(server)) &&
+      filters.serverOs.includes(getServerOsFamily(server)) &&
+      filters.serverSources.includes(getServerSourceFilter(server))
+    );
+  });
+  const filteredNetworks = data.networks.filter((link) => (
+    filters.networkCarriers.includes(getNetworkCarrierFilter(link)) &&
+    filters.networkPaths.includes(getNetworkPathFilter(link)) &&
+    filters.networkStates.includes(getNetworkStateFilter(link))
+  ));
+  const rawTicketCards: Array<{
+    label: HsdWorkFilter;
+    total: number;
+    breakdown: TicketBreakdown;
+    labels?: Partial<Record<keyof TicketBreakdown, string>>;
+  }> = [
+    { label: 'INCIDENTS', total: data.symphony.openIncidents, breakdown: data.symphony.openIncidentsBreakdown },
+    { label: 'SERVICE REQUESTS', total: data.symphony.serviceRequests, breakdown: data.symphony.serviceRequestsBreakdown },
+    { label: 'WORK ORDERS', total: data.symphony.workOrders, breakdown: data.symphony.workOrdersBreakdown },
+    {
+      label: 'CHANGES',
+      total: data.symphony.changeRecords,
+      breakdown: data.symphony.changeRecordsBreakdown,
+      labels: { new: 'INT', assigned: 'IMP', inProgress: 'APR', pending: '' }
+    }
+  ];
+  const ticketCards = rawTicketCards.filter((card) => filters.hsdWorkTypes.includes(card.label));
+  const specialQueues = [
+    {
+      label: 'P1' as HsdQueueFilter,
+      detail: 'Org Affected',
+      value: data.symphony.priority1Incidents,
+      accent: '#c62828',
+      background: 'rgba(198,40,40,0.08)',
+      border: 'rgba(198,40,40,0.18)'
+    },
+    {
+      label: 'P2' as HsdQueueFilter,
+      detail: 'Unit Affected',
+      value: data.symphony.priority2Incidents,
+      accent: '#ef6c00',
+      background: 'rgba(239,108,0,0.08)',
+      border: 'rgba(239,108,0,0.18)'
+    },
+    {
+      label: 'ONBOARD' as HsdQueueFilter,
+      detail: 'SR category contains onboarding',
+      value: data.symphony.onboardingRequests,
+      accent: '#1565c0',
+      background: 'rgba(21,101,192,0.08)',
+      border: 'rgba(21,101,192,0.18)'
+    },
+    {
+      label: 'SECURITY' as HsdQueueFilter,
+      detail: 'SR category contains security',
+      value: data.symphony.securityRequests,
+      accent: '#455a64',
+      background: 'rgba(69,90,100,0.08)',
+      border: 'rgba(69,90,100,0.18)'
+    }
+  ].filter((queue) => filters.hsdQueueTypes.includes(queue.label));
+  const serverStates = filteredServers.map((server) => getServerVisualState(server));
   const serverSummary = {
     normal: serverStates.filter((state) => state.tone === 'normal').length,
     warning: serverStates.filter((state) => state.tone === 'warning').length,
@@ -2272,10 +2748,10 @@ export default function Dashboard() {
     offline: serverStates.filter((state) => state.tone === 'offline').length
   };
   const groupedServers = {
-    windowsHci: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Windows|HCI VM')),
-    windowsOnPrem: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Windows|On Prem')),
-    linuxHci: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|HCI VM')),
-    linuxOnPrem: sortServersForWallboard(data.servers.filter((server) => getServerGroupKey(server) === 'Linux|On Prem'))
+    windowsHci: sortServersForWallboard(filteredServers.filter((server) => getServerGroupKey(server) === 'Windows|HCI VM')),
+    windowsOnPrem: sortServersForWallboard(filteredServers.filter((server) => getServerGroupKey(server) === 'Windows|On Prem')),
+    linuxHci: sortServersForWallboard(filteredServers.filter((server) => getServerGroupKey(server) === 'Linux|HCI VM')),
+    linuxOnPrem: sortServersForWallboard(filteredServers.filter((server) => getServerGroupKey(server) === 'Linux|On Prem'))
   };
   const serverFleetOrdered = [
     ...groupedServers.windowsHci,
@@ -2313,60 +2789,8 @@ export default function Dashboard() {
       border: getTonePalette('offline').border
     }
   ];
-  const ticketCards: Array<{
-    label: string;
-    total: number;
-    breakdown: TicketBreakdown;
-    labels?: Partial<Record<keyof TicketBreakdown, string>>;
-  }> = [
-    { label: 'INCIDENTS', total: data.symphony.openIncidents, breakdown: data.symphony.openIncidentsBreakdown },
-    { label: 'SERVICE REQUESTS', total: data.symphony.serviceRequests, breakdown: data.symphony.serviceRequestsBreakdown },
-    { label: 'WORK ORDERS', total: data.symphony.workOrders, breakdown: data.symphony.workOrdersBreakdown },
-    {
-      label: 'CHANGES',
-      total: data.symphony.changeRecords,
-      breakdown: data.symphony.changeRecordsBreakdown,
-      labels: { new: 'INT', assigned: 'IMP', inProgress: 'APR', pending: '' }
-    }
-  ];
-
-  const specialQueues = [
-    {
-      label: 'P1',
-      detail: 'Org Affected',
-      value: data.symphony.priority1Incidents,
-      accent: '#c62828',
-      background: 'rgba(198,40,40,0.08)',
-      border: 'rgba(198,40,40,0.18)'
-    },
-    {
-      label: 'P2',
-      detail: 'Unit Affected',
-      value: data.symphony.priority2Incidents,
-      accent: '#ef6c00',
-      background: 'rgba(239,108,0,0.08)',
-      border: 'rgba(239,108,0,0.18)'
-    },
-    {
-      label: 'ONBOARD',
-      detail: 'SR category contains onboarding',
-      value: data.symphony.onboardingRequests,
-      accent: '#1565c0',
-      background: 'rgba(21,101,192,0.08)',
-      border: 'rgba(21,101,192,0.18)'
-    },
-    {
-      label: 'SECURITY',
-      detail: 'SR category contains security',
-      value: data.symphony.securityRequests,
-      accent: '#455a64',
-      background: 'rgba(69,90,100,0.08)',
-      border: 'rgba(69,90,100,0.18)'
-    }
-  ];
-
   const hciCurrentCpu = data.nutanix.historyCpu.length ? data.nutanix.historyCpu[data.nutanix.historyCpu.length - 1] : 0;
-  const detailedNetworkLinks = data.networks.filter((link) =>
+  const detailedNetworkLinks = filteredNetworks.filter((link) =>
     Boolean(
       link.interfaceName ||
       link.alias ||
@@ -2376,7 +2800,7 @@ export default function Dashboard() {
       link.realtimeReceiveUtilization !== undefined
     )
   );
-  const mobileNetworkLinks = (detailedNetworkLinks.length ? detailedNetworkLinks : data.networks).slice(0, 2);
+  const effectiveMobileNetworkLinks = (detailedNetworkLinks.length ? detailedNetworkLinks : filteredNetworks).slice(0, 2);
   const nonNormalServers = serverFleetOrdered.filter((server) => getServerVisualState(server).tone !== 'normal');
   const mobileServerList = (nonNormalServers.length
     ? [...nonNormalServers, ...serverFleetOrdered.filter((server) => getServerVisualState(server).tone === 'normal')]
@@ -2384,29 +2808,96 @@ export default function Dashboard() {
   ).slice(0, 6);
   const ticketBacklogTotal = Math.max(
     1,
-    data.symphony.openIncidents +
-      data.symphony.serviceRequests +
-      data.symphony.workOrders +
-      data.symphony.changeRecords
+    ticketCards.reduce((sum, card) => sum + card.total, 0)
   );
   const specialQueueTotal = Math.max(1, specialQueues.reduce((sum, queue) => sum + queue.value, 0));
+  const activeFilterCount = countActiveFilters(filters);
+  const visibleSections = filters.sections;
+  const anySectionVisible = Object.values(visibleSections).some(Boolean);
+  const hasLeftColumnContent = visibleSections.hci || visibleSections.hsd || visibleSections.network;
+  const hasRightColumnContent = visibleSections.servers;
+
+  const toggleSectionVisibility = (key: SectionFilterKey) => {
+    setFilters((current) => ({
+      ...current,
+      sections: {
+        ...current.sections,
+        [key]: !current.sections[key]
+      }
+    }));
+  };
+
+  const resetFilters = () => setFilters(createDefaultFilters());
+  const applyIssuesOnly = () => setFilters(createIssuesOnlyFilters());
 
   return (
     <>
+    <FilterPanel
+      open={filtersOpen}
+      activeCount={activeFilterCount}
+      filters={filters}
+      onClose={() => setFiltersOpen(false)}
+      onReset={resetFilters}
+      onIssuesOnly={applyIssuesOnly}
+      onSectionToggle={toggleSectionVisibility}
+      onToggleServerStatus={(value) => setFilters((current) => ({ ...current, serverStatuses: toggleArraySelection(current.serverStatuses, value, ALL_SERVER_STATUSES) }))}
+      onToggleServerPlatform={(value) => setFilters((current) => ({ ...current, serverPlatforms: toggleArraySelection(current.serverPlatforms, value, ALL_SERVER_PLATFORMS) }))}
+      onToggleServerOs={(value) => setFilters((current) => ({ ...current, serverOs: toggleArraySelection(current.serverOs, value, ALL_SERVER_OS) }))}
+      onToggleServerSource={(value) => setFilters((current) => ({ ...current, serverSources: toggleArraySelection(current.serverSources, value, ALL_SERVER_SOURCES) }))}
+      onToggleNetworkCarrier={(value) => setFilters((current) => ({ ...current, networkCarriers: toggleArraySelection(current.networkCarriers, value, ALL_NETWORK_CARRIERS) }))}
+      onToggleNetworkPath={(value) => setFilters((current) => ({ ...current, networkPaths: toggleArraySelection(current.networkPaths, value, ALL_NETWORK_PATHS) }))}
+      onToggleNetworkState={(value) => setFilters((current) => ({ ...current, networkStates: toggleArraySelection(current.networkStates, value, ALL_NETWORK_STATES) }))}
+      onToggleHsdWorkType={(value) => setFilters((current) => ({ ...current, hsdWorkTypes: toggleArraySelection(current.hsdWorkTypes, value, ALL_HSD_WORK_TYPES) }))}
+      onToggleHsdQueueType={(value) => setFilters((current) => ({ ...current, hsdQueueTypes: toggleArraySelection(current.hsdQueueTypes, value, ALL_HSD_QUEUE_TYPES) }))}
+    />
     <div className="dashboard-shell dashboard-shell--desktop" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '100vh' }}>
       <header className="glass-panel dashboard-header dashboard-header--wall" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '8px 16px' }}>
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: '1rem', color: 'var(--text-primary)', fontWeight: 700, letterSpacing: '0.04em' }}>UTKAL IT DASHBOARD</h1>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: '1.05rem', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)', flex: '0 0 auto' }}>
-          <Clock size={16} style={{ color: 'var(--primary)' }} />
-          <span>{time}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '0 0 auto' }}>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen(true)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '7px 12px',
+              borderRadius: '999px',
+              border: '1px solid rgba(141,110,99,0.14)',
+              background: activeFilterCount > 0 ? 'rgba(21,101,192,0.10)' : 'rgba(255,255,255,0.52)',
+              color: activeFilterCount > 0 ? '#1565c0' : 'var(--text-primary)',
+              fontSize: '0.72rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              cursor: 'pointer'
+            }}
+          >
+            <SlidersHorizontal size={15} />
+            {`FILTERS${activeFilterCount > 0 ? ` ${activeFilterCount}` : ''}`}
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: '1.05rem', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
+            <Clock size={16} style={{ color: 'var(--primary)' }} />
+            <span>{time}</span>
+          </div>
         </div>
       </header>
 
-      <main className="dashboard-wall-grid">
+      {anySectionVisible ? (
+      <main
+        className="dashboard-wall-grid"
+        style={
+          !hasLeftColumnContent && hasRightColumnContent
+            ? { gridTemplateColumns: '1fr', gridTemplateAreas: '"servers"' }
+            : hasLeftColumnContent && !hasRightColumnContent
+              ? { gridTemplateColumns: '1fr', gridTemplateAreas: '"left"' }
+              : undefined
+        }
+      >
         <div className="dashboard-left-stack">
+          {visibleSections.hci ? (
           <section className="glass-panel dashboard-panel" style={{ display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0, padding: '12px 14px' }}>
             <div className="dashboard-hci-card-grid">
               <div className="dashboard-hci-header">
@@ -2467,7 +2958,9 @@ export default function Dashboard() {
               </div>
             </div>
           </section>
+          ) : null}
 
+          {visibleSections.hsd ? (
           <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, flex: '1.06 1 0' }}>
             <div className="hsd-panel-header">
               <div className="hsd-panel-title">
@@ -2494,7 +2987,7 @@ export default function Dashboard() {
             </div>
 
             <div className="hsd-modern-grid">
-              {ticketCards.map((card) => (
+              {ticketCards.length > 0 ? ticketCards.map((card) => (
                 <HsdOverviewCard
                   key={card.label}
                   title={card.label}
@@ -2502,7 +2995,7 @@ export default function Dashboard() {
                   breakdown={card.breakdown}
                   labels={card.labels}
                 />
-              ))}
+              )) : <EmptyFilterState label="No HSD work cards match the selected filters." />}
             </div>
 
             <div className="hsd-footer-row">
@@ -2518,15 +3011,37 @@ export default function Dashboard() {
                 resolution={data.symphony.requestsResolutionSla}
                 accent="#1565c0"
               />
-              <SpecialQueueWatchCard queues={specialQueues} />
+              {specialQueues.length > 0 ? <SpecialQueueWatchCard queues={specialQueues} /> : <EmptyFilterState label="No special queues match the selected filters." />}
             </div>
           </section>
+          ) : null}
 
-          <div style={{ display: 'flex', minHeight: 0, flex: '0.94 1 0' }}>
-            <UnifiedNetworkCard links={data.networks} sectionHealth={data.sections.networks} />
-          </div>
+          {visibleSections.network ? (
+            filteredNetworks.length > 0 ? (
+              <div style={{ display: 'flex', minHeight: 0, flex: '0.94 1 0' }}>
+                <UnifiedNetworkCard links={filteredNetworks} sectionHealth={data.sections.networks} />
+              </div>
+            ) : (
+              <section className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ width: '42px', height: '42px', borderRadius: '14px', background: 'rgba(141,110,99,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Activity size={20} style={{ color: 'var(--primary)' }} />
+                    </div>
+                    <div>
+                      <h2 style={{ fontSize: '0.98rem', color: 'var(--text-primary)' }}>Network Fabric</h2>
+                      <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>REAL-TIME SD-WAN AND CARRIER VIEW</div>
+                    </div>
+                  </div>
+                  <SectionHealthMeta health={data.sections.networks} />
+                </div>
+                <EmptyFilterState label="No network links match the selected filters." />
+              </section>
+            )
+          ) : null}
         </div>
 
+        {visibleSections.servers ? (
         <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 0.72fr) minmax(0, 1.4fr) auto', alignItems: 'center', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
@@ -2582,12 +3097,18 @@ export default function Dashboard() {
           </div>
 
           <div className="server-table-list">
-            {serverFleetOrdered.map((server) => (
+            {serverFleetOrdered.length > 0 ? serverFleetOrdered.map((server) => (
               <ServerFleetTableRow key={server.id} server={server} />
-            ))}
+            )) : <EmptyFilterState label="No servers match the selected filters." />}
           </div>
         </section>
+        ) : null}
       </main>
+      ) : (
+        <div className="glass-panel">
+          <EmptyFilterState label="All sections are hidden. Use Filters to show at least one section." />
+        </div>
+      )}
 
       <footer className="glass-panel dashboard-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '8px 16px', fontSize: '0.74rem', opacity: 0.8 }}>
         <div>SYSTEM STATUS: {overallSystemStatus}</div>
@@ -2621,7 +3142,29 @@ export default function Dashboard() {
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', fontWeight: 800, letterSpacing: '0.04em', textAlign: 'center' }}>UTKAL IT DASHBOARD</h1>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen(true)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              minHeight: '38px',
+              padding: '8px 14px',
+              borderRadius: '999px',
+              border: '1px solid rgba(141,110,99,0.14)',
+              background: activeFilterCount > 0 ? 'rgba(21,101,192,0.10)' : 'rgba(255,255,255,0.52)',
+              color: activeFilterCount > 0 ? '#1565c0' : 'var(--text-primary)',
+              fontSize: '0.72rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              cursor: 'pointer'
+            }}
+          >
+            <SlidersHorizontal size={15} />
+            {`FILTERS${activeFilterCount > 0 ? ` ${activeFilterCount}` : ''}`}
+          </button>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '7px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.52)', border: '1px solid rgba(141,110,99,0.12)', fontSize: '0.94rem', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
             <Clock size={15} style={{ color: 'var(--primary)' }} />
             <span>{time}</span>
@@ -2630,6 +3173,9 @@ export default function Dashboard() {
       </header>
 
       <main className="dashboard-mobile-stack">
+        {anySectionVisible ? (
+          <>
+        {visibleSections.hci ? (
         <section className="glass-panel dashboard-mobile-card">
           <MobileSectionHeader icon={<Server size={18} style={{ color: '#2e7d32' }} />} title="UAIL HCI" subtitle="LIVE CLUSTER METRICS" health={data.sections.nutanix} />
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
@@ -2670,15 +3216,18 @@ export default function Dashboard() {
             </div>
           </div>
         </section>
+        ) : null}
 
+        {visibleSections.hsd ? (
         <section className="glass-panel dashboard-mobile-card">
           <MobileSectionHeader icon={<Ticket size={18} style={{ color: '#1565c0' }} />} title="Hindalco Service Desk" subtitle="hsd.adityabirla.com" health={data.sections.symphony} />
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
-            <HsdWorkCard label="INCIDENTS" total={data.symphony.openIncidents} breakdown={data.symphony.openIncidentsBreakdown} accent="#c62828" />
-            <HsdWorkCard label="SERVICE REQUESTS" total={data.symphony.serviceRequests} breakdown={data.symphony.serviceRequestsBreakdown} accent="#1565c0" />
-            <HsdStatusTile label="WORK ORDERS" count={data.symphony.workOrders} total={ticketBacklogTotal} color="#6d4c41" />
-            <HsdStatusTile label="CHANGES" count={data.symphony.changeRecords} total={ticketBacklogTotal} color="#4f6bed" />
+            {filters.hsdWorkTypes.includes('INCIDENTS') ? <HsdWorkCard label="INCIDENTS" total={data.symphony.openIncidents} breakdown={data.symphony.openIncidentsBreakdown} accent="#c62828" /> : null}
+            {filters.hsdWorkTypes.includes('SERVICE REQUESTS') ? <HsdWorkCard label="SERVICE REQUESTS" total={data.symphony.serviceRequests} breakdown={data.symphony.serviceRequestsBreakdown} accent="#1565c0" /> : null}
+            {filters.hsdWorkTypes.includes('WORK ORDERS') ? <HsdStatusTile label="WORK ORDERS" count={data.symphony.workOrders} total={ticketBacklogTotal} color="#6d4c41" /> : null}
+            {filters.hsdWorkTypes.includes('CHANGES') ? <HsdStatusTile label="CHANGES" count={data.symphony.changeRecords} total={ticketBacklogTotal} color="#4f6bed" /> : null}
           </div>
+          {ticketCards.length === 0 ? <div style={{ marginTop: '12px' }}><EmptyFilterState label="No HSD work cards match the selected filters." /></div> : null}
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
             <HsdSlaWidget title="INCIDENT SLA" response={data.symphony.incidentsResponseSla} resolution={data.symphony.incidentsResolutionSla} accent="#c62828" />
             <HsdSlaWidget title="SERVICE REQUEST SLA" response={data.symphony.requestsResponseSla} resolution={data.symphony.requestsResolutionSla} accent="#1565c0" />
@@ -2688,17 +3237,22 @@ export default function Dashboard() {
               <HsdStatusTile key={queue.label} label={queue.label} count={queue.value} total={specialQueueTotal} color={queue.accent} />
             ))}
           </div>
+          {specialQueues.length === 0 ? <div style={{ marginTop: '12px' }}><EmptyFilterState label="No special queues match the selected filters." /></div> : null}
         </section>
+        ) : null}
 
+        {visibleSections.network ? (
         <section className="glass-panel dashboard-mobile-card">
           <MobileSectionHeader icon={<Activity size={18} style={{ color: 'var(--primary)' }} />} title="Network Fabric" subtitle="REAL-TIME LINK VIEW" health={data.sections.networks} />
           <div className="dashboard-mobile-list" style={{ marginTop: '12px' }}>
-            {mobileNetworkLinks.map((link) => (
+            {effectiveMobileNetworkLinks.length > 0 ? effectiveMobileNetworkLinks.map((link) => (
               <MobileNetworkLinkCard key={link.id} link={link} />
-            ))}
+            )) : <EmptyFilterState label="No network links match the selected filters." />}
           </div>
         </section>
+        ) : null}
 
+        {visibleSections.servers ? (
         <section className="glass-panel dashboard-mobile-card">
           <MobileSectionHeader icon={<Layers size={18} style={{ color: 'var(--primary)' }} />} title="Servers" subtitle="LIVE MONITORING" health={data.sections.servers} />
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
@@ -2708,11 +3262,18 @@ export default function Dashboard() {
             <StatusSummaryPill label="Offline" count={serverSummary.offline} tone="offline" />
           </div>
           <div className="dashboard-mobile-list" style={{ marginTop: '12px' }}>
-            {mobileServerList.map((server) => (
+            {mobileServerList.length > 0 ? mobileServerList.map((server) => (
               <ServerNodeCard key={server.id} server={server} />
-            ))}
+            )) : <EmptyFilterState label="No servers match the selected filters." />}
           </div>
         </section>
+        ) : null}
+          </>
+        ) : (
+          <section className="glass-panel dashboard-mobile-card">
+            <EmptyFilterState label="All sections are hidden. Use Filters to show at least one section." />
+          </section>
+        )}
       </main>
 
       <footer className="glass-panel dashboard-mobile-footer">
