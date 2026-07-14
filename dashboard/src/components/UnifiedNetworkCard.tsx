@@ -419,7 +419,7 @@ function CombinedUtilizationSparklineRow({
       <div
         style={{
           width: '100%',
-          height: '92px',
+          height: '108px',
           padding: '2px 0',
           borderRadius: '10px',
           background: 'rgba(255,255,255,0.72)',
@@ -627,25 +627,24 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                       {subtitle}
                     </div>
                   ) : null}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: '6px', marginTop: '5px', minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '5px', minWidth: 0, flexWrap: 'nowrap' }}>
                     <span
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '5px',
-                        minWidth: 0,
+                        flex: '0 0 auto',
+                        width: 'fit-content',
                         maxWidth: '100%',
-                        padding: '4px 7px',
+                        padding: '4px 10px',
                         borderRadius: '999px',
                         background: palette.bg,
                         border: `1px solid ${palette.border}`,
-                        fontSize: '0.52rem',
+                        fontSize: '0.54rem',
                         fontWeight: 800,
-                        letterSpacing: '0.08em',
+                        letterSpacing: '0.07em',
                         color: palette.text,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
+                        whiteSpace: 'nowrap'
                       }}
                       title={`${(link.alias || link.provider).toUpperCase()} - ${providerState.label.toUpperCase()}`}
                     >
@@ -664,13 +663,15 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                         display: 'inline-flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        padding: '4px 8px',
+                        flex: '0 0 auto',
+                        width: 'fit-content',
+                        padding: '4px 10px',
                         borderRadius: '999px',
                         background: 'rgba(255,255,255,0.56)',
                         border: '1px solid rgba(141,110,99,0.12)',
                         fontSize: '0.54rem',
                         fontWeight: 800,
-                        letterSpacing: '0.08em',
+                        letterSpacing: '0.07em',
                         color: 'var(--text-secondary)',
                         whiteSpace: 'nowrap'
                       }}

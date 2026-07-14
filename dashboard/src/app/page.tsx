@@ -3008,7 +3008,7 @@ export default function Dashboard() {
 
           {visibleSections.network ? (
             filteredNetworks.length > 0 ? (
-              <div style={{ display: 'flex', minHeight: 0, flex: '0.94 1 0', minWidth: 0, width: '100%' }}>
+              <div style={{ display: 'flex', minHeight: 0, flex: '1.06 1 0', minWidth: 0, width: '100%' }}>
                 <UnifiedNetworkCard links={filteredNetworks} sectionHealth={data.sections.networks} />
               </div>
             ) : (
