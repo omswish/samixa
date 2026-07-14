@@ -20,6 +20,41 @@ html {
   
   --font-headings: 'Outfit', sans-serif;
   --font-body: 'Plus Jakarta Sans', sans-serif;
+
+  --wall-shell-padding: 12px;
+  --wall-shell-gap: 10px;
+  --wall-grid-gap: 12px;
+  --wall-header-padding: 8px 16px;
+  --wall-header-gap: 16px;
+  --wall-header-title-size: 1rem;
+  --wall-header-clock-size: 1.05rem;
+  --wall-panel-padding: 12px 14px;
+  --wall-panel-gap: 10px;
+  --wall-panel-gap-tight: 8px;
+  --wall-title-sm: 1rem;
+  --wall-title-md: 1.1rem;
+  --wall-subtitle-size: 0.68rem;
+  --wall-icon-sm: 42px;
+  --wall-icon-md: 46px;
+  --wall-icon-radius-sm: 14px;
+  --wall-icon-radius-md: 16px;
+  --wall-footer-padding: 8px 16px;
+  --wall-footer-font-size: 0.74rem;
+  --wall-health-pill-font-size: 0.68rem;
+  --wall-health-pill-padding: 5px 10px;
+  --wall-health-pill-max-width: 280px;
+  --wall-hci-node-gap: 6px;
+  --wall-hci-node-min-height: 46px;
+  --wall-hci-node-icon-size: 24px;
+  --wall-hci-node-label-size: 0.44rem;
+  --wall-hsd-card-gap: 12px;
+  --wall-hsd-card-padding: 14px 14px 12px;
+  --wall-hsd-total-size: 2.2rem;
+  --wall-hsd-bars-min-height: 88px;
+  --wall-hsd-bar-height: 58px;
+  --wall-sla-card-padding: 10px 12px;
+  --wall-special-queue-padding: 10px 12px;
+  --wall-network-card-gap: 8px;
 }
 
 * {
@@ -164,7 +199,7 @@ h1, h2, h3, h4, h5, h6 {
   grid-template-columns: minmax(0, 1.42fr) minmax(520px, 0.98fr);
   grid-template-areas:
     "left servers";
-  gap: 12px;
+  gap: var(--wall-grid-gap);
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -173,14 +208,14 @@ h1, h2, h3, h4, h5, h6 {
   grid-area: left;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--wall-grid-gap);
   min-height: 0;
 }
 
 .dashboard-hci-card-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: var(--wall-grid-gap);
   align-items: start;
 }
 
@@ -211,7 +246,7 @@ h1, h2, h3, h4, h5, h6 {
 .hsd-modern-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--wall-panel-gap);
 }
 
 .hsd-panel-header {
@@ -234,7 +269,7 @@ h1, h2, h3, h4, h5, h6 {
 .hsd-footer-row {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.7fr);
-  gap: 10px;
+  gap: var(--wall-panel-gap);
   min-height: 0;
   align-items: stretch;
 }
@@ -242,14 +277,14 @@ h1, h2, h3, h4, h5, h6 {
 .hsd-sla-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--wall-panel-gap);
   min-height: 0;
 }
 
 .hsd-state-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--wall-panel-gap);
 }
 
 .network-overview-grid {
@@ -273,15 +308,15 @@ h1, h2, h3, h4, h5, h6 {
 
 .network-link-top-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.92fr);
-  gap: 10px;
+  grid-template-columns: minmax(138px, 0.56fr) minmax(0, 1.44fr);
+  gap: 8px;
   align-items: start;
 }
 
 .network-link-header-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(4, minmax(74px, 1fr));
+  gap: 6px;
   min-width: 0;
 }
 
@@ -324,6 +359,81 @@ h1, h2, h3, h4, h5, h6 {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+}
+
+@media (min-width: 1600px) and (max-height: 1100px) {
+  :root {
+    --wall-shell-padding: 10px;
+    --wall-shell-gap: 8px;
+    --wall-grid-gap: 10px;
+    --wall-header-padding: 6px 14px;
+    --wall-header-gap: 12px;
+    --wall-header-title-size: 0.94rem;
+    --wall-header-clock-size: 0.96rem;
+    --wall-panel-padding: 10px 12px;
+    --wall-panel-gap: 8px;
+    --wall-panel-gap-tight: 6px;
+    --wall-title-sm: 0.94rem;
+    --wall-title-md: 1.02rem;
+    --wall-subtitle-size: 0.62rem;
+    --wall-icon-sm: 38px;
+    --wall-icon-md: 42px;
+    --wall-icon-radius-sm: 12px;
+    --wall-icon-radius-md: 14px;
+    --wall-footer-padding: 6px 14px;
+    --wall-footer-font-size: 0.68rem;
+    --wall-health-pill-font-size: 0.62rem;
+    --wall-health-pill-padding: 4px 8px;
+    --wall-health-pill-max-width: 248px;
+    --wall-hci-node-gap: 5px;
+    --wall-hci-node-min-height: 40px;
+    --wall-hci-node-icon-size: 20px;
+    --wall-hci-node-label-size: 0.4rem;
+    --wall-hsd-card-gap: 9px;
+    --wall-hsd-card-padding: 11px 12px 10px;
+    --wall-hsd-total-size: 1.92rem;
+    --wall-hsd-bars-min-height: 74px;
+    --wall-hsd-bar-height: 48px;
+    --wall-sla-card-padding: 8px 10px;
+    --wall-special-queue-padding: 8px 10px;
+    --wall-network-card-gap: 6px;
+  }
+
+  .dashboard-header--wall {
+    min-height: 46px;
+  }
+
+  .dashboard-wall-grid {
+    grid-template-columns: minmax(0, 1.38fr) minmax(500px, 0.96fr);
+  }
+
+  .dashboard-hci-strip,
+  .server-fleet-summary-grid,
+  .network-link-header-metrics,
+  .hsd-modern-grid,
+  .hsd-footer-row,
+  .hsd-sla-grid,
+  .hsd-state-grid {
+    gap: 8px;
+  }
+
+  .network-link-header-metrics {
+    grid-template-columns: repeat(4, minmax(68px, 1fr));
+    gap: 4px;
+  }
+
+  .network-link-top-grid {
+    grid-template-columns: minmax(132px, 0.5fr) minmax(0, 1.5fr);
+    gap: 6px;
+  }
+
+  .network-detail-list {
+    gap: 5px;
+  }
+
+  .server-table-list {
+    gap: 3px;
+  }
 }
 
 .server-platform-card__content {

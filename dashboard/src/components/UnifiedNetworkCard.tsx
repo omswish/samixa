@@ -59,6 +59,8 @@ interface UnifiedNetworkCardProps {
 }
 
 type VisualTone = 'normal' | 'warning' | 'critical';
+const TX_ACCENT = '#1697f6';
+const RX_ACCENT = '#ff0aa6';
 
 function formatSyncTime(timestamp: string | null) {
   if (!timestamp) {
@@ -168,6 +170,14 @@ function formatMbps(value: number | null | undefined) {
   return `${value.toFixed(digits)} Mbps`;
 }
 
+function formatCompactMbpsValue(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return 'N/A';
+  }
+
+  return `${Math.round(value)}`;
+}
+
 function formatPps(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return 'N/A';
@@ -182,6 +192,13 @@ function formatPacketSize(value: number | null | undefined) {
   }
 
   return `${value.toFixed(0)} B`;
+}
+
+function formatDirectionalFlowSummary(
+  packetsPerSecond: number | null | undefined,
+  averagePacketSize: number | null | undefined
+) {
+  return `${formatPps(packetsPerSecond)} / ${formatPacketSize(averagePacketSize)}`;
 }
 
 function getUtilizationTone(value: number | null | undefined): VisualTone {
@@ -393,8 +410,10 @@ function CombinedUtilizationSparklineRow({
             ALERT 80
           </span>
         </span>
-        <span style={{ fontSize: '0.66rem', fontWeight: 800, color: palette.text }}>
-          {`TX ${formatPercent(txRealtimeValue, 1)} | RX ${formatPercent(rxRealtimeValue, 1)}`}
+        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '4px', fontSize: '0.66rem', fontWeight: 800 }}>
+          <span style={{ color: TX_ACCENT }}>{`TX ${formatPercent(txRealtimeValue, 1)}`}</span>
+          <span style={{ color: 'rgba(62,39,35,0.48)' }}>|</span>
+          <span style={{ color: RX_ACCENT }}>{`RX ${formatPercent(rxRealtimeValue, 1)}`}</span>
         </span>
       </div>
       <div
@@ -421,8 +440,8 @@ function CombinedUtilizationSparklineRow({
         />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
-        <span style={{ fontSize: '0.54rem', fontWeight: 700, color: '#1697f6' }}>AVG TX {formatPercent(txDailyValue, 1)}</span>
-        <span style={{ fontSize: '0.54rem', fontWeight: 700, color: '#ff0aa6' }}>AVG RX {formatPercent(rxDailyValue, 1)}</span>
+        <span style={{ fontSize: '0.54rem', fontWeight: 700, color: TX_ACCENT }}>AVG TX {formatPercent(txDailyValue, 1)}</span>
+        <span style={{ fontSize: '0.54rem', fontWeight: 700, color: RX_ACCENT }}>AVG RX {formatPercent(rxDailyValue, 1)}</span>
       </div>
     </div>
   );
@@ -431,27 +450,43 @@ function CombinedUtilizationSparklineRow({
 function HeaderMetricStack({
   label,
   value,
-  detail
+  detail,
+  accent,
+  unit
 }: {
   label: string;
   value: string;
-  detail: string;
+  detail?: string;
+  accent?: string;
+  unit?: string;
 }) {
+  const compactValue = !unit;
+  const valueFontSize = compactValue ? '1.04rem' : '1.18rem';
+
   return (
     <div
       style={{
         display: 'grid',
-        gap: '2px',
+        gap: detail ? '2px' : '1px',
         minWidth: 0,
-        padding: '6px 8px',
+        minHeight: detail ? '50px' : '54px',
+        padding: detail ? '6px 8px' : '7px 8px',
         borderRadius: '12px',
         background: 'rgba(255,255,255,0.52)',
-        border: '1px solid rgba(141,110,99,0.10)'
+        border: '1px solid rgba(141,110,99,0.10)',
+        alignContent: 'center'
       }}
     >
-      <div style={{ fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>{label}</div>
-      <div style={{ fontSize: '1rem', fontWeight: 800, lineHeight: 1.05, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
-      <div style={{ fontSize: '0.56rem', opacity: 0.72, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</div>
+      <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: '3px', minWidth: 0, flexWrap: 'nowrap' }}>
+        <div style={{ fontSize: '0.54rem', letterSpacing: '0.07em', fontWeight: 800, color: accent ?? 'rgba(62,39,35,0.62)', whiteSpace: 'nowrap' }}>{label}</div>
+        {unit ? (
+          <div style={{ fontSize: '0.46rem', letterSpacing: '0.02em', fontWeight: 700, color: 'rgba(62,39,35,0.54)', whiteSpace: 'nowrap' }}>{unit}</div>
+        ) : null}
+      </div>
+      <div style={{ fontSize: valueFontSize, fontWeight: 800, lineHeight: 1.02, letterSpacing: compactValue ? '-0.02em' : '0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: accent ?? 'var(--text-primary)' }}>{value}</div>
+      {detail ? (
+        <div style={{ fontSize: '0.58rem', opacity: 0.72, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{detail}</div>
+      ) : null}
     </div>
   );
 }
@@ -474,14 +509,14 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
   const tonedLinks = focusLinks.map((link) => ({ link, tone: getLinkTone(link) }));
 
   return (
-    <div className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: 0 }}>
+    <div className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-network-card-gap)', minHeight: 0, flex: '1 1 auto', width: '100%', minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div
             style={{
-              width: '42px',
-              height: '42px',
-              borderRadius: '14px',
+              width: 'var(--wall-icon-sm)',
+              height: 'var(--wall-icon-sm)',
+              borderRadius: 'var(--wall-icon-radius-sm)',
               background: 'rgba(141,110,99,0.14)',
               display: 'flex',
               alignItems: 'center',
@@ -491,8 +526,8 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
             <Activity size={20} style={{ color: 'var(--primary)' }} />
           </div>
           <div>
-            <h2 style={{ fontSize: '0.98rem', color: 'var(--text-primary)' }}>Network Fabric</h2>
-            <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>REAL-TIME SD-WAN AND CARRIER VIEW</div>
+            <h2 style={{ fontSize: 'var(--wall-title-sm)', color: 'var(--text-primary)' }}>Network Fabric</h2>
+            <div style={{ fontSize: 'var(--wall-subtitle-size)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>REAL-TIME SD-WAN AND CARRIER VIEW</div>
           </div>
         </div>
 
@@ -503,12 +538,12 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '5px 10px',
+              padding: 'var(--wall-health-pill-padding)',
               borderRadius: '999px',
-              fontSize: '0.64rem',
+              fontSize: 'var(--wall-health-pill-font-size)',
               fontWeight: 800,
               letterSpacing: '0.05em',
-              maxWidth: '270px',
+              maxWidth: 'var(--wall-health-pill-max-width)',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis'
@@ -532,21 +567,26 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
           const label = getLinkLabel(link);
           const subtitle = [link.interfaceType].filter(Boolean).join(' | ');
           const providerState = getNetworkLinkState(link);
-          const metricSummary = [
+          const metricSummary: Array<{ label: string; value: string; detail?: string; accent?: string; unit?: string }> = [
             {
               label: 'NOW',
-              value: formatPercent(realtimePeak, realtimePeak !== null && realtimePeak < 10 ? 1 : 0),
-              detail: `Peak | AVG ${formatPercent(dailyPeak, dailyPeak !== null && dailyPeak < 10 ? 1 : 0)}`
+              value: realtimePeak === null ? 'N/A' : `${Math.round(realtimePeak)}%`
+            },
+            {
+              label: 'PEAK',
+              value: dailyPeak === null ? 'N/A' : `${Math.round(dailyPeak)}%`
             },
             {
               label: 'TX',
-              value: hasTraffic ? formatMbps(link.currentTrafficTransmitMbps) : 'N/A',
-              detail: `${formatPercent(link.realtimeTransmitUtilization ?? link.transmitUtilization, 1)} now | ${formatPercent(link.dailyTransmitUtilization, 1)} avg`
+              value: hasTraffic ? formatCompactMbpsValue(link.currentTrafficTransmitMbps) : 'N/A',
+              accent: TX_ACCENT,
+              unit: hasTraffic ? 'Mbps' : undefined
             },
             {
               label: 'RX',
-              value: hasTraffic ? formatMbps(link.currentTrafficReceiveMbps) : 'N/A',
-              detail: `${formatPercent(link.realtimeReceiveUtilization ?? link.receiveUtilization, 1)} now | ${formatPercent(link.dailyReceiveUtilization, 1)} avg`
+              value: hasTraffic ? formatCompactMbpsValue(link.currentTrafficReceiveMbps) : 'N/A',
+              accent: RX_ACCENT,
+              unit: hasTraffic ? 'Mbps' : undefined
             }
           ];
 
@@ -587,21 +627,27 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                       {subtitle}
                     </div>
                   ) : null}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '5px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: '6px', marginTop: '5px', minWidth: 0 }}>
                     <span
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '5px',
-                        padding: '4px 8px',
+                        minWidth: 0,
+                        maxWidth: '100%',
+                        padding: '4px 7px',
                         borderRadius: '999px',
                         background: palette.bg,
                         border: `1px solid ${palette.border}`,
-                        fontSize: '0.54rem',
+                        fontSize: '0.52rem',
                         fontWeight: 800,
                         letterSpacing: '0.08em',
-                        color: palette.text
+                        color: palette.text,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
                       }}
+                      title={`${(link.alias || link.provider).toUpperCase()} - ${providerState.label.toUpperCase()}`}
                     >
                       <span
                         style={{
@@ -617,6 +663,7 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
+                        justifyContent: 'center',
                         padding: '4px 8px',
                         borderRadius: '999px',
                         background: 'rgba(255,255,255,0.56)',
@@ -624,7 +671,8 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                         fontSize: '0.54rem',
                         fontWeight: 800,
                         letterSpacing: '0.08em',
-                        color: 'var(--text-secondary)'
+                        color: 'var(--text-secondary)',
+                        whiteSpace: 'nowrap'
                       }}
                     >
                       {getSpeedLabel(link)}
@@ -639,6 +687,8 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                         label={metric.label}
                         value={metric.value}
                         detail={metric.detail}
+                        accent={metric.accent}
+                        unit={metric.unit}
                       />
                     ))}
                   </div>
@@ -664,10 +714,16 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', fontSize: '0.5rem', opacity: 0.64 }}>
                 <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {link.lastStatusChange ? `Change ${link.lastStatusChange}` : 'No status timestamp'}
+                  {link.lastStatusChange ? `Status changed ${link.lastStatusChange}` : 'No status timestamp'}
                 </div>
-                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }}>
-                  {formatPps(getPeakValue([link.packetsPerSecondTransmit, link.packetsPerSecondReceive]))} | {formatPacketSize(getPeakValue([link.averagePacketSizeTransmit, link.averagePacketSizeReceive]))}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }}>
+                  <span style={{ color: TX_ACCENT, fontWeight: 700 }}>
+                    {`TX ${formatDirectionalFlowSummary(link.packetsPerSecondTransmit, link.averagePacketSizeTransmit)}`}
+                  </span>
+                  <span style={{ color: 'rgba(62,39,35,0.48)' }}>|</span>
+                  <span style={{ color: RX_ACCENT, fontWeight: 700 }}>
+                    {`RX ${formatDirectionalFlowSummary(link.packetsPerSecondReceive, link.averagePacketSizeReceive)}`}
+                  </span>
                 </div>
               </div>
             </div>

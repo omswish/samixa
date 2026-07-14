@@ -731,7 +731,7 @@ function HciHeaderChip({
 
 function HciNodeMarkers({ nodes }: { nodes: NutanixNodeHealth[] }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(1, nodes.length)}, minmax(0, 1fr))`, gap: '6px', width: '100%' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(1, nodes.length)}, minmax(0, 1fr))`, gap: 'var(--wall-hci-node-gap)', width: '100%' }}>
       {nodes.map((node, index) => {
         const palette = getTonePalette(node.status);
         const statusLabel = node.status === 'normal'
@@ -751,7 +751,7 @@ function HciNodeMarkers({ nodes }: { nodes: NutanixNodeHealth[] }) {
               alignItems: 'center',
               justifyContent: 'center',
               gap: '4px',
-              minHeight: '46px',
+              minHeight: 'var(--wall-hci-node-min-height)',
               padding: '5px 4px',
               borderRadius: '10px',
               background: palette.bg,
@@ -762,8 +762,8 @@ function HciNodeMarkers({ nodes }: { nodes: NutanixNodeHealth[] }) {
           >
             <div
               style={{
-                width: '24px',
-                height: '24px',
+                width: 'var(--wall-hci-node-icon-size)',
+                height: 'var(--wall-hci-node-icon-size)',
                 borderRadius: '8px',
                 display: 'flex',
                 alignItems: 'center',
@@ -774,7 +774,7 @@ function HciNodeMarkers({ nodes }: { nodes: NutanixNodeHealth[] }) {
             >
               <Server size={12} style={{ color: palette.fill }} />
             </div>
-            <span style={{ fontSize: '0.44rem', fontWeight: 800, letterSpacing: '0.06em', color: palette.text, lineHeight: 1.1, textAlign: 'center' }}>
+            <span style={{ fontSize: 'var(--wall-hci-node-label-size)', fontWeight: 800, letterSpacing: '0.06em', color: palette.text, lineHeight: 1.1, textAlign: 'center' }}>
               {`N${index + 1}: ${statusLabel}`}
             </span>
           </div>
@@ -803,15 +803,14 @@ function HsdOverviewCard({
     { label: labels?.pending ?? 'PND', value: breakdown.pending, color: HSD_STATUS_COLORS.pending }
   ].filter((category) => category.label);
   const peakCategory = Math.max(1, ...categories.map((category) => category.value));
-  const activeCount = breakdown.assigned + breakdown.inProgress;
 
   return (
     <div
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: '12px',
-        padding: '14px 14px 12px',
+        gap: 'var(--wall-hsd-card-gap)',
+        padding: 'var(--wall-hsd-card-padding)',
         borderRadius: '18px',
         background: 'rgba(255,255,255,0.66)',
         border: '1px solid rgba(141,110,99,0.12)',
@@ -819,28 +818,34 @@ function HsdOverviewCard({
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.66 }}>{title}</div>
-          <div style={{ fontSize: '2.2rem', fontWeight: 800, lineHeight: 1, marginTop: '8px', color: 'var(--text-primary)' }}>{totalSafe}</div>
         </div>
-        <div style={{ display: 'grid', gap: '6px', justifyItems: 'end' }}>
-          <div
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: '112px',
+            minHeight: '58px',
+            padding: '8px 14px',
+            borderRadius: '16px',
+            background: 'linear-gradient(180deg, rgba(141,110,99,0.10), rgba(255,255,255,0.78))',
+            border: '1px solid rgba(141,110,99,0.14)',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.45)'
+          }}
+        >
+          <span
             style={{
-              padding: '6px 9px',
-              borderRadius: '999px',
-              background: 'rgba(62,39,35,0.06)',
-              border: '1px solid rgba(141,110,99,0.14)',
-              fontSize: '0.62rem',
+              fontSize: 'calc(var(--wall-hsd-total-size) + 1.15rem)',
               fontWeight: 800,
-              letterSpacing: '0.08em',
-              color: 'var(--text-primary)'
+              lineHeight: 0.88,
+              color: 'var(--text-primary)',
+              letterSpacing: '-0.03em'
             }}
           >
-            OPEN
-          </div>
-          <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', color: HSD_STATUS_COLORS.inProgress }}>
-            ACTIVE {activeCount}
-          </div>
+            {totalSafe}
+          </span>
         </div>
       </div>
 
@@ -857,15 +862,15 @@ function HsdOverviewCard({
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '10px', alignItems: 'end', minHeight: '88px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px', alignItems: 'end', minHeight: 'var(--wall-hsd-bars-min-height)' }}>
         {categories.map((category) => (
           <div key={category.label} style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
             <span style={{ fontSize: '0.92rem', fontWeight: 800, color: category.color }}>{category.value}</span>
-            <div style={{ width: '100%', height: '58px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+            <div style={{ width: '100%', height: 'var(--wall-hsd-bar-height)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
               <div
                 style={{
-                  width: '34px',
-                  height: category.value > 0 ? `${Math.max(8, (category.value / peakCategory) * 58)}px` : '4px',
+                  width: '30px',
+                  height: category.value > 0 ? `${Math.max(8, (category.value / peakCategory) * 48)}px` : '4px',
                   borderRadius: '10px 10px 4px 4px',
                   background: category.value > 0 ? `linear-gradient(180deg, ${category.color}, ${category.color}cc)` : 'rgba(62,39,35,0.12)',
                   boxShadow: category.value > 0 ? `0 6px 12px ${category.color}26` : 'none'
@@ -907,6 +912,9 @@ function MiniDonutMetric({
   const circumference = 2 * Math.PI * radius;
   const pct = value === null ? 0 : Math.max(0, Math.min(100, value));
   const dashOffset = circumference - (pct / 100) * circumference;
+  const formattedValue = value === null
+    ? 'N/A'
+    : `${Number.isInteger(Number(pct.toFixed(1))) ? pct.toFixed(0) : pct.toFixed(1)}%`;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', minWidth: '58px' }}>
@@ -925,7 +933,7 @@ function MiniDonutMetric({
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
         <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: `${Math.max(9, Math.round(size * 0.19))}px`, fontWeight: 800, fill: accent }}>
-          {centerLabel || (value === null ? 'N/A' : `${Math.round(value)}%`)}
+          {centerLabel || formattedValue}
         </text>
       </svg>
       <div style={{ fontSize: labelSize, letterSpacing: '0.08em', fontWeight: 800, color: accent }}>{label}</div>
@@ -953,8 +961,8 @@ function HsdSlaHeaderCard({
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
-        gap: '8px',
-        padding: '10px 12px',
+        gap: 'var(--wall-panel-gap-tight)',
+        padding: 'var(--wall-sla-card-padding)',
         borderRadius: '16px',
         background: 'rgba(255,255,255,0.56)',
         border: `1px solid ${accent}22`,
@@ -963,7 +971,7 @@ function HsdSlaHeaderCard({
         boxSizing: 'border-box'
       }}
     >
-      <div style={{ fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
+      <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
         <MiniDonutMetric label="RESP" value={response} accent={getSlaAccent(response)} />
         <MiniDonutMetric label="RES" value={resolution} accent={getSlaAccent(resolution)} />
@@ -990,9 +998,9 @@ function SpecialQueueWatchCard({
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
-        gap: '8px',
+        gap: 'var(--wall-panel-gap-tight)',
         minHeight: 0,
-        padding: '10px 12px',
+        padding: 'var(--wall-special-queue-padding)',
         borderRadius: '16px',
         background: 'linear-gradient(180deg, rgba(62,39,35,0.04), rgba(255,255,255,0.62))',
         border: '1px solid rgba(141,110,99,0.12)',
@@ -1000,24 +1008,6 @@ function SpecialQueueWatchCard({
         boxSizing: 'border-box'
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-        <div style={{ fontSize: '0.72rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.62 }}>SPECIAL QUEUE WATCH</div>
-        <div
-          style={{
-            padding: '5px 8px',
-            borderRadius: '999px',
-            background: 'rgba(21,101,192,0.08)',
-            border: '1px solid rgba(21,101,192,0.14)',
-            fontSize: '0.62rem',
-            fontWeight: 800,
-            letterSpacing: '0.08em',
-            color: '#1565c0'
-          }}
-        >
-          LIVE QUEUE COUNTS
-        </div>
-      </div>
-
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px', minHeight: 0, flex: '1 1 auto' }}>
         {queues.map((queue) => (
           <div
@@ -1696,12 +1686,12 @@ function SectionHealthMeta({ health }: { health: SectionHealth }) {
           display: 'inline-flex',
           alignItems: 'center',
           gap: '6px',
-          padding: '5px 10px',
+          padding: 'var(--wall-health-pill-padding)',
           borderRadius: '999px',
-          fontSize: '0.68rem',
+          fontSize: 'var(--wall-health-pill-font-size)',
           fontWeight: 800,
           letterSpacing: '0.05em',
-          maxWidth: '280px',
+          maxWidth: 'var(--wall-health-pill-max-width)',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis'
@@ -2850,10 +2840,10 @@ export default function Dashboard() {
       onToggleHsdWorkType={(value) => setFilters((current) => ({ ...current, hsdWorkTypes: toggleArraySelection(current.hsdWorkTypes, value, ALL_HSD_WORK_TYPES) }))}
       onToggleHsdQueueType={(value) => setFilters((current) => ({ ...current, hsdQueueTypes: toggleArraySelection(current.hsdQueueTypes, value, ALL_HSD_QUEUE_TYPES) }))}
     />
-    <div className="dashboard-shell dashboard-shell--desktop" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: '100vh' }}>
-      <header className="glass-panel dashboard-header dashboard-header--wall" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', padding: '8px 16px' }}>
+    <div className="dashboard-shell dashboard-shell--desktop" style={{ padding: 'var(--wall-shell-padding)', display: 'flex', flexDirection: 'column', gap: 'var(--wall-shell-gap)', minHeight: '100vh' }}>
+      <header className="glass-panel dashboard-header dashboard-header--wall" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--wall-header-gap)', padding: 'var(--wall-header-padding)' }}>
         <div style={{ minWidth: 0 }}>
-          <h1 style={{ fontSize: '1rem', color: 'var(--text-primary)', fontWeight: 700, letterSpacing: '0.04em' }}>UTKAL IT DASHBOARD</h1>
+          <h1 style={{ fontSize: 'var(--wall-header-title-size)', color: 'var(--text-primary)', fontWeight: 700, letterSpacing: '0.04em' }}>UTKAL IT DASHBOARD</h1>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '0 0 auto' }}>
@@ -2878,7 +2868,7 @@ export default function Dashboard() {
             <SlidersHorizontal size={15} />
             {`FILTERS${activeFilterCount > 0 ? ` ${activeFilterCount}` : ''}`}
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: '1.05rem', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: 'var(--wall-header-clock-size)', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
             <Clock size={16} style={{ color: 'var(--primary)' }} />
             <span>{time}</span>
           </div>
@@ -2898,14 +2888,14 @@ export default function Dashboard() {
       >
         <div className="dashboard-left-stack">
           {visibleSections.hci ? (
-          <section className="glass-panel dashboard-panel" style={{ display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0, padding: '12px 14px' }}>
+          <section className="glass-panel dashboard-panel" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-panel-gap)', minHeight: 0, padding: 'var(--wall-panel-padding)' }}>
             <div className="dashboard-hci-card-grid">
               <div className="dashboard-hci-header">
                 <div
                   style={{
-                    width: '42px',
-                    height: '42px',
-                    borderRadius: '14px',
+                    width: 'var(--wall-icon-sm)',
+                    height: 'var(--wall-icon-sm)',
+                    borderRadius: 'var(--wall-icon-radius-sm)',
                     background: 'rgba(46,125,50,0.10)',
                     display: 'flex',
                     alignItems: 'center',
@@ -2916,8 +2906,8 @@ export default function Dashboard() {
                   <Server size={18} style={{ color: '#2e7d32' }} />
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <h2 style={{ fontSize: '1rem' }}>UAIL HCI</h2>
-                  <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE CLUSTER METRICS</div>
+                  <h2 style={{ fontSize: 'var(--wall-title-sm)' }}>UAIL HCI</h2>
+                  <div style={{ fontSize: 'var(--wall-subtitle-size)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE CLUSTER METRICS</div>
                 </div>
               </div>
 
@@ -2961,14 +2951,14 @@ export default function Dashboard() {
           ) : null}
 
           {visibleSections.hsd ? (
-          <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0, flex: '1.06 1 0' }}>
+          <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-grid-gap)', minHeight: 0, flex: '1.06 1 0' }}>
             <div className="hsd-panel-header">
               <div className="hsd-panel-title">
                 <div
                   style={{
-                    width: '46px',
-                    height: '46px',
-                    borderRadius: '16px',
+                    width: 'var(--wall-icon-md)',
+                    height: 'var(--wall-icon-md)',
+                    borderRadius: 'var(--wall-icon-radius-md)',
                     background: 'rgba(21,101,192,0.10)',
                     display: 'flex',
                     alignItems: 'center',
@@ -2979,8 +2969,8 @@ export default function Dashboard() {
                   <Ticket size={20} style={{ color: '#1565c0' }} />
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <h2 style={{ fontSize: '1.1rem' }}>Hindalco Service Desk</h2>
-                  <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>hsd.adityabirla.com</div>
+                  <h2 style={{ fontSize: 'var(--wall-title-md)' }}>Hindalco Service Desk</h2>
+                  <div style={{ fontSize: 'var(--wall-subtitle-size)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>hsd.adityabirla.com</div>
                 </div>
               </div>
               <SectionHealthMeta health={data.sections.symphony} />
@@ -3018,19 +3008,19 @@ export default function Dashboard() {
 
           {visibleSections.network ? (
             filteredNetworks.length > 0 ? (
-              <div style={{ display: 'flex', minHeight: 0, flex: '0.94 1 0' }}>
+              <div style={{ display: 'flex', minHeight: 0, flex: '0.94 1 0', minWidth: 0, width: '100%' }}>
                 <UnifiedNetworkCard links={filteredNetworks} sectionHealth={data.sections.networks} />
               </div>
             ) : (
-              <section className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
+              <section className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-grid-gap)', minHeight: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ width: '42px', height: '42px', borderRadius: '14px', background: 'rgba(141,110,99,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: 'var(--wall-icon-sm)', height: 'var(--wall-icon-sm)', borderRadius: 'var(--wall-icon-radius-sm)', background: 'rgba(141,110,99,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Activity size={20} style={{ color: 'var(--primary)' }} />
                     </div>
                     <div>
-                      <h2 style={{ fontSize: '0.98rem', color: 'var(--text-primary)' }}>Network Fabric</h2>
-                      <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>REAL-TIME SD-WAN AND CARRIER VIEW</div>
+                      <h2 style={{ fontSize: 'var(--wall-title-sm)', color: 'var(--text-primary)' }}>Network Fabric</h2>
+                      <div style={{ fontSize: 'var(--wall-subtitle-size)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>REAL-TIME SD-WAN AND CARRIER VIEW</div>
                     </div>
                   </div>
                   <SectionHealthMeta health={data.sections.networks} />
@@ -3042,26 +3032,26 @@ export default function Dashboard() {
         </div>
 
         {visibleSections.servers ? (
-        <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
+        <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-panel-gap)', minHeight: 0 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 0.72fr) minmax(0, 1.4fr) auto', alignItems: 'center', gap: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
               <div
                 style={{
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '14px',
+                  width: 'var(--wall-icon-sm)',
+                  height: 'var(--wall-icon-sm)',
+                  borderRadius: 'var(--wall-icon-radius-sm)',
                   background: 'rgba(141,110,99,0.12)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   flex: '0 0 auto'
                 }}
-              >
-                <Layers size={20} style={{ color: 'var(--primary)' }} />
-              </div>
+                >
+                  <Layers size={20} style={{ color: 'var(--primary)' }} />
+                </div>
               <div style={{ minWidth: 0 }}>
-                <h2 style={{ fontSize: '1.1rem' }}>Servers</h2>
-                <div style={{ fontSize: '0.68rem', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE MONITORING</div>
+                <h2 style={{ fontSize: 'var(--wall-title-md)' }}>Servers</h2>
+                <div style={{ fontSize: 'var(--wall-subtitle-size)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE MONITORING</div>
               </div>
             </div>
             <div className="server-fleet-summary-grid">
@@ -3110,7 +3100,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <footer className="glass-panel dashboard-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '8px 16px', fontSize: '0.74rem', opacity: 0.8 }}>
+      <footer className="glass-panel dashboard-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: 'var(--wall-footer-padding)', fontSize: 'var(--wall-footer-font-size)', opacity: 0.8 }}>
         <div>SYSTEM STATUS: {overallSystemStatus}</div>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {Object.values(data.sources).map((source) => {
