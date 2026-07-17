@@ -14,11 +14,12 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const workflowId = body?.workflowId;
+    const mode = body?.mode === 'legacy-profile' ? 'legacy-profile' : 'interactive';
     if (workflowId !== 'symphony' && workflowId !== 'solarwinds') {
       return NextResponse.json({ error: 'Unknown session workflow.' }, { status: 400 });
     }
 
-    return NextResponse.json(await launchSessionHelper(workflowId));
+    return NextResponse.json(await launchSessionHelper(workflowId, mode));
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || 'Failed to launch reauthentication.' }, { status: 500 });
   }

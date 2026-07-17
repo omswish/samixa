@@ -75,7 +75,7 @@ type ServiceSnapshot = {
 type SessionSnapshot = {
   id: 'symphony' | 'solarwinds';
   displayName: string;
-  overallStatus: 'available' | 'partial' | 'missing' | 'invalid';
+  overallStatus: 'authenticated' | 'partial' | 'missing' | 'invalid' | 'expired' | 'unreachable';
   summary: string;
   targets: Array<{
     id: string;
@@ -85,6 +85,11 @@ type SessionSnapshot = {
     sizeBytes: number | null;
     updatedAt: string | null;
     issue: string | null;
+    authStatus: 'authenticated' | 'missing' | 'invalid' | 'expired' | 'unreachable';
+    authSummary: string | null;
+    validatedAt: string | null;
+    finalUrl: string | null;
+    httpStatus: number | null;
   }>;
 };
 
@@ -126,19 +131,34 @@ function renderPasswordStatus(target: CollectorTargetSettings) {
 function toneStyles(status: ServiceSnapshot['overallStatus'] | SessionSnapshot['overallStatus']) {
   switch (status) {
     case 'online':
-    case 'available':
+    case 'authenticated':
       return { color: '#2e7d32', background: 'rgba(46,125,50,0.10)', border: 'rgba(46,125,50,0.20)' };
     case 'warning':
     case 'partial':
+    case 'expired':
       return { color: '#ef6c00', background: 'rgba(239,108,0,0.10)', border: 'rgba(239,108,0,0.20)' };
     case 'error':
     case 'invalid':
+    case 'unreachable':
       return { color: '#c62828', background: 'rgba(198,40,40,0.10)', border: 'rgba(198,40,40,0.20)' };
     case 'stopped':
     case 'missing':
       return { color: '#455a64', background: 'rgba(69,90,100,0.10)', border: 'rgba(69,90,100,0.20)' };
     default:
       return { color: '#5d4037', background: 'rgba(93,64,55,0.10)', border: 'rgba(93,64,55,0.18)' };
+  }
+}
+
+function sessionStatusLabel(status: SessionSnapshot['overallStatus']) {
+  switch (status) {
+    case 'authenticated':
+      return 'AUTH OK';
+    case 'expired':
+      return 'EXPIRED';
+    case 'unreachable':
+      return 'UNREACHABLE';
+    default:
+      return status.toUpperCase();
   }
 }
 
@@ -370,8 +390,11 @@ export default function AdminPage() {
     }
   };
 
-  const handleLaunchReauth = async (workflowId: 'symphony' | 'solarwinds') => {
-    setSessionBusy(`reauth:${workflowId}`);
+  const handleLaunchReauth = async (
+    workflowId: 'symphony' | 'solarwinds',
+    mode: 'interactive' | 'legacy-profile' = 'interactive'
+  ) => {
+    setSessionBusy(`${mode}:${workflowId}`);
     setError(null);
     setMessage(null);
     try {
@@ -380,16 +403,22 @@ export default function AdminPage() {
         headers: {
           'content-type': 'application/json'
         },
-        body: JSON.stringify({ workflowId })
+        body: JSON.stringify({ workflowId, mode })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || 'Failed to launch reauthentication.');
+        throw new Error(payload.error || (mode === 'legacy-profile'
+          ? 'Failed to launch legacy profile import.'
+          : 'Failed to launch reauthentication.'));
       }
 
-      setMessage(payload.message || 'Interactive reauthentication launched.');
+      setMessage(payload.message || (mode === 'legacy-profile'
+        ? 'Legacy profile import launched.'
+        : 'Interactive reauthentication launched.'));
     } catch (nextError: any) {
-      setError(nextError?.message || 'Failed to launch reauthentication.');
+      setError(nextError?.message || (mode === 'legacy-profile'
+        ? 'Failed to launch legacy profile import.'
+        : 'Failed to launch reauthentication.'));
     } finally {
       setSessionBusy(null);
     }
@@ -405,7 +434,7 @@ export default function AdminPage() {
   }
 
   const servicesOnline = services.filter((entry) => entry.overallStatus === 'online').length;
-  const sessionsAvailable = sessions.filter((entry) => entry.overallStatus === 'available').length;
+  const sessionsAvailable = sessions.filter((entry) => entry.overallStatus === 'authenticated').length;
   const enabledTargets = draft
     ? [
         draft.collectors.nutanix.primary.enabled,
@@ -415,7 +444,7 @@ export default function AdminPage() {
       ].filter(Boolean).length
     : 0;
   const servicesAttention = services.filter((entry) => entry.overallStatus !== 'online').length;
-  const sessionsAttention = sessions.filter((entry) => entry.overallStatus !== 'available').length;
+  const sessionsAttention = sessions.filter((entry) => entry.overallStatus !== 'authenticated').length;
 
   const tabs: Array<{
     key: AdminTabKey;
@@ -674,7 +703,7 @@ export default function AdminPage() {
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Sessions</h2>
-          <div style={panelHintStyle}>Import refreshed storage-state files or launch reauthentication on the server.</div>
+          <div style={panelHintStyle}>Import copies refreshed storage-state JSON. Reauthentication opens an interactive browser on the server host.</div>
         </div>
       </div>
 
@@ -697,7 +726,7 @@ export default function AdminPage() {
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{workflow.summary}</div>
                 </div>
                 <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
-                  {workflow.overallStatus.toUpperCase()}
+                  {sessionStatusLabel(workflow.overallStatus)}
                 </span>
               </div>
 
@@ -708,6 +737,8 @@ export default function AdminPage() {
                     {target.updatedAt ? ` | Updated ${target.updatedAt}` : ' | Not present'}
                     {target.sizeBytes ? ` | ${(target.sizeBytes / 1024).toFixed(1)} KB` : ''}
                     {target.issue ? ` | ${target.issue}` : ''}
+                    {target.authSummary ? ` | ${target.authSummary}` : ''}
+                    {target.validatedAt ? ` | Checked ${target.validatedAt}` : ''}
                   </div>
                 ))}
               </div>
@@ -722,15 +753,30 @@ export default function AdminPage() {
                   <HardDriveDownload size={14} />
                   Import Session
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleLaunchReauth(workflow.id)}
-                  disabled={sessionBusy !== null}
-                  style={secondaryButtonStyle}
-                >
-                  <KeyRound size={14} />
-                  Renew / Reauthenticate
-                </button>
+                {session?.isServerLocal ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleLaunchReauth(workflow.id)}
+                      disabled={sessionBusy !== null}
+                      style={secondaryButtonStyle}
+                    >
+                      <KeyRound size={14} />
+                      Launch Reauth on Server
+                    </button>
+                    {workflow.id === 'symphony' ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleLaunchReauth('symphony', 'legacy-profile')}
+                        disabled={sessionBusy !== null}
+                        style={secondaryButtonStyle}
+                      >
+                        <HardDriveDownload size={14} />
+                        Import Legacy HSD Profile
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
               </div>
             </div>
           );

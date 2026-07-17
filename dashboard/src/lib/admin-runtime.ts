@@ -69,6 +69,8 @@ type SessionWorkflowDefinition = {
     id: string;
     label: string;
     path: string;
+    probeUrl: string | null;
+    probeKind: 'symphony' | 'solarwinds';
   }>;
 };
 
@@ -84,7 +86,7 @@ export type ServiceSnapshot = ServiceDefinition & {
 };
 
 export type SessionSnapshot = SessionWorkflowDefinition & {
-  overallStatus: 'available' | 'partial' | 'missing' | 'invalid';
+  overallStatus: 'authenticated' | 'partial' | 'missing' | 'invalid' | 'expired' | 'unreachable';
   summary: string;
   targets: Array<SessionWorkflowDefinition['targets'][number] & {
     exists: boolean;
@@ -92,7 +94,34 @@ export type SessionSnapshot = SessionWorkflowDefinition & {
     sizeBytes: number | null;
     updatedAt: string | null;
     issue: string | null;
+    authStatus: 'authenticated' | 'missing' | 'invalid' | 'expired' | 'unreachable';
+    authSummary: string | null;
+    validatedAt: string | null;
+    finalUrl: string | null;
+    httpStatus: number | null;
   }>;
+};
+
+type StorageStateCookie = {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  secure?: boolean;
+  expires?: number;
+};
+
+type StorageStatePayload = {
+  cookies: StorageStateCookie[];
+};
+
+type SessionTargetInspection = {
+  exists: boolean;
+  valid: boolean;
+  sizeBytes: number | null;
+  updatedAt: string | null;
+  issue: string | null;
+  storageState: StorageStatePayload | null;
 };
 
 const INTERNAL_GATEWAY_BASE_URL = process.env.INTERNAL_GATEWAY_BASE_URL || 'http://127.0.0.1:4000';
@@ -514,7 +543,14 @@ export async function collectServiceSnapshots(): Promise<ServiceSnapshot[]> {
   );
 }
 
-function getSessionWorkflowDefinitions(): SessionWorkflowDefinition[] {
+function getSessionWorkflowDefinitions(settings: AdminSettingsPayload | null): SessionWorkflowDefinition[] {
+  const symphonyUrl = settings?.collectors.symphony.primary.targetUrl
+    || 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
+  const solarwindsServersUrl = settings?.collectors.solarwinds.servers.targetUrl
+    || `http://${settings?.collectors.solarwinds.servers.host || '10.36.91.45'}/Orion/SummaryView.aspx?ViewID=1`;
+  const solarwindsNetworksUrl = settings?.collectors.solarwinds.networks.targetUrl
+    || `http://${settings?.collectors.solarwinds.networks.host || '10.36.91.46'}/Orion/SummaryView.aspx?ViewID=1`;
+
   return [
     {
       id: 'symphony',
@@ -523,7 +559,9 @@ function getSessionWorkflowDefinitions(): SessionWorkflowDefinition[] {
         {
           id: 'primary',
           label: 'Primary session file',
-          path: path.join(DEFAULT_RUNTIME_ROOT, 'sessions', 'symphony', 'symphony-storage-state.json')
+          path: path.join(DEFAULT_RUNTIME_ROOT, 'sessions', 'symphony', 'symphony-storage-state.json'),
+          probeUrl: symphonyUrl,
+          probeKind: 'symphony'
         }
       ]
     },
@@ -534,12 +572,16 @@ function getSessionWorkflowDefinitions(): SessionWorkflowDefinition[] {
         {
           id: 'servers',
           label: 'Servers portal session',
-          path: path.join(DEFAULT_RUNTIME_ROOT, 'sessions', 'solarwinds', 'solarwinds-servers-storage-state.json')
+          path: path.join(DEFAULT_RUNTIME_ROOT, 'sessions', 'solarwinds', 'solarwinds-servers-storage-state.json'),
+          probeUrl: solarwindsServersUrl,
+          probeKind: 'solarwinds'
         },
         {
           id: 'networks',
           label: 'Networks portal session',
-          path: path.join(DEFAULT_RUNTIME_ROOT, 'sessions', 'solarwinds', 'solarwinds-networks-storage-state.json')
+          path: path.join(DEFAULT_RUNTIME_ROOT, 'sessions', 'solarwinds', 'solarwinds-networks-storage-state.json'),
+          probeUrl: solarwindsNetworksUrl,
+          probeKind: 'solarwinds'
         }
       ]
     }
@@ -565,7 +607,8 @@ async function inspectSessionTarget(targetPath: string) {
       valid,
       sizeBytes: stats.size,
       updatedAt: stats.mtime.toISOString(),
-      issue: valid ? null : 'File is not a valid Playwright storage-state payload.'
+      issue: valid ? null : 'File is not a valid Playwright storage-state payload.',
+      storageState: valid ? parsed as StorageStatePayload : null
     };
   } catch (error: any) {
     if (error?.code === 'ENOENT') {
@@ -574,7 +617,8 @@ async function inspectSessionTarget(targetPath: string) {
         valid: false,
         sizeBytes: null,
         updatedAt: null,
-        issue: 'File not found.'
+        issue: 'File not found.',
+        storageState: null
       };
     }
 
@@ -583,40 +627,279 @@ async function inspectSessionTarget(targetPath: string) {
       valid: false,
       sizeBytes: null,
       updatedAt: null,
-      issue: error?.message || 'Unable to read file.'
+      issue: error?.message || 'Unable to read file.',
+      storageState: null
     };
   }
 }
 
-export async function collectSessionSnapshots(): Promise<SessionSnapshot[]> {
-  return Promise.all(getSessionWorkflowDefinitions().map(async (workflow) => {
-    const targets = await Promise.all(workflow.targets.map(async (target) => ({
-      ...target,
-      ...(await inspectSessionTarget(target.path))
-    })));
+function cookieDomainMatches(hostname: string, cookieDomain: string | undefined) {
+  if (!cookieDomain) {
+    return false;
+  }
 
-    const validCount = targets.filter((target) => target.valid).length;
-    let overallStatus: SessionSnapshot['overallStatus'] = 'missing';
-    if (validCount === targets.length && validCount > 0) {
-      overallStatus = 'available';
-    } else if (validCount > 0) {
-      overallStatus = 'partial';
-    } else if (targets.some((target) => target.exists)) {
-      overallStatus = 'invalid';
+  const normalizedCookieDomain = cookieDomain.replace(/^\./, '').toLowerCase();
+  const normalizedHostname = hostname.toLowerCase();
+  return normalizedHostname === normalizedCookieDomain || normalizedHostname.endsWith(`.${normalizedCookieDomain}`);
+}
+
+function cookiePathMatches(pathname: string, cookiePath: string | undefined) {
+  const normalizedCookiePath = cookiePath || '/';
+  return pathname.startsWith(normalizedCookiePath);
+}
+
+function buildCookieHeaderForUrl(storageState: StorageStatePayload, targetUrl: string) {
+  const url = new URL(targetUrl);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  return storageState.cookies
+    .filter((cookie) => {
+      if (!cookie.name) {
+        return false;
+      }
+
+      if (typeof cookie.expires === 'number' && cookie.expires > 0 && cookie.expires <= nowSeconds) {
+        return false;
+      }
+
+      if (cookie.secure && url.protocol !== 'https:') {
+        return false;
+      }
+
+      return cookieDomainMatches(url.hostname, cookie.domain) && cookiePathMatches(url.pathname, cookie.path);
+    })
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join('; ');
+}
+
+function normalizeBodyText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+async function validateSessionTarget(
+  target: SessionWorkflowDefinition['targets'][number],
+  inspection: SessionTargetInspection
+) {
+  if (!inspection.exists) {
+    return {
+      authStatus: 'missing' as const,
+      authSummary: 'Session file is missing.',
+      validatedAt: null,
+      finalUrl: null,
+      httpStatus: null
+    };
+  }
+
+  if (!inspection.valid || !inspection.storageState) {
+    return {
+      authStatus: 'invalid' as const,
+      authSummary: inspection.issue || 'Session file is not a valid storage-state payload.',
+      validatedAt: null,
+      finalUrl: null,
+      httpStatus: null
+    };
+  }
+
+  if (!target.probeUrl) {
+    return {
+      authStatus: 'unreachable' as const,
+      authSummary: 'No probe URL configured for this session target.',
+      validatedAt: null,
+      finalUrl: null,
+      httpStatus: null
+    };
+  }
+
+  const cookieHeader = buildCookieHeaderForUrl(inspection.storageState, target.probeUrl);
+  if (!cookieHeader) {
+    return {
+      authStatus: 'expired' as const,
+      authSummary: 'No usable cookies matched the configured target URL.',
+      validatedAt: new Date().toISOString(),
+      finalUrl: null,
+      httpStatus: null
+    };
+  }
+
+  try {
+    const response = await fetch(target.probeUrl, {
+      headers: {
+        cookie: cookieHeader,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      },
+      cache: 'no-store',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(12000)
+    });
+
+    const finalUrl = response.url || target.probeUrl;
+    const body = normalizeBodyText(await response.text());
+    const finalUrlLower = finalUrl.toLowerCase();
+    const validatedAt = new Date().toISOString();
+
+    if (response.status >= 500) {
+      return {
+        authStatus: 'unreachable' as const,
+        authSummary: `Probe returned HTTP ${response.status}.`,
+        validatedAt,
+        finalUrl,
+        httpStatus: response.status
+      };
     }
 
-    const summary = overallStatus === 'available'
-      ? 'Session files are present and valid.'
-      : overallStatus === 'partial'
-        ? 'Only some target session files are valid.'
-        : overallStatus === 'invalid'
-          ? 'Session files exist but are not valid storage-state payloads.'
-          : 'Session files are missing.';
+    if (target.probeKind === 'symphony') {
+      const redirectedToLogin = finalUrlLower.includes('login.microsoftonline.com')
+        || finalUrlLower.includes('/login')
+        || finalUrlLower.includes('/saml2');
+      const loginBodyDetected = body.includes('sign in to your account')
+        || body.includes('session has expired')
+        || body.includes('your session has expired')
+        || body.includes('please login')
+        || body.includes('convergedsignin');
+      const dashboardDetected = body.includes('myworkgroupcount')
+        || body.includes('mdlincidentmgmt')
+        || body.includes('sde_dashboard');
+
+      if (redirectedToLogin || loginBodyDetected) {
+        return {
+          authStatus: 'expired' as const,
+          authSummary: 'Portal redirected to Microsoft sign-in. The saved HSD session has expired.',
+          validatedAt,
+          finalUrl,
+          httpStatus: response.status
+        };
+      }
+
+      if (dashboardDetected) {
+        return {
+          authStatus: 'authenticated' as const,
+          authSummary: 'Authenticated against the live HSD dashboard.',
+          validatedAt,
+          finalUrl,
+          httpStatus: response.status
+        };
+      }
+    }
+
+    if (target.probeKind === 'solarwinds') {
+      const redirectedToLogin = finalUrlLower.includes('/orion/login.aspx');
+      const loginBodyDetected = body.includes('problem authorizing the specified windows account')
+        || body.includes('log in to solarwinds')
+        || body.includes('remember me next time')
+        || body.includes('__viewstate')
+        && body.includes('password');
+      const dashboardDetected = body.includes('orion summary home')
+        || body.includes('needszebrastripes')
+        || body.includes('sw-custom-query-table');
+
+      if (redirectedToLogin || loginBodyDetected) {
+        return {
+          authStatus: 'expired' as const,
+          authSummary: 'Portal returned the SolarWinds login page. The saved session has expired.',
+          validatedAt,
+          finalUrl,
+          httpStatus: response.status
+        };
+      }
+
+      if (dashboardDetected) {
+        return {
+          authStatus: 'authenticated' as const,
+          authSummary: 'Authenticated against the live SolarWinds portal.',
+          validatedAt,
+          finalUrl,
+          httpStatus: response.status
+        };
+      }
+    }
+
+    return {
+      authStatus: 'unreachable' as const,
+      authSummary: `Received HTTP ${response.status}, but the portal response did not confirm an authenticated session.`,
+      validatedAt,
+      finalUrl,
+      httpStatus: response.status
+    };
+  } catch (error: any) {
+    return {
+      authStatus: 'unreachable' as const,
+      authSummary: error?.message || 'Authentication probe failed.',
+      validatedAt: new Date().toISOString(),
+      finalUrl: null,
+      httpStatus: null
+    };
+  }
+}
+
+function buildSessionWorkflowSummary(
+  overallStatus: SessionSnapshot['overallStatus'],
+  targets: Array<SessionSnapshot['targets'][number]>
+) {
+  if (overallStatus === 'authenticated') {
+    return 'Saved session is authenticated against the live portal.';
+  }
+
+  if (overallStatus === 'missing') {
+    return 'Session files are missing.';
+  }
+
+  if (overallStatus === 'invalid') {
+    return 'Session files exist, but the storage-state payload is invalid.';
+  }
+
+  if (overallStatus === 'expired') {
+    return 'Saved session files exist, but authentication has expired and needs reauthentication.';
+  }
+
+  if (overallStatus === 'unreachable') {
+    return 'Session files were found, but the live portal could not be confirmed from this host.';
+  }
+
+  const authenticatedCount = targets.filter((target) => target.authStatus === 'authenticated').length;
+  return `${authenticatedCount}/${targets.length} session target(s) authenticated against the live portal.`;
+}
+
+export async function collectSessionSnapshots(): Promise<SessionSnapshot[]> {
+  const settings = await loadAdminSettings().catch(() => null);
+
+  return Promise.all(getSessionWorkflowDefinitions(settings).map(async (workflow) => {
+    const targets = await Promise.all(workflow.targets.map(async (target) => {
+      const inspection = await inspectSessionTarget(target.path);
+      const validation = await validateSessionTarget(target, inspection);
+      return {
+        ...target,
+        exists: inspection.exists,
+        valid: inspection.valid,
+        sizeBytes: inspection.sizeBytes,
+        updatedAt: inspection.updatedAt,
+        issue: inspection.issue,
+        authStatus: validation.authStatus,
+        authSummary: validation.authSummary,
+        validatedAt: validation.validatedAt,
+        finalUrl: validation.finalUrl,
+        httpStatus: validation.httpStatus
+      };
+    }));
+
+    const authStatuses = targets.map((target) => target.authStatus);
+    let overallStatus: SessionSnapshot['overallStatus'] = 'partial';
+    if (authStatuses.length > 0 && authStatuses.every((status) => status === 'authenticated')) {
+      overallStatus = 'authenticated';
+    } else if (authStatuses.every((status) => status === 'missing')) {
+      overallStatus = 'missing';
+    } else if (authStatuses.every((status) => status === 'invalid')) {
+      overallStatus = 'invalid';
+    } else if (authStatuses.every((status) => status === 'expired')) {
+      overallStatus = 'expired';
+    } else if (authStatuses.every((status) => status === 'unreachable')) {
+      overallStatus = 'unreachable';
+    }
 
     return {
       ...workflow,
       overallStatus,
-      summary,
+      summary: buildSessionWorkflowSummary(overallStatus, targets),
       targets
     };
   }));
@@ -642,7 +925,7 @@ export async function importSessionWorkflow(workflowId: SessionWorkflowDefinitio
     throw new Error('Uploaded file is not a valid Playwright storage-state payload.');
   }
 
-  const workflow = getSessionWorkflowDefinitions().find((entry) => entry.id === workflowId);
+  const workflow = getSessionWorkflowDefinitions(null).find((entry) => entry.id === workflowId);
   if (!workflow) {
     throw new Error(`Unknown session workflow: ${workflowId}`);
   }
@@ -681,7 +964,14 @@ function findNodeExecutable() {
   return candidates[0];
 }
 
-export async function launchSessionHelper(workflowId: SessionWorkflowDefinition['id']) {
+export async function launchSessionHelper(
+  workflowId: SessionWorkflowDefinition['id'],
+  mode: 'interactive' | 'legacy-profile' = 'interactive'
+) {
+  if (mode === 'legacy-profile' && workflowId !== 'symphony') {
+    throw new Error('Legacy profile import is supported only for HSD/Symphony.');
+  }
+
   const settings = await loadAdminSettings().catch(() => null);
   const nodeExe = findNodeExecutable();
   const scriptPath = resolveCollectorLoginScript(workflowId);
@@ -691,11 +981,16 @@ export async function launchSessionHelper(workflowId: SessionWorkflowDefinition[
     throw new Error(`Login helper script not found for ${workflowId}.`);
   }
 
-  const envLines = [`$env:ITDASH_RUNTIME_ROOT = '${escapePowerShellSingleQuoted(DEFAULT_RUNTIME_ROOT)}'`];
+  const scriptLines = [
+    `$Host.UI.RawUI.WindowTitle = '${mode === 'legacy-profile'
+      ? 'UAIL IT Dashboard Legacy Session Import'
+      : 'UAIL IT Dashboard Session Reauthentication'}'`,
+    `$env:ITDASH_RUNTIME_ROOT = '${escapePowerShellSingleQuoted(DEFAULT_RUNTIME_ROOT)}'`
+  ];
 
   if (workflowId === 'symphony') {
     const targetUrl = settings?.collectors.symphony.primary.targetUrl || 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
-    envLines.push(`$env:SYM_URL = '${escapePowerShellSingleQuoted(targetUrl)}'`);
+    scriptLines.push(`$env:SYM_URL = '${escapePowerShellSingleQuoted(targetUrl)}'`);
   } else {
     const serversHost = settings?.collectors.solarwinds.servers.host
       || parseUrlHost(settings?.collectors.solarwinds.servers.targetUrl)
@@ -703,35 +998,55 @@ export async function launchSessionHelper(workflowId: SessionWorkflowDefinition[
     const networksHost = settings?.collectors.solarwinds.networks.host
       || parseUrlHost(settings?.collectors.solarwinds.networks.targetUrl)
       || '10.36.91.46';
-    envLines.push(`$env:SW_HOST_SERVERS = '${escapePowerShellSingleQuoted(serversHost)}'`);
-    envLines.push(`$env:SW_HOST_NETWORKS = '${escapePowerShellSingleQuoted(networksHost)}'`);
+    scriptLines.push(`$env:SW_HOST_SERVERS = '${escapePowerShellSingleQuoted(serversHost)}'`);
+    scriptLines.push(`$env:SW_HOST_NETWORKS = '${escapePowerShellSingleQuoted(networksHost)}'`);
   }
 
-  envLines.push(`Set-Location -LiteralPath '${escapePowerShellSingleQuoted(projectRoot)}'`);
-  envLines.push(`& '${escapePowerShellSingleQuoted(nodeExe)}' '${escapePowerShellSingleQuoted(scriptPath)}'`);
+  scriptLines.push(`Set-Location -LiteralPath '${escapePowerShellSingleQuoted(projectRoot)}'`);
+  const nodeCommandParts = [
+    `& '${escapePowerShellSingleQuoted(nodeExe)}'`,
+    `'${escapePowerShellSingleQuoted(scriptPath)}'`
+  ];
+  if (mode === 'legacy-profile') {
+    nodeCommandParts.push("'--import-legacy-profile'");
+  }
+  scriptLines.push(nodeCommandParts.join(' '));
 
-  const child = spawn(
-    'powershell.exe',
-    [
-      '-NoExit',
-      '-ExecutionPolicy', 'Bypass',
-      '-Command',
-      envLines.join('; ')
-    ],
-    {
-      cwd: projectRoot,
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false
-    }
+  const helperDir = path.join(DEFAULT_RUNTIME_ROOT, 'admin', 'reauth');
+  await fsp.mkdir(helperDir, { recursive: true });
+
+  const helperScriptPath = path.join(
+    helperDir,
+    `${workflowId}-${mode === 'legacy-profile' ? 'legacy-import' : 'reauth'}-${Date.now()}.ps1`
   );
+
+  await fsp.writeFile(helperScriptPath, `${scriptLines.join('\r\n')}\r\n`, 'utf8');
+
+  const child = spawn('cmd.exe', [
+    '/c',
+    'start',
+    '""',
+    'powershell.exe',
+    '-NoExit',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    helperScriptPath
+  ], {
+    cwd: projectRoot,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  });
   child.unref();
 
   return {
     ok: true,
-    message: workflowId === 'symphony'
-      ? 'Launched HSD interactive reauthentication helper.'
-      : 'Launched SolarWinds interactive reauthentication helper.'
+    message: mode === 'legacy-profile'
+      ? 'Launched HSD legacy-profile import helper.'
+      : workflowId === 'symphony'
+        ? 'Launched HSD interactive reauthentication helper.'
+        : 'Launched SolarWinds interactive reauthentication helper.'
   };
 }
 
