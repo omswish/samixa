@@ -27,6 +27,14 @@ This directory replaces the earlier ad hoc planning notes with a maintainable do
 - [Admin overview](assets/screenshots/admin-overview.png)
 - [Admin sessions](assets/screenshots/admin-sessions.png)
 
+## PDF Exports
+- Generated PDFs are placed under `docs/pdf/`
+- Regenerate them with:
+
+```powershell
+node docs/tools/export-markdown-pdfs.mjs
+```
+
 ## Current Scope
 - Primary wallboard target: `1920x1200`
 - Secondary desktop target: `1920x1080`
