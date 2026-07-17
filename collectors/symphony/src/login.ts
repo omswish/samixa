@@ -4,7 +4,7 @@ import readline from 'readline';
 import {
   DEBUG_ROOT,
   LEGACY_PROFILE_DIR,
-  PROFILE_ROOT,
+  prepareRuntimeStorage,
   STORAGE_STATE_PATH
 } from './sessionPaths';
 
@@ -39,7 +39,7 @@ async function ensureReady(context: BrowserContext) {
 
 async function interactiveLogin() {
   console.log('Opening MS Edge browser in interactive mode...');
-  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+  prepareRuntimeStorage();
   fs.mkdirSync(DEBUG_ROOT, { recursive: true });
 
   const browser = await chromium.launch({
@@ -79,7 +79,7 @@ async function importLegacyProfileSession() {
     throw new Error(`Legacy profile directory does not exist: ${LEGACY_PROFILE_DIR}`);
   }
 
-  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+  prepareRuntimeStorage();
 
   let context: BrowserContext | undefined;
   try {

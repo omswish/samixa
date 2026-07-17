@@ -1,0 +1,9 @@
+{
+  "name": "itdash-runtime-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bundled runtime service tooling for the Windows deployment package.",
+  "dependencies": {
+    "pm2": "^5.4.3"
+  }
+}

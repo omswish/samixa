@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { DEBUG_ROOT, prepareRuntimeStorage } from './sessionPaths';
 
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
@@ -18,6 +19,7 @@ const SW_PASS = requireEnv('SW_PASS', process.env.SW_PASS);
 const SW_HOST_NETWORKS = process.env.SW_HOST_NETWORKS || '10.36.91.46';
 
 async function run() {
+  prepareRuntimeStorage();
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   const page = await browser.newPage();
   try {
@@ -46,7 +48,7 @@ async function run() {
     
     // Save the entire HTML to a file
     const content = await page.content();
-    const outputPath = path.join(__dirname, 'page_source.html');
+    const outputPath = path.join(DEBUG_ROOT, 'page_source.html');
     fs.writeFileSync(outputPath, content, 'utf8');
     console.log(`Page source saved to ${outputPath} (${content.length} characters)`);
     

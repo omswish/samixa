@@ -2,7 +2,9 @@ import { chromium, type Browser, type BrowserContext, type BrowserContextOptions
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
-import { NETWORK_STORAGE_STATE_PATH, PROFILE_ROOT, SERVER_STORAGE_STATE_PATH } from './sessionPaths';
+import { NETWORK_STORAGE_STATE_PATH, prepareRuntimeStorage, SERVER_STORAGE_STATE_PATH } from './sessionPaths';
+import { loadSolarWindsRuntimeConfig } from './runtimeConfig';
+import { loadSolarWindsRuntimeSecrets } from './runtimeSecrets';
 
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
@@ -15,17 +17,12 @@ function requireEnv(name: string, value: string | undefined): string {
   return value;
 }
 
-const SW_USER = requireEnv('SW_USER', process.env.SW_USER);
-const SW_PASS = requireEnv('SW_PASS', process.env.SW_PASS);
-const SW_HOST_SERVERS = process.env.SW_HOST_SERVERS || '10.36.91.45';
-const SW_HOST_NETWORKS = process.env.SW_HOST_NETWORKS || '10.36.91.46';
-const POLL_INTERVAL = 30000;
 const NAVIGATION_TIMEOUT = 30000;
 const LOGIN_BUTTON_SELECTOR = '#ctl00_BodyContent_LoginButton, input[type="submit"], button:has-text("Login")';
 const USERNAME_SELECTOR = '#ctl00_BodyContent_Username, input[name*="username"], input[type="text"]';
 const PASSWORD_SELECTOR = '#ctl00_BodyContent_Password, input[name*="password"], input[type="password"]';
 
-const SERVER_NAMES = [
+const DEFAULT_SERVER_NAMES = [
   'HIL-HIDDOR-AV01.abgplanet.abg.com',
   'HIL-HIDDOR-BK01',
   'HIL-HIDDOR-CSCTS1',
@@ -44,7 +41,7 @@ const SERVER_NAMES = [
   'HIL-HIDDOR-US06'
 ];
 
-const NETWORK_NODE_MAP = [
+const DEFAULT_NETWORK_NODE_MAP = [
   { id: 'sw-net-1', provider: 'RJIO (ISP1)', nodeId: 'N:1419', nodeNumericId: 1419, kind: 'carrier' as const },
   { id: 'sw-net-2', provider: 'RailTel (ISP2)', nodeId: 'N:1417', nodeNumericId: 1417, kind: 'carrier' as const },
   { id: 'sw-net-3', provider: 'HIL-UTK-EC-1 (SDWAN-A)', nodeId: 'N:401', nodeNumericId: 401, interfaceId: 4744, kind: 'sdwan' as const },
@@ -115,15 +112,19 @@ interface SectionResult<T> {
 
 interface UpdateMetaPayload {
   attemptedAt: string;
+  finishedAt?: string;
   ok: boolean;
   error?: string;
+  targetHost?: string;
 }
 
 interface HostConfig {
   key: HostKey;
   label: string;
   host: string;
+  targetUrl: string;
   storageStatePath: string;
+  metadata: Record<string, unknown>;
 }
 
 interface NetworkEntitySnapshot {
@@ -195,7 +196,7 @@ interface PerfstackEntityRelationship {
   description?: string | null;
 }
 
-const SERVER_NODE_MAP: ServerInventoryEntry[] = [
+const DEFAULT_SERVER_NODE_MAP: ServerInventoryEntry[] = [
   { name: 'HIL-HIDDOR-AV01.abgplanet.abg.com', nodeId: 651 },
   { name: 'HIL-HIDDOR-BK01', nodeId: 1028 },
   { name: 'HIL-HIDDOR-CSCTS1', nodeId: 311 },
@@ -214,20 +215,50 @@ const SERVER_NODE_MAP: ServerInventoryEntry[] = [
   { name: 'HIL-HIDDOR-US06', nodeId: 1025 }
 ];
 
-const hostConfigs: Record<HostKey, HostConfig> = {
-  servers: {
-    key: 'servers',
-    label: 'Servers',
-    host: SW_HOST_SERVERS,
-    storageStatePath: SERVER_STORAGE_STATE_PATH
-  },
-  networks: {
-    key: 'networks',
-    label: 'Networks',
-    host: SW_HOST_NETWORKS,
-    storageStatePath: NETWORK_STORAGE_STATE_PATH
-  }
+type NetworkTargetConfig = {
+  id: string;
+  provider: string;
+  nodeId: string;
+  nodeNumericId: number;
+  interfaceId?: number;
+  kind: 'carrier' | 'sdwan';
 };
+
+function parseStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => typeof entry === 'string' ? entry.trim() : '')
+    .filter(Boolean);
+}
+
+function getConfiguredServerNames(metadata: Record<string, unknown>): string[] {
+  const configured = parseStringList(metadata.monitoredServers);
+  return configured.length > 0 ? configured : DEFAULT_SERVER_NAMES;
+}
+
+function getConfiguredNetworkTargets(metadata: Record<string, unknown>): NetworkTargetConfig[] {
+  const configured = parseStringList(metadata.networkObjectIds);
+  if (configured.length === 0) {
+    return DEFAULT_NETWORK_NODE_MAP;
+  }
+
+  return configured.map((rawValue, index) => {
+    const numericMatch = rawValue.match(/(\d+)/);
+    const numericId = numericMatch ? Number.parseInt(numericMatch[1], 10) : index + 1;
+    const fallback = DEFAULT_NETWORK_NODE_MAP.find((entry) => entry.nodeNumericId === numericId);
+    return {
+      id: fallback?.id ?? `sw-net-${index + 1}`,
+      provider: fallback?.provider ?? `Network ${index + 1}`,
+      nodeId: numericMatch ? `N:${numericId}` : rawValue,
+      nodeNumericId: numericId,
+      interfaceId: fallback?.interfaceId,
+      kind: fallback?.kind ?? (index < 2 ? 'carrier' : 'sdwan')
+    };
+  });
+}
 
 let browserPromise: Promise<Browser> | null = null;
 let cycleInProgress = false;
@@ -252,9 +283,9 @@ function normalizeToken(value: string): string {
     .replace(/[^a-z0-9]/g, '');
 }
 
-function findKnownServerName(text: string): string | null {
+function findKnownServerName(text: string, serverNames: string[]): string | null {
   const normalizedText = normalizeToken(text);
-  for (const serverName of SERVER_NAMES) {
+  for (const serverName of serverNames) {
     if (normalizedText.includes(normalizeToken(serverName))) {
       return serverName;
     }
@@ -278,7 +309,7 @@ function parseRankedServerTable(
   const matches = [...tableBody.matchAll(/([A-Z0-9.-]+(?:\.abgplanet\.abg\.com)?)\s+(\d+(?:\.\d+)?)\s*%/gi)];
 
   for (const match of matches) {
-    const matchedName = findKnownServerName(match[1]);
+    const matchedName = findKnownServerName(match[1], DEFAULT_SERVER_NAMES);
     if (!matchedName) {
       continue;
     }
@@ -461,9 +492,29 @@ function buildBootstrapRequiredMessage(hostConfig: HostConfig, reason: string): 
   return `${reason} Run npm run login --workspace collectors/solarwinds to seed or refresh the ${hostConfig.label.toLowerCase()} session.`;
 }
 
-async function createHostContext(hostKey: HostKey): Promise<{ context: BrowserContext; hostConfig: HostConfig; hasSavedSession: boolean }> {
-  const hostConfig = hostConfigs[hostKey];
-  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+function buildHostConfigs(runtimeConfig: Awaited<ReturnType<typeof loadSolarWindsRuntimeConfig>>): Record<HostKey, HostConfig> {
+  return {
+    servers: {
+      key: 'servers',
+      label: 'Servers',
+      host: runtimeConfig.targets.servers.host,
+      targetUrl: runtimeConfig.targets.servers.targetUrl,
+      storageStatePath: SERVER_STORAGE_STATE_PATH,
+      metadata: runtimeConfig.targets.servers.metadata
+    },
+    networks: {
+      key: 'networks',
+      label: 'Networks',
+      host: runtimeConfig.targets.networks.host,
+      targetUrl: runtimeConfig.targets.networks.targetUrl,
+      storageStatePath: NETWORK_STORAGE_STATE_PATH,
+      metadata: runtimeConfig.targets.networks.metadata
+    }
+  };
+}
+
+async function createHostContext(hostConfig: HostConfig): Promise<{ context: BrowserContext; hostConfig: HostConfig; hasSavedSession: boolean }> {
+  prepareRuntimeStorage();
 
   const hasSavedSession = fs.existsSync(hostConfig.storageStatePath);
   const contextOptions: BrowserContextOptions = {
@@ -497,15 +548,15 @@ async function isLoginPromptVisible(page: Page): Promise<boolean> {
   return (await page.locator(LOGIN_BUTTON_SELECTOR).count()) > 0;
 }
 
-async function attemptCredentialLogin(page: Page) {
+async function attemptCredentialLogin(page: Page, username: string, password: string) {
   const userField = page.locator(USERNAME_SELECTOR).first();
   const passField = page.locator(PASSWORD_SELECTOR).first();
   const loginButton = page.locator(LOGIN_BUTTON_SELECTOR).first();
 
   await userField.waitFor({ state: 'visible', timeout: 10000 });
   await passField.waitFor({ state: 'visible', timeout: 10000 });
-  await userField.fill(SW_USER);
-  await passField.fill(SW_PASS);
+  await userField.fill(username);
+  await passField.fill(password);
 
   try {
     await Promise.all([
@@ -520,18 +571,18 @@ async function attemptCredentialLogin(page: Page) {
 }
 
 async function ensureAuthenticatedPage(
-  hostKey: HostKey,
-  targetUrl: string,
+  hostConfig: HostConfig,
+  credentials: { username: string; password: string },
   readySelector: string
 ): Promise<{ context: BrowserContext; page: Page }> {
-  const { context, hostConfig, hasSavedSession } = await createHostContext(hostKey);
+  const { context, hasSavedSession } = await createHostContext(hostConfig);
   const page = await context.newPage();
 
   try {
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    await page.goto(hostConfig.targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
 
     if (await isLoginPromptVisible(page)) {
-      await attemptCredentialLogin(page);
+      await attemptCredentialLogin(page, credentials.username, credentials.password);
     }
 
     if (await isLoginPromptVisible(page)) {
@@ -549,8 +600,8 @@ async function ensureAuthenticatedPage(
       throw new Error(message);
     }
 
-    if (!page.url().toLowerCase().includes(targetUrl.toLowerCase())) {
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    if (!page.url().toLowerCase().includes(hostConfig.targetUrl.toLowerCase())) {
+      await page.goto(hostConfig.targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
     }
 
     await page.locator(readySelector).first().waitFor({ state: 'visible', timeout: 15000 });
@@ -782,7 +833,7 @@ async function fetchFixedDiskUsage(page: Page, nodeId: number): Promise<number |
   }
 }
 
-async function discoverServerInventory(page: Page): Promise<ServerInventoryEntry[]> {
+async function discoverServerInventory(page: Page, serverNames: string[]): Promise<ServerInventoryEntry[]> {
   const links = await page.locator('a[href*="NodeDetails.aspx?NetObject=N:"]').evaluateAll((nodes) =>
     nodes.map((node) => ({
       text: (node.textContent || '').replace(/\s+/g, ' ').trim(),
@@ -792,7 +843,7 @@ async function discoverServerInventory(page: Page): Promise<ServerInventoryEntry
 
   const inventory = new Map<string, ServerInventoryEntry>();
   for (const link of links) {
-    const name = findKnownServerName(link.text);
+    const name = findKnownServerName(link.text, serverNames);
     const nodeIdMatch = link.href.match(/NetObject=N:(\d+)/i);
     if (!name || !nodeIdMatch) {
       continue;
@@ -808,7 +859,17 @@ async function discoverServerInventory(page: Page): Promise<ServerInventoryEntry
 
   // The SummaryView widget set is not deterministic on every load, so fall back
   // to the verified node inventory when a server link is absent from the page.
-  return SERVER_NODE_MAP.map((entry) => inventory.get(entry.name) ?? entry);
+  return serverNames.map((name) => {
+    const discovered = inventory.get(name);
+    if (discovered) {
+      return discovered;
+    }
+
+    return DEFAULT_SERVER_NODE_MAP.find((entry) => entry.name === name) ?? {
+      name,
+      nodeId: -1
+    };
+  }).filter((entry) => entry.nodeId > 0);
 }
 
 async function scrapeServerNode(page: Page, entry: ServerInventoryEntry): Promise<ServerMetric> {
@@ -837,12 +898,12 @@ async function scrapeServerNode(page: Page, entry: ServerInventoryEntry): Promis
   };
 }
 
-async function scrapeInterfaceDetailPage(context: BrowserContext, interfaceId: number): Promise<InterfaceDetailSnapshot> {
+async function scrapeInterfaceDetailPage(context: BrowserContext, networkHost: string, interfaceId: number): Promise<InterfaceDetailSnapshot> {
   const detailPage = await context.newPage();
 
   try {
     await detailPage.goto(
-      `http://${SW_HOST_NETWORKS}/Orion/Interfaces/InterfaceDetails.aspx?NetObject=I:${interfaceId}&view=InterfaceDetails`,
+      `http://${networkHost}/Orion/Interfaces/InterfaceDetails.aspx?NetObject=I:${interfaceId}&view=InterfaceDetails`,
       { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT }
     );
     await detailPage.waitForTimeout(2000);
@@ -853,8 +914,8 @@ async function scrapeInterfaceDetailPage(context: BrowserContext, interfaceId: n
   }
 }
 
-async function scrapeServers(page: Page): Promise<ServerMetric[]> {
-  const inventory = await discoverServerInventory(page);
+async function scrapeServers(page: Page, serverNames: string[]): Promise<ServerMetric[]> {
+  const inventory = await discoverServerInventory(page, serverNames);
   const servers = await Promise.all(inventory.map((entry) => scrapeServerNode(page, entry)));
   if (servers.length === 0) {
     throw new Error('SolarWinds server scrape did not expose any recognized server rows');
@@ -863,7 +924,12 @@ async function scrapeServers(page: Page): Promise<ServerMetric[]> {
   return servers;
 }
 
-async function scrapeNetworks(context: BrowserContext, page: Page): Promise<NetworkMetric[]> {
+async function scrapeNetworks(
+  context: BrowserContext,
+  page: Page,
+  networkHost: string,
+  networkTargets: NetworkTargetConfig[]
+): Promise<NetworkMetric[]> {
   const networks = new Map<string, NetworkMetric>();
   const rows = await page.locator('table.NeedsZebraStripes tr').all();
 
@@ -876,7 +942,7 @@ async function scrapeNetworks(context: BrowserContext, page: Page): Promise<Netw
     const nodeName = (await nodeLink.innerText()).trim();
     const nodeHref = await nodeLink.getAttribute('href');
     const nodeIdMatch = nodeHref?.match(/NetObject=N:(\d+)/i);
-    const target = NETWORK_NODE_MAP.find((candidate) => String(candidate.nodeNumericId) === nodeIdMatch?.[1]);
+    const target = networkTargets.find((candidate) => String(candidate.nodeNumericId) === nodeIdMatch?.[1]);
     const networkId = target?.id ?? null;
 
     if (!networkId) {
@@ -906,7 +972,7 @@ async function scrapeNetworks(context: BrowserContext, page: Page): Promise<Netw
     });
   }
 
-  await Promise.all(NETWORK_NODE_MAP.map(async (target) => {
+  await Promise.all(networkTargets.map(async (target) => {
     const probeTime = new Date().toISOString();
     const [entityResult, uptimeResult] = await Promise.allSettled([
       fetchNetworkEntitySnapshot(page, target.nodeNumericId),
@@ -946,13 +1012,13 @@ async function scrapeNetworks(context: BrowserContext, page: Page): Promise<Netw
     });
   }));
 
-  for (const target of NETWORK_NODE_MAP) {
+  for (const target of networkTargets) {
     if (target.kind !== 'sdwan' || !target.interfaceId) {
       continue;
     }
 
     try {
-      const detailSnapshot = await scrapeInterfaceDetailPage(context, target.interfaceId);
+      const detailSnapshot = await scrapeInterfaceDetailPage(context, networkHost, target.interfaceId);
       networks.set(target.id, {
         id: target.id,
         ...(networks.get(target.id) ?? {}),
@@ -981,20 +1047,32 @@ async function collectSolarWindsData() {
   const cycleStartedAt = Date.now();
   const cycleAttemptedAt = new Date().toISOString();
   console.log(`[${cycleAttemptedAt}] Starting SolarWinds scraping session...`);
+  const [runtimeConfig, runtimeSecrets] = await Promise.all([
+    loadSolarWindsRuntimeConfig(API_URL),
+    loadSolarWindsRuntimeSecrets(API_URL)
+  ]);
+  const hostConfigs = buildHostConfigs(runtimeConfig);
+  const configuredServerNames = getConfiguredServerNames(runtimeConfig.targets.servers.metadata);
+  const configuredNetworkTargets = getConfiguredNetworkTargets(runtimeConfig.targets.networks.metadata);
 
   const serverResult: SectionResult<ServerMetric[]> = { attemptedAt: cycleAttemptedAt };
   const networkResult: SectionResult<NetworkMetric[]> = { attemptedAt: cycleAttemptedAt };
 
   try {
+    const credentials = {
+      username: requireEnv('SW_USER', runtimeSecrets.username ?? undefined),
+      password: requireEnv('SW_PASS', runtimeSecrets.password ?? undefined)
+    };
+
     let serverContext: BrowserContext | undefined;
     try {
       const { context, page } = await ensureAuthenticatedPage(
-        'servers',
-        `http://${SW_HOST_SERVERS}/Orion/SummaryView.aspx?ViewID=1`,
+        hostConfigs.servers,
+        credentials,
         'table.NeedsZebraStripes, table.sw-custom-query-table'
       );
       serverContext = context;
-      serverResult.data = await scrapeServers(page);
+      serverResult.data = await scrapeServers(page, configuredServerNames);
       serverResult.reportedAt = new Date().toISOString();
       await context.storageState({ path: hostConfigs.servers.storageStatePath });
     } catch (err: any) {
@@ -1010,12 +1088,12 @@ async function collectSolarWindsData() {
     let networkContext: BrowserContext | undefined;
     try {
       const { context, page } = await ensureAuthenticatedPage(
-        'networks',
-        `http://${SW_HOST_NETWORKS}/Orion/SummaryView.aspx?ViewID=1`,
+        hostConfigs.networks,
+        credentials,
         'table.NeedsZebraStripes'
       );
       networkContext = context;
-      networkResult.data = await scrapeNetworks(context, page);
+      networkResult.data = await scrapeNetworks(context, page, hostConfigs.networks.host, configuredNetworkTargets);
       networkResult.reportedAt = new Date().toISOString();
       await context.storageState({ path: hostConfigs.networks.storageStatePath });
     } catch (err: any) {
@@ -1032,16 +1110,21 @@ async function collectSolarWindsData() {
       solarwinds: {
         meta: {
           attemptedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
           sections: {
             servers: {
-              attemptedAt: serverResult.reportedAt ?? serverResult.attemptedAt,
+              attemptedAt: serverResult.attemptedAt,
+              finishedAt: serverResult.reportedAt ?? serverResult.attemptedAt,
               ok: Boolean(serverResult.data),
-              error: serverResult.error
+              error: serverResult.error,
+              targetHost: hostConfigs.servers.host
             },
             networks: {
-              attemptedAt: networkResult.reportedAt ?? networkResult.attemptedAt,
+              attemptedAt: networkResult.attemptedAt,
+              finishedAt: networkResult.reportedAt ?? networkResult.attemptedAt,
               ok: Boolean(networkResult.data),
-              error: networkResult.error
+              error: networkResult.error,
+              targetHost: hostConfigs.networks.host
             }
           }
         },
@@ -1057,18 +1140,23 @@ async function collectSolarWindsData() {
         solarwinds: {
           meta: {
             attemptedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
             ok: false,
             error: err.message,
             sections: {
               servers: {
-                attemptedAt: serverResult.reportedAt ?? serverResult.attemptedAt,
+                attemptedAt: serverResult.attemptedAt,
+                finishedAt: serverResult.reportedAt ?? serverResult.attemptedAt,
                 ok: false,
-                error: serverResult.error ?? err.message
+                error: serverResult.error ?? err.message,
+                targetHost: hostConfigs.servers.host
               } satisfies UpdateMetaPayload,
               networks: {
-                attemptedAt: networkResult.reportedAt ?? networkResult.attemptedAt,
+                attemptedAt: networkResult.attemptedAt,
+                finishedAt: networkResult.reportedAt ?? networkResult.attemptedAt,
                 ok: false,
-                error: networkResult.error ?? err.message
+                error: networkResult.error ?? err.message,
+                targetHost: hostConfigs.networks.host
               } satisfies UpdateMetaPayload
             }
           }
@@ -1080,7 +1168,7 @@ async function collectSolarWindsData() {
   } finally {
     cycleInProgress = false;
     const elapsed = Date.now() - cycleStartedAt;
-    scheduleNextCycle(Math.max(1000, POLL_INTERVAL - elapsed));
+    scheduleNextCycle(Math.max(1000, runtimeConfig.pollIntervalMs - elapsed));
   }
 }
 

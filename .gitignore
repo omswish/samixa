@@ -4,8 +4,11 @@ node_modules/
 edge-profile/
 collectors/symphony/edge-profile/
 collectors/solarwinds/edge-profile/
+collectors/edge-profile/
 collectors/solarwinds/runtime/
 collectors/symphony/runtime/
+dashboard/runtime/
+dashboard/.next/
 api-gateway/data/
 runtime_logs/
 *.png
@@ -14,3 +17,10 @@ dist/
 build/
 .DS_Store
 itdash.db
+
+# Deployment build outputs
+deployment/release/
+deployment/staging/
+deployment/installer/output/
+deployment/admin-console/release/
+deployment/admin-console/node_modules/

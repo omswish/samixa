@@ -1,0 +1,1262 @@
+'use client';
+
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  HardDriveDownload,
+  KeyRound,
+  LogOut,
+  Play,
+  RefreshCw,
+  Save,
+  ServerCog,
+  Settings2,
+  ShieldCheck,
+  Square,
+  RotateCcw
+} from 'lucide-react';
+
+type DashboardSession = {
+  email: string;
+  role: 'viewer' | 'admin';
+  displayName: string | null;
+  isServerLocal: boolean;
+  expiresAt: string;
+};
+
+type CollectorTargetSettings = {
+  configKey: string | null;
+  targetName: string;
+  targetUrl: string;
+  host: string | null;
+  enabled: boolean;
+  owner: string | null;
+  pollIntervalSeconds: number | null;
+  notes: string | null;
+  metadata: Record<string, any>;
+  username: string | null;
+  passwordConfigured: boolean;
+  configOrigin: string;
+  secretOrigin: string;
+  password?: string;
+  clearPassword?: boolean;
+};
+
+type AdminSettingsPayload = {
+  collectors: {
+    nutanix: {
+      primary: CollectorTargetSettings;
+    };
+    solarwinds: {
+      servers: CollectorTargetSettings;
+      networks: CollectorTargetSettings;
+    };
+    symphony: {
+      primary: CollectorTargetSettings;
+    };
+  };
+};
+
+type ServiceSnapshot = {
+  id: string;
+  displayName: string;
+  exposedToLan: boolean;
+  listen: string | null;
+  notes: string;
+  processStatus: string;
+  overallStatus: 'online' | 'warning' | 'error' | 'stopped' | 'unknown';
+  healthStatus: string;
+  healthSummary: string;
+  pid: number | null;
+  uptime: string | null;
+  lastSync: string | null;
+  lastError: string | null;
+};
+
+type SessionSnapshot = {
+  id: 'symphony' | 'solarwinds';
+  displayName: string;
+  overallStatus: 'available' | 'partial' | 'missing' | 'invalid';
+  summary: string;
+  targets: Array<{
+    id: string;
+    label: string;
+    exists: boolean;
+    valid: boolean;
+    sizeBytes: number | null;
+    updatedAt: string | null;
+    issue: string | null;
+  }>;
+};
+
+type AdminTabKey = 'overview' | 'services' | 'sessions' | 'sources';
+
+const OPERATOR_PORT = '21060';
+
+function cloneSettings(settings: AdminSettingsPayload) {
+  return JSON.parse(JSON.stringify(settings)) as AdminSettingsPayload;
+}
+
+function parseLines(text: string) {
+  return text
+    .split(/\r?\n|,/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function buildSurfaceUrl(pathname: string, port: string) {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.port = port;
+  nextUrl.pathname = pathname;
+  nextUrl.search = '';
+  return nextUrl.toString();
+}
+
+function renderPasswordStatus(target: CollectorTargetSettings) {
+  if (target.clearPassword) {
+    return 'Will be cleared on save';
+  }
+
+  if (target.password) {
+    return 'Will be replaced on save';
+  }
+
+  return target.passwordConfigured ? 'Configured' : 'Not configured';
+}
+
+function toneStyles(status: ServiceSnapshot['overallStatus'] | SessionSnapshot['overallStatus']) {
+  switch (status) {
+    case 'online':
+    case 'available':
+      return { color: '#2e7d32', background: 'rgba(46,125,50,0.10)', border: 'rgba(46,125,50,0.20)' };
+    case 'warning':
+    case 'partial':
+      return { color: '#ef6c00', background: 'rgba(239,108,0,0.10)', border: 'rgba(239,108,0,0.20)' };
+    case 'error':
+    case 'invalid':
+      return { color: '#c62828', background: 'rgba(198,40,40,0.10)', border: 'rgba(198,40,40,0.20)' };
+    case 'stopped':
+    case 'missing':
+      return { color: '#455a64', background: 'rgba(69,90,100,0.10)', border: 'rgba(69,90,100,0.20)' };
+    default:
+      return { color: '#5d4037', background: 'rgba(93,64,55,0.10)', border: 'rgba(93,64,55,0.18)' };
+  }
+}
+
+export default function AdminPage() {
+  const [session, setSession] = useState<DashboardSession | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [services, setServices] = useState<ServiceSnapshot[]>([]);
+  const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
+  const [draft, setDraft] = useState<AdminSettingsPayload | null>(null);
+  const [activeTab, setActiveTab] = useState<AdminTabKey>('overview');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [serviceBusy, setServiceBusy] = useState<string | null>(null);
+  const [sessionBusy, setSessionBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const hsdImportRef = useRef<HTMLInputElement | null>(null);
+  const solarwindsImportRef = useRef<HTMLInputElement | null>(null);
+
+  const loadAll = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [servicesResponse, sessionsResponse, settingsResponse] = await Promise.all([
+        fetch('/api/admin/services', { cache: 'no-store' }),
+        fetch('/api/admin/sessions', { cache: 'no-store' }),
+        fetch('/api/admin/settings', { cache: 'no-store' })
+      ]);
+
+      const [servicesPayload, sessionsPayload, settingsPayload] = await Promise.all([
+        servicesResponse.json().catch(() => ({})),
+        sessionsResponse.json().catch(() => ({})),
+        settingsResponse.json().catch(() => ({}))
+      ]);
+
+      if (!servicesResponse.ok) {
+        throw new Error(servicesPayload.error || 'Failed to load services.');
+      }
+      if (!sessionsResponse.ok) {
+        throw new Error(sessionsPayload.error || 'Failed to load session status.');
+      }
+      if (!settingsResponse.ok) {
+        throw new Error(settingsPayload.error || 'Failed to load settings.');
+      }
+
+      setServices(servicesPayload.services || []);
+      setSessions(sessionsPayload.sessions || []);
+      setDraft(cloneSettings(settingsPayload));
+    } catch (nextError: any) {
+      setError(nextError?.message || 'Failed to load admin console.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetch('/api/auth/session', { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || 'Authentication required.');
+        }
+
+        if (!cancelled) {
+          if (payload.session?.role !== 'admin') {
+            window.location.replace('/');
+            return;
+          }
+
+          setSession(payload.session);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          window.location.replace('/login');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSessionLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session || session.role !== 'admin') {
+      return;
+    }
+
+    void loadAll();
+  }, [session]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } finally {
+      window.location.replace('/login');
+    }
+  };
+
+  const updateTarget = (
+    source: 'nutanix' | 'symphony',
+    patch: Partial<CollectorTargetSettings>
+  ) => {
+    setDraft((current) => current ? {
+      ...current,
+      collectors: {
+        ...current.collectors,
+        [source]: {
+          primary: {
+            ...current.collectors[source].primary,
+            ...patch
+          }
+        }
+      }
+    } : current);
+  };
+
+  const updateSolarwindsTarget = (
+    targetName: 'servers' | 'networks',
+    patch: Partial<CollectorTargetSettings>
+  ) => {
+    setDraft((current) => current ? {
+      ...current,
+      collectors: {
+        ...current.collectors,
+        solarwinds: {
+          ...current.collectors.solarwinds,
+          [targetName]: {
+            ...current.collectors.solarwinds[targetName],
+            ...patch
+          }
+        }
+      }
+    } : current);
+  };
+
+  const handleSave = async () => {
+    if (!draft) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(draft)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to save admin settings.');
+      }
+
+      setDraft(cloneSettings(payload));
+      setMessage('Source settings saved successfully.');
+    } catch (nextError: any) {
+      setError(nextError?.message || 'Failed to save admin settings.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleServiceAction = async (action: 'start' | 'stop' | 'restart' | 'restart-all', target: string) => {
+    setServiceBusy(`${action}:${target}`);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/admin/services', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ action, target })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Service action failed.');
+      }
+
+      setMessage(payload.message || 'Service action sent.');
+      await loadAll();
+    } catch (nextError: any) {
+      setError(nextError?.message || 'Service action failed.');
+    } finally {
+      setServiceBusy(null);
+    }
+  };
+
+  const handleImport = async (workflowId: 'symphony' | 'solarwinds', file: File | null) => {
+    if (!file) {
+      return;
+    }
+
+    setSessionBusy(`import:${workflowId}`);
+    setError(null);
+    setMessage(null);
+    try {
+      const raw = await file.text();
+      const storageState = JSON.parse(raw);
+      const response = await fetch('/api/admin/sessions/import', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ workflowId, storageState })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Session import failed.');
+      }
+
+      setMessage(payload.message || 'Session imported successfully.');
+      await loadAll();
+    } catch (nextError: any) {
+      setError(nextError?.message || 'Session import failed.');
+    } finally {
+      setSessionBusy(null);
+    }
+  };
+
+  const handleLaunchReauth = async (workflowId: 'symphony' | 'solarwinds') => {
+    setSessionBusy(`reauth:${workflowId}`);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/admin/sessions/launch-reauth', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ workflowId })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to launch reauthentication.');
+      }
+
+      setMessage(payload.message || 'Interactive reauthentication launched.');
+    } catch (nextError: any) {
+      setError(nextError?.message || 'Failed to launch reauthentication.');
+    } finally {
+      setSessionBusy(null);
+    }
+  };
+
+  if (sessionLoading || !session) {
+    return (
+      <main style={loadingShellStyle}>
+        <RefreshCw size={28} className="animate-spin" style={{ color: '#1565c0' }} />
+        <span style={{ color: '#5d4037' }}>Validating admin access...</span>
+      </main>
+    );
+  }
+
+  const servicesOnline = services.filter((entry) => entry.overallStatus === 'online').length;
+  const sessionsAvailable = sessions.filter((entry) => entry.overallStatus === 'available').length;
+  const enabledTargets = draft
+    ? [
+        draft.collectors.nutanix.primary.enabled,
+        draft.collectors.solarwinds.servers.enabled,
+        draft.collectors.solarwinds.networks.enabled,
+        draft.collectors.symphony.primary.enabled
+      ].filter(Boolean).length
+    : 0;
+  const servicesAttention = services.filter((entry) => entry.overallStatus !== 'online').length;
+  const sessionsAttention = sessions.filter((entry) => entry.overallStatus !== 'available').length;
+
+  const tabs: Array<{
+    key: AdminTabKey;
+    label: string;
+    detail: string;
+    icon: React.ReactNode;
+  }> = [
+    {
+      key: 'overview',
+      label: 'Overview',
+      detail: 'Stack health and quick actions',
+      icon: <ShieldCheck size={16} />
+    },
+    {
+      key: 'services',
+      label: 'Services',
+      detail: 'Run state and restart controls',
+      icon: <ServerCog size={16} />
+    },
+    {
+      key: 'sessions',
+      label: 'Sessions',
+      detail: 'Imports and reauthentication',
+      icon: <KeyRound size={16} />
+    },
+    {
+      key: 'sources',
+      label: 'Sources',
+      detail: 'Collector endpoints and credentials',
+      icon: <Settings2 size={16} />
+    }
+  ];
+
+  const renderOverviewPanel = () => (
+    <div style={{ display: 'grid', gap: '18px' }}>
+      <section style={{ display: 'grid', gap: '18px', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+        <div className="glass-panel" style={panelStyle}>
+          <div style={panelHeaderStyle}>
+            <div>
+              <h2 style={panelTitleStyle}>Control Overview</h2>
+              <div style={panelHintStyle}>Use this page as the first stop for stack health, quick recovery, and source readiness.</div>
+            </div>
+            <span style={{ ...statusChipStyle, color: '#1565c0', background: 'rgba(21,101,192,0.10)', borderColor: 'rgba(21,101,192,0.20)' }}>
+              LIVE
+            </span>
+          </div>
+
+          <div style={overviewMetricGridStyle}>
+            <div style={overviewMetricCardStyle}>
+              <div style={overviewMetricLabelStyle}>Services needing attention</div>
+              <div style={overviewMetricValueStyle}>{servicesAttention}</div>
+              <button type="button" onClick={() => setActiveTab('services')} style={overviewLinkButtonStyle}>
+                Open services
+              </button>
+            </div>
+            <div style={overviewMetricCardStyle}>
+              <div style={overviewMetricLabelStyle}>Sessions needing renewal</div>
+              <div style={overviewMetricValueStyle}>{sessionsAttention}</div>
+              <button type="button" onClick={() => setActiveTab('sessions')} style={overviewLinkButtonStyle}>
+                Open sessions
+              </button>
+            </div>
+            <div style={overviewMetricCardStyle}>
+              <div style={overviewMetricLabelStyle}>Enabled source targets</div>
+              <div style={overviewMetricValueStyle}>{enabledTargets}/4</div>
+              <button type="button" onClick={() => setActiveTab('sources')} style={overviewLinkButtonStyle}>
+                Open sources
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => window.location.assign(buildSurfaceUrl('/', OPERATOR_PORT))} style={secondaryButtonStyle}>
+              <ShieldCheck size={16} />
+              Open Operator View
+            </button>
+            <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
+              <RefreshCw size={16} />
+              Refresh Console
+            </button>
+            <button type="button" onClick={() => void handleServiceAction('restart-all', 'stack')} disabled={serviceBusy !== null} style={primaryButtonStyle(serviceBusy !== null)}>
+              <RotateCcw size={16} />
+              Restart Entire Stack
+            </button>
+          </div>
+        </div>
+
+        <div className="glass-panel" style={panelStyle}>
+          <div style={panelHeaderStyle}>
+            <div>
+              <h2 style={panelTitleStyle}>What Changed</h2>
+              <div style={panelHintStyle}>Each workflow now sits in its own tab so service actions, session recovery, and source editing stay separated.</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '12px' }}>
+            {tabs.filter((tab) => tab.key !== 'overview').map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                style={overviewNavCardStyle}
+              >
+                <div style={{ display: 'grid', gap: '4px' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: 'var(--text-primary)' }}>
+                    {tab.icon}
+                    {tab.label}
+                  </div>
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', textAlign: 'left' }}>{tab.detail}</div>
+                </div>
+                <span style={overviewNavPillStyle}>Open</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section style={{ display: 'grid', gap: '18px', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+        <div className="glass-panel" style={panelStyle}>
+          <div style={panelHeaderStyle}>
+            <div>
+              <h2 style={panelTitleStyle}>Service Snapshot</h2>
+              <div style={panelHintStyle}>Live PM2 and gateway status across the shared dashboard stack.</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '10px' }}>
+            {loading ? (
+              <div style={loadingRowStyle}>
+                <RefreshCw size={18} className="animate-spin" />
+                Loading service state...
+              </div>
+            ) : services.map((service) => {
+              const tone = toneStyles(service.overallStatus);
+              return (
+                <button
+                  key={service.id}
+                  type="button"
+                  onClick={() => setActiveTab('services')}
+                  style={overviewListRowStyle}
+                >
+                  <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
+                    <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{service.displayName}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{service.healthSummary}</div>
+                  </div>
+                  <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                    {service.overallStatus.toUpperCase()}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="glass-panel" style={panelStyle}>
+          <div style={panelHeaderStyle}>
+            <div>
+              <h2 style={panelTitleStyle}>Session Snapshot</h2>
+              <div style={panelHintStyle}>Imported browser state and renew / reauthenticate readiness.</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gap: '10px' }}>
+            {loading ? (
+              <div style={loadingRowStyle}>
+                <RefreshCw size={18} className="animate-spin" />
+                Loading session state...
+              </div>
+            ) : sessions.map((workflow) => {
+              const tone = toneStyles(workflow.overallStatus);
+              return (
+                <button
+                  key={workflow.id}
+                  type="button"
+                  onClick={() => setActiveTab('sessions')}
+                  style={overviewListRowStyle}
+                >
+                  <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
+                    <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{workflow.displayName}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{workflow.summary}</div>
+                  </div>
+                  <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                    {workflow.overallStatus.toUpperCase()}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+
+  const renderServicesPanel = () => (
+    <section className="glass-panel" style={panelStyle}>
+      <div style={panelHeaderStyle}>
+        <div>
+          <h2 style={panelTitleStyle}>Services</h2>
+          <div style={panelHintStyle}>Run, stop, restart, and verify the live stack.</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: '12px' }}>
+        {loading ? (
+          <div style={loadingRowStyle}>
+            <RefreshCw size={18} className="animate-spin" />
+            Loading service state...
+          </div>
+        ) : services.map((service) => {
+          const tone = toneStyles(service.overallStatus);
+          return (
+            <div key={service.id} style={itemCardStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+                <div style={{ display: 'grid', gap: '4px' }}>
+                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{service.displayName}</div>
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{service.notes}</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                    {service.listen || 'No direct listen socket'}{service.pid ? ` | PID ${service.pid}` : ''}{service.uptime ? ` | Uptime ${service.uptime}` : ''}
+                  </div>
+                </div>
+                <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                  {service.overallStatus.toUpperCase()}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  <strong style={{ color: 'var(--text-primary)' }}>{service.healthSummary}</strong>
+                  {service.lastSync ? ` | Last sync ${service.lastSync}` : ''}
+                  {service.lastError ? ` | ${service.lastError}` : ''}
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => void handleServiceAction('start', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
+                    <Play size={14} />
+                    Start
+                  </button>
+                  <button type="button" onClick={() => void handleServiceAction('stop', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
+                    <Square size={14} />
+                    Stop
+                  </button>
+                  <button type="button" onClick={() => void handleServiceAction('restart', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
+                    <RotateCcw size={14} />
+                    Restart
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  const renderSessionsPanel = () => (
+    <section className="glass-panel" style={panelStyle}>
+      <div style={panelHeaderStyle}>
+        <div>
+          <h2 style={panelTitleStyle}>Sessions</h2>
+          <div style={panelHintStyle}>Import refreshed storage-state files or launch reauthentication on the server.</div>
+        </div>
+      </div>
+
+      <input ref={hsdImportRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={(event) => void handleImport('symphony', event.target.files?.[0] || null)} />
+      <input ref={solarwindsImportRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={(event) => void handleImport('solarwinds', event.target.files?.[0] || null)} />
+
+      <div style={{ display: 'grid', gap: '12px' }}>
+        {loading ? (
+          <div style={loadingRowStyle}>
+            <RefreshCw size={18} className="animate-spin" />
+            Loading session state...
+          </div>
+        ) : sessions.map((workflow) => {
+          const tone = toneStyles(workflow.overallStatus);
+          return (
+            <div key={workflow.id} style={itemCardStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+                <div style={{ display: 'grid', gap: '4px' }}>
+                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{workflow.displayName}</div>
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{workflow.summary}</div>
+                </div>
+                <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                  {workflow.overallStatus.toUpperCase()}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gap: '8px' }}>
+                {workflow.targets.map((target) => (
+                  <div key={target.id} style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>{target.label}</strong>
+                    {target.updatedAt ? ` | Updated ${target.updatedAt}` : ' | Not present'}
+                    {target.sizeBytes ? ` | ${(target.sizeBytes / 1024).toFixed(1)} KB` : ''}
+                    {target.issue ? ` | ${target.issue}` : ''}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => (workflow.id === 'symphony' ? hsdImportRef.current : solarwindsImportRef.current)?.click()}
+                  disabled={sessionBusy !== null}
+                  style={secondaryButtonStyle}
+                >
+                  <HardDriveDownload size={14} />
+                  Import Session
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleLaunchReauth(workflow.id)}
+                  disabled={sessionBusy !== null}
+                  style={secondaryButtonStyle}
+                >
+                  <KeyRound size={14} />
+                  Renew / Reauthenticate
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  const renderSourcesPanel = () => (
+    <section className="glass-panel" style={panelStyle}>
+      <div style={panelHeaderStyle}>
+        <div>
+          <h2 style={panelTitleStyle}>Source Configuration</h2>
+          <div style={panelHintStyle}>Configure Nutanix, SolarWinds 45, SolarWinds 46, and HSD from one place.</div>
+        </div>
+        <button type="button" onClick={() => void handleSave()} disabled={saving || !draft} style={primaryButtonStyle(saving || !draft)}>
+          <Save size={16} />
+          {saving ? 'Saving...' : 'Save Sources'}
+        </button>
+      </div>
+
+      {!draft ? (
+        <div style={loadingRowStyle}>
+          <RefreshCw size={18} className="animate-spin" />
+          Loading source settings...
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: '14px' }}>
+          {renderTargetCard(
+            'HSD / Symphony',
+            draft.collectors.symphony.primary,
+            (patch) => updateTarget('symphony', patch),
+            <label style={fieldBlockStyle}>
+              Exact workgroup
+              <textarea
+                value={String(draft.collectors.symphony.primary.metadata.exactWorkgroup || '')}
+                onChange={(event) => updateTarget('symphony', {
+                  metadata: {
+                    ...draft.collectors.symphony.primary.metadata,
+                    exactWorkgroup: event.target.value
+                  }
+                })}
+                rows={2}
+                style={textAreaStyle}
+              />
+            </label>
+          )}
+
+          {renderTargetCard(
+            'Nutanix',
+            draft.collectors.nutanix.primary,
+            (patch) => updateTarget('nutanix', patch)
+          )}
+
+          {renderTargetCard(
+            'SolarWinds Servers (45)',
+            draft.collectors.solarwinds.servers,
+            (patch) => updateSolarwindsTarget('servers', patch),
+            <label style={fieldBlockStyle}>
+              Monitored servers
+              <textarea
+                value={(draft.collectors.solarwinds.servers.metadata.monitoredServers || []).join('\n')}
+                onChange={(event) => updateSolarwindsTarget('servers', {
+                  metadata: {
+                    ...draft.collectors.solarwinds.servers.metadata,
+                    monitoredServers: parseLines(event.target.value)
+                  }
+                })}
+                rows={4}
+                style={textAreaStyle}
+              />
+            </label>
+          )}
+
+          {renderTargetCard(
+            'SolarWinds Networks (46)',
+            draft.collectors.solarwinds.networks,
+            (patch) => updateSolarwindsTarget('networks', patch),
+            <label style={fieldBlockStyle}>
+              Network object IDs
+              <textarea
+                value={(draft.collectors.solarwinds.networks.metadata.networkObjectIds || []).join('\n')}
+                onChange={(event) => updateSolarwindsTarget('networks', {
+                  metadata: {
+                    ...draft.collectors.solarwinds.networks.metadata,
+                    networkObjectIds: parseLines(event.target.value).slice(0, 5)
+                  }
+                })}
+                rows={4}
+                style={textAreaStyle}
+              />
+            </label>
+          )}
+        </div>
+      )}
+    </section>
+  );
+
+  return (
+    <main
+      style={{
+        minHeight: '100vh',
+        background:
+          'radial-gradient(circle at top left, rgba(21,101,192,0.14), transparent 42%), linear-gradient(135deg, #f7f4ef 0%, #ece4d8 100%)',
+        padding: '24px'
+      }}
+    >
+      <div style={{ maxWidth: '1480px', margin: '0 auto', display: 'grid', gap: '18px' }}>
+        <header className="glass-panel" style={{ padding: '18px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: '4px' }}>
+            <div style={{ fontSize: '0.78rem', letterSpacing: '0.16em', fontWeight: 800, color: '#1565c0' }}>ADMIN SURFACE</div>
+            <h1 style={{ margin: 0, fontSize: '1.9rem', color: 'var(--text-primary)' }}>Utkal IT Dashboard Control</h1>
+            <div style={{ color: 'var(--text-secondary)' }}>Services, source credentials, and session recovery on the same web stack.</div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => window.location.assign(buildSurfaceUrl('/', OPERATOR_PORT))} style={secondaryButtonStyle}>
+              <ShieldCheck size={16} />
+              Operator View
+            </button>
+            <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
+              <RefreshCw size={16} />
+              Refresh
+            </button>
+            <button type="button" onClick={() => void handleServiceAction('restart-all', 'stack')} disabled={serviceBusy !== null} style={primaryButtonStyle(serviceBusy !== null)}>
+              <RotateCcw size={16} />
+              Restart Stack
+            </button>
+            <div style={identityPillStyle}>
+              <span style={{ fontWeight: 800, letterSpacing: '0.08em' }}>ADMIN</span>
+              <span>{session.displayName || session.email}</span>
+              <button type="button" onClick={() => void handleLogout()} style={iconOnlyButtonStyle}>
+                <LogOut size={16} />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {error ? <div style={{ ...messageBarStyle, color: '#b3261e', background: 'rgba(198,40,40,0.10)', borderColor: 'rgba(198,40,40,0.18)' }}>{error}</div> : null}
+        {message ? <div style={{ ...messageBarStyle, color: '#2e7d32', background: 'rgba(46,125,50,0.10)', borderColor: 'rgba(46,125,50,0.18)' }}>{message}</div> : null}
+
+        <section style={{ display: 'grid', gap: '16px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <button type="button" className="glass-panel" onClick={() => setActiveTab('services')} style={summaryCardButtonStyle(activeTab === 'services')}>
+            <ServerCog size={18} style={{ color: '#1565c0' }} />
+            <div style={{ fontSize: '0.8rem', letterSpacing: '0.08em', fontWeight: 800, color: '#1565c0' }}>SERVICES ONLINE</div>
+            <div style={summaryValueStyle}>{servicesOnline}/{services.length}</div>
+          </button>
+          <button type="button" className="glass-panel" onClick={() => setActiveTab('sessions')} style={summaryCardButtonStyle(activeTab === 'sessions')}>
+            <KeyRound size={18} style={{ color: '#2e7d32' }} />
+            <div style={{ fontSize: '0.8rem', letterSpacing: '0.08em', fontWeight: 800, color: '#2e7d32' }}>VALID SESSIONS</div>
+            <div style={summaryValueStyle}>{sessionsAvailable}/{sessions.length}</div>
+          </button>
+          <button type="button" className="glass-panel" onClick={() => setActiveTab('sources')} style={summaryCardButtonStyle(activeTab === 'sources')}>
+            <Settings2 size={18} style={{ color: '#ef6c00' }} />
+            <div style={{ fontSize: '0.8rem', letterSpacing: '0.08em', fontWeight: 800, color: '#ef6c00' }}>SOURCE TARGETS</div>
+            <div style={summaryValueStyle}>{enabledTargets}/4</div>
+          </button>
+        </section>
+
+        <section className="glass-panel" style={tabShellStyle}>
+          <div role="tablist" aria-label="Admin workflows" style={tabListStyle}>
+            {tabs.map((tab) => {
+              const active = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setActiveTab(tab.key)}
+                  style={tabButtonStyle(active)}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                    {tab.icon}
+                    {tab.label}
+                  </span>
+                  <span style={tabButtonDetailStyle}>{tab.detail}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {activeTab === 'overview' ? renderOverviewPanel() : null}
+        {activeTab === 'services' ? renderServicesPanel() : null}
+        {activeTab === 'sessions' ? renderSessionsPanel() : null}
+        {activeTab === 'sources' ? renderSourcesPanel() : null}
+      </div>
+    </main>
+  );
+
+  function renderTargetCard(
+    title: string,
+    target: CollectorTargetSettings,
+    onChange: (patch: Partial<CollectorTargetSettings>) => void,
+    extra?: React.ReactNode
+  ) {
+    return (
+      <div style={itemCardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: '4px' }}>
+            <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{title}</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              Config: {target.configOrigin} | Secret: {target.secretOrigin}
+            </div>
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 700, color: 'var(--text-primary)' }}>
+            <input type="checkbox" checked={target.enabled} onChange={(event) => onChange({ enabled: event.target.checked })} />
+            Enabled
+          </label>
+        </div>
+
+        <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <label style={fieldBlockStyle}>
+            Target URL
+            <input value={target.targetUrl} onChange={(event) => onChange({ targetUrl: event.target.value })} style={fieldStyle} />
+          </label>
+          <label style={fieldBlockStyle}>
+            Username
+            <input value={target.username || ''} onChange={(event) => onChange({ username: event.target.value })} style={fieldStyle} />
+          </label>
+          <label style={fieldBlockStyle}>
+            Password
+            <input
+              type="password"
+              value={target.password || ''}
+              onChange={(event) => onChange({ password: event.target.value, clearPassword: false })}
+              placeholder={target.passwordConfigured ? 'Leave blank to keep existing password' : 'Enter password'}
+              style={fieldStyle}
+            />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{renderPasswordStatus(target)}</span>
+          </label>
+          <label style={fieldBlockStyle}>
+            Poll interval (seconds)
+            <input
+              type="number"
+              value={target.pollIntervalSeconds ?? ''}
+              onChange={(event) => onChange({ pollIntervalSeconds: event.target.value ? Number(event.target.value) : null })}
+              style={fieldStyle}
+            />
+          </label>
+        </div>
+
+        <label style={fieldBlockStyle}>
+          Notes
+          <textarea value={target.notes || ''} onChange={(event) => onChange({ notes: event.target.value })} rows={2} style={textAreaStyle} />
+        </label>
+
+        {extra}
+      </div>
+    );
+  }
+}
+
+const loadingShellStyle: React.CSSProperties = {
+  minHeight: '100vh',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '12px',
+  background:
+    'radial-gradient(circle at top left, rgba(21,101,192,0.14), transparent 42%), linear-gradient(135deg, #f7f4ef 0%, #ece4d8 100%)'
+};
+
+const summaryCardStyle: React.CSSProperties = {
+  padding: '18px',
+  display: 'grid',
+  gap: '10px',
+  alignContent: 'start'
+};
+
+const summaryCardButtonStyle = (active: boolean): React.CSSProperties => ({
+  ...summaryCardStyle,
+  cursor: 'pointer',
+  textAlign: 'left',
+  border: active ? '1px solid rgba(21,101,192,0.26)' : '1px solid rgba(141,110,99,0.10)',
+  background: active ? 'rgba(255,255,255,0.82)' : 'rgba(255,255,255,0.66)'
+});
+
+const summaryValueStyle: React.CSSProperties = {
+  fontSize: '2rem',
+  fontWeight: 800,
+  color: 'var(--text-primary)'
+};
+
+const panelStyle: React.CSSProperties = {
+  padding: '18px',
+  display: 'grid',
+  gap: '14px'
+};
+
+const tabShellStyle: React.CSSProperties = {
+  padding: '12px'
+};
+
+const tabListStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))'
+};
+
+const tabButtonStyle = (active: boolean): React.CSSProperties => ({
+  display: 'grid',
+  gap: '6px',
+  alignContent: 'start',
+  textAlign: 'left',
+  borderRadius: '16px',
+  border: active ? '1px solid rgba(21,101,192,0.24)' : '1px solid rgba(141,110,99,0.14)',
+  background: active ? 'rgba(21,101,192,0.10)' : 'rgba(255,255,255,0.62)',
+  color: 'var(--text-primary)',
+  padding: '14px 16px',
+  fontWeight: 800,
+  cursor: 'pointer'
+});
+
+const tabButtonDetailStyle: React.CSSProperties = {
+  fontSize: '0.78rem',
+  fontWeight: 600,
+  color: 'var(--text-secondary)'
+};
+
+const panelHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '12px',
+  alignItems: 'center',
+  flexWrap: 'wrap'
+};
+
+const overviewMetricGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'
+};
+
+const overviewMetricCardStyle: React.CSSProperties = {
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.62)',
+  padding: '14px',
+  display: 'grid',
+  gap: '10px',
+  alignContent: 'start'
+};
+
+const overviewMetricLabelStyle: React.CSSProperties = {
+  fontSize: '0.76rem',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  fontWeight: 800,
+  color: '#1565c0'
+};
+
+const overviewMetricValueStyle: React.CSSProperties = {
+  fontSize: '2rem',
+  lineHeight: 1,
+  fontWeight: 800,
+  color: 'var(--text-primary)'
+};
+
+const overviewLinkButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 'fit-content',
+  border: 0,
+  padding: 0,
+  background: 'transparent',
+  color: '#1565c0',
+  fontWeight: 800,
+  cursor: 'pointer'
+};
+
+const overviewNavCardStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '12px',
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.62)',
+  padding: '14px 16px',
+  cursor: 'pointer',
+  textAlign: 'left',
+  color: 'var(--text-primary)'
+};
+
+const overviewNavPillStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '6px 10px',
+  borderRadius: '999px',
+  background: 'rgba(21,101,192,0.10)',
+  color: '#1565c0',
+  fontSize: '0.74rem',
+  fontWeight: 800,
+  letterSpacing: '0.08em'
+};
+
+const overviewListRowStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '12px',
+  alignItems: 'center',
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.62)',
+  padding: '12px 14px',
+  cursor: 'pointer',
+  color: 'var(--text-primary)'
+};
+
+const panelTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '1.1rem',
+  color: 'var(--text-primary)'
+};
+
+const panelHintStyle: React.CSSProperties = {
+  fontSize: '0.82rem',
+  color: 'var(--text-secondary)'
+};
+
+const itemCardStyle: React.CSSProperties = {
+  borderRadius: '18px',
+  border: '1px solid rgba(141,110,99,0.16)',
+  background: 'rgba(255,255,255,0.68)',
+  padding: '15px',
+  display: 'grid',
+  gap: '12px'
+};
+
+const fieldBlockStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '6px',
+  fontWeight: 700,
+  color: 'var(--text-primary)'
+};
+
+const fieldStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid rgba(141,110,99,0.16)',
+  background: 'rgba(255,255,255,0.82)',
+  padding: '10px 12px',
+  color: 'var(--text-primary)'
+};
+
+const textAreaStyle: React.CSSProperties = {
+  ...fieldStyle,
+  resize: 'vertical',
+  minHeight: '72px'
+};
+
+const loadingRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  minHeight: '120px',
+  justifyContent: 'center',
+  color: 'var(--text-secondary)'
+};
+
+const messageBarStyle: React.CSSProperties = {
+  borderRadius: '14px',
+  border: '1px solid',
+  padding: '10px 12px',
+  fontWeight: 700
+};
+
+const statusChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: '999px',
+  border: '1px solid',
+  padding: '6px 10px',
+  fontSize: '0.74rem',
+  fontWeight: 800,
+  letterSpacing: '0.08em'
+};
+
+const secondaryButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '8px',
+  borderRadius: '12px',
+  border: '1px solid rgba(141,110,99,0.16)',
+  background: 'rgba(255,255,255,0.72)',
+  color: 'var(--text-primary)',
+  padding: '10px 14px',
+  fontWeight: 700,
+  cursor: 'pointer'
+};
+
+const primaryButtonStyle = (disabled: boolean): React.CSSProperties => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '8px',
+  borderRadius: '12px',
+  border: 0,
+  background: disabled ? 'rgba(21,101,192,0.42)' : '#1565c0',
+  color: '#fff',
+  padding: '10px 14px',
+  fontWeight: 800,
+  cursor: disabled ? 'not-allowed' : 'pointer'
+});
+
+const identityPillStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '8px',
+  padding: '8px 12px',
+  borderRadius: '999px',
+  border: '1px solid rgba(141,110,99,0.16)',
+  background: 'rgba(255,255,255,0.72)',
+  color: 'var(--text-primary)'
+};
+
+const iconOnlyButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: 0,
+  background: 'transparent',
+  color: 'inherit',
+  cursor: 'pointer'
+};

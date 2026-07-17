@@ -1,5 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { loadNutanixRuntimeConfig } from './runtimeConfig';
+import { loadNutanixRuntimeSecrets } from './runtimeSecrets';
 
 // Load env from workspace root
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
@@ -8,8 +10,6 @@ dotenv.config({ path: path.join(__dirname, '../../../.env') });
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const API_URL = process.env.API_URL || 'http://localhost:4000/api/update';
-const NUTANIX_HOST = process.env.NUTANIX_HOST || '10.23.50.27';
-const NUTANIX_PORT = process.env.NUTANIX_PORT || '9440';
 function requireEnv(name: string, value: string | undefined): string {
   if (!value) {
     throw new Error(`Missing ${name}. Set ${name} in the environment.`);
@@ -18,10 +18,9 @@ function requireEnv(name: string, value: string | undefined): string {
   return value;
 }
 
-const NUTANIX_USER = requireEnv('NUTANIX_USER', process.env.NUTANIX_USER);
-const NUTANIX_PASS = requireEnv('NUTANIX_PASS', process.env.NUTANIX_PASS);
-const POLL_INTERVAL = 30000; // 30 seconds
 type NutanixNodeStatus = 'normal' | 'warning' | 'critical' | 'offline';
+let cycleInProgress = false;
+let nextCycleTimer: NodeJS.Timeout | null = null;
 
 function deriveNutanixNodeStatus(host: any): NutanixNodeStatus {
   const state = String(host?.state ?? '').toUpperCase();
@@ -72,14 +71,16 @@ async function postUpdate(payload: object) {
   }
 }
 
-async function reportFailure(attemptedAt: string, error: string) {
+async function reportFailure(attemptedAt: string, error: string, targetHost: string) {
   try {
     await postUpdate({
       nutanix: {
         meta: {
           ok: false,
           attemptedAt,
-          error
+          finishedAt: new Date().toISOString(),
+          error,
+          targetHost
         }
       }
     });
@@ -89,18 +90,31 @@ async function reportFailure(attemptedAt: string, error: string) {
 }
 
 async function collectNutanixData() {
+  if (cycleInProgress) {
+    console.warn(`[${new Date().toISOString()}] Previous Nutanix cycle is still running. Skipping overlap.`);
+    return;
+  }
+
+  cycleInProgress = true;
   const attemptedAt = new Date().toISOString();
   console.log(`[${attemptedAt}] Starting Nutanix metrics collection...`);
-  
-  const auth = Buffer.from(`${NUTANIX_USER}:${NUTANIX_PASS}`).toString('base64');
-  const headers = {
-    'Authorization': `Basic ${auth}`,
-    'Accept': 'application/json'
-  };
+  const cycleStartedAt = Date.now();
+  const [runtimeConfig, runtimeSecrets] = await Promise.all([
+    loadNutanixRuntimeConfig(API_URL),
+    loadNutanixRuntimeSecrets(API_URL)
+  ]);
 
   try {
+    const nutanixUser = requireEnv('NUTANIX_USER', runtimeSecrets.username ?? undefined);
+    const nutanixPass = requireEnv('NUTANIX_PASS', runtimeSecrets.password ?? undefined);
+    const auth = Buffer.from(`${nutanixUser}:${nutanixPass}`).toString('base64');
+    const headers = {
+      'Authorization': `Basic ${auth}`,
+      'Accept': 'application/json'
+    };
+
     // 1. Fetch Cluster Stats
-    const clusterUrl = `https://${NUTANIX_HOST}:${NUTANIX_PORT}/PrismGateway/services/rest/v2.0/cluster/`;
+    const clusterUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}/PrismGateway/services/rest/v2.0/cluster/`;
     const clusterRes = await fetch(clusterUrl, { headers });
     
     if (!clusterRes.ok) {
@@ -124,7 +138,7 @@ async function collectNutanixData() {
     let nodes: Array<{ name: string; status: NutanixNodeStatus }> = [];
 
     try {
-      const hostsUrl = `https://${NUTANIX_HOST}:${NUTANIX_PORT}/PrismGateway/services/rest/v2.0/hosts/`;
+      const hostsUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}/PrismGateway/services/rest/v2.0/hosts/`;
       const hostsRes = await fetch(hostsUrl, { headers });
       if (hostsRes.ok) {
         const hostsData = (await hostsRes.json()) as any;
@@ -145,7 +159,7 @@ async function collectNutanixData() {
     let totalLogicalAllocatedBytes = 0;
     let activeLogicalUsedBytes = 0;
     try {
-      const vmsUrl = `https://${NUTANIX_HOST}:${NUTANIX_PORT}/PrismGateway/services/rest/v1/vms`;
+      const vmsUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}/PrismGateway/services/rest/v1/vms`;
       const vmsRes = await fetch(vmsUrl, { headers });
       if (vmsRes.ok) {
         const vmsData = (await vmsRes.json()) as any;
@@ -213,11 +227,14 @@ async function collectNutanixData() {
       memoryCapacityGib = Number((totalLogicalAllocatedBytes / (1024 ** 3)).toFixed(2));
     }
 
+    const finishedAt = new Date().toISOString();
     const payload = {
       nutanix: {
         meta: {
           ok: true,
-          attemptedAt
+          attemptedAt,
+          finishedAt,
+          targetHost: runtimeConfig.host
         },
         uptime: 'Up',
         nodesCount,
@@ -240,11 +257,38 @@ async function collectNutanixData() {
     console.log(`[${new Date().toISOString()}] Nutanix metrics posted successfully.`);
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}] Error in Nutanix collector:`, err.message);
-    await reportFailure(attemptedAt, err.message);
+    await reportFailure(attemptedAt, err.message, runtimeConfig.host);
+  } finally {
+    cycleInProgress = false;
+    scheduleNextCycle(Math.max(1000, runtimeConfig.pollIntervalMs - (Date.now() - cycleStartedAt)));
   }
 }
 
-// Start polling
+function scheduleNextCycle(delayMs: number) {
+  if (nextCycleTimer) {
+    clearTimeout(nextCycleTimer);
+  }
+
+  nextCycleTimer = setTimeout(() => {
+    void collectNutanixData();
+  }, delayMs);
+}
+
+async function shutdown() {
+  if (nextCycleTimer) {
+    clearTimeout(nextCycleTimer);
+  }
+}
+
 console.log('Nutanix collector service started.');
-collectNutanixData();
-setInterval(collectNutanixData, POLL_INTERVAL);
+process.on('SIGINT', async () => {
+  await shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await shutdown();
+  process.exit(0);
+});
+
+void collectNutanixData();

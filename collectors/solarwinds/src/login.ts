@@ -2,10 +2,10 @@ import { chromium, type BrowserContext } from 'playwright';
 import fs from 'fs';
 import readline from 'readline';
 import {
-  NETWORK_PROFILE_DIR,
+  LEGACY_NETWORK_PROFILE_DIR,
+  LEGACY_SERVER_PROFILE_DIR,
   NETWORK_STORAGE_STATE_PATH,
-  PROFILE_ROOT,
-  SERVER_PROFILE_DIR,
+  prepareRuntimeStorage,
   SERVER_STORAGE_STATE_PATH
 } from './sessionPaths';
 
@@ -19,14 +19,14 @@ const LOGIN_TARGETS = [
     targetUrl: `http://${SW_HOST_SERVERS}/Orion/SummaryView.aspx?ViewID=1`,
     readySelector: 'table.NeedsZebraStripes, table.sw-custom-query-table',
     storageStatePath: SERVER_STORAGE_STATE_PATH,
-    legacyProfileDir: SERVER_PROFILE_DIR
+    legacyProfileDir: LEGACY_SERVER_PROFILE_DIR
   },
   {
     label: 'Networks',
     targetUrl: `http://${SW_HOST_NETWORKS}/Orion/SummaryView.aspx?ViewID=1`,
     readySelector: 'table.NeedsZebraStripes',
     storageStatePath: NETWORK_STORAGE_STATE_PATH,
-    legacyProfileDir: NETWORK_PROFILE_DIR
+    legacyProfileDir: LEGACY_NETWORK_PROFILE_DIR
   }
 ] as const;
 
@@ -62,7 +62,7 @@ async function bootstrapInteractiveSession(
   console.log(`Storage State: ${storageStatePath}`);
   console.log(`Opening: ${targetUrl}`);
 
-  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+  prepareRuntimeStorage();
   const browser = await chromium.launch({
     channel: 'msedge',
     headless: false
@@ -109,7 +109,7 @@ async function importLegacyProfileSession(
     throw new Error(`Legacy profile directory does not exist for ${label}: ${legacyProfileDir}`);
   }
 
-  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+  prepareRuntimeStorage();
 
   let context: BrowserContext | undefined;
   try {

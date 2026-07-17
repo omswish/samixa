@@ -1,0 +1,170 @@
+# Windows Deployment Instructions - 2026-07-15
+
+## Scope
+This document describes the current Windows deployment path for the UAIL IT Dashboard stack after the move to a single web application with two web surfaces.
+
+It covers:
+- the packaged installer artifact
+- the staged payload fallback
+- the recommended production deployment sequence
+- post-deployment validation
+
+## Produced Artifacts
+
+### Installer
+- `deployment/installer/output/utkal-it-dashboard-setup.exe`
+
+### Staged Payload
+- `deployment/staging/current`
+
+### Offline Bundle
+- `deployment/release/utkal-it-dashboard-offline-server-bundle-2026-07-17.zip`
+
+## Current Recommendation
+Use the packaged installer or offline bundle as the standard deployment path for a Windows server.
+
+Reason:
+- the installer packages the staged payload, bundled Node runtime, PM2 runtime tools, metadata, and support scripts
+- the installer writes the runtime `.env` file during setup
+- the installer validates Postgres connectivity before finishing provisioning
+- the installer can optionally create the firewall rules, bootstrap the stack, and register startup restore
+- the admin experience now lives inside the same web app on a separate port, so there is no separate desktop admin executable to ship or maintain
+
+Keep the staged payload as the fallback path for offline recovery, troubleshooting, or environments where installer-driven provisioning is not allowed by policy.
+
+## Target Runtime Topology
+- `dashboard-frontdoor-operator` listens on `0.0.0.0:21060`
+- `dashboard-frontdoor-admin` listens on `0.0.0.0:21061`
+- `dashboard-ui` listens on `127.0.0.1:3001`
+- `api-gateway` listens on `127.0.0.1:4000`
+- collectors post only to `http://127.0.0.1:4000/api/update`
+- operators browse only to `http://<server>:21060`
+- admins browse only to `http://<server>:21061`
+
+## Credentials
+Current local web credentials are:
+- operator: `operator` / `17172737`
+- admin: `admin` / `17172737`
+
+## Server Prerequisites
+- Windows Server 2019 or later
+- Microsoft Edge installed
+- local administrator access for installation and firewall changes
+- source-system connectivity available from the server for Nutanix, SolarWinds, and HSD if those collectors will be used
+
+## Option A. Installer-Based Deployment
+Run:
+- `deployment/installer/output/utkal-it-dashboard-setup.exe`
+
+The installer performs these steps:
+- copies the staged application, bundled Node runtime, runtime tools, and metadata
+- prompts for Postgres host, port, database, user, password, SSL requirement, operator port, and admin port
+- prompts for the secret-store passphrase used by the application
+- generates the installed `app\.env`
+- validates Postgres connectivity using the bundled Node runtime and installed `pg` client
+- optionally creates inbound Windows Firewall rules for the selected operator and admin ports
+- optionally bootstraps the PM2 stack immediately after install
+- optionally registers a Scheduled Task to resurrect PM2 on server startup
+
+Expected install location:
+- `C:\Program Files\UAIL\ITDashboard`
+
+Expected runtime root:
+- `C:\ProgramData\UAIL\itdash`
+
+After installer completion, validate:
+- `http://<server>:21060/login`
+- `http://<server>:21061/login`
+- PM2 services show online
+
+## Option B. Staged Payload Fallback
+Single entrypoint:
+- `deployment\deploy-windows-server.bat`
+
+Fully unattended example:
+
+```bat
+deploy-windows-server.bat -NonInteractive -PostgresHost localhost -PostgresPort 5432 -PostgresDatabase hil-dor-itdash -PostgresUser postgres -PostgresPassword sa -PostgresSecretPassphrase your-secret-passphrase -PostgresSsl false -OperatorPort 21060 -AdminPort 21061
+```
+
+## Runtime Environment File
+The installed `app\.env` must include:
+- `POSTGRES_URL`
+- `POSTGRES_SSL`
+- `POSTGRES_SECRET_PASSPHRASE`
+- `APP_AUTH_SECRET`
+- `APP_LOGIN_PASSWORD`
+- `VIEWER_SESSION_DAYS`
+- `ADMIN_SESSION_HOURS`
+- `OPERATOR_FRONTDOOR_PORT`
+- `ADMIN_FRONTDOOR_PORT`
+
+Default local login password:
+- `APP_LOGIN_PASSWORD=17172737`
+
+## Start The Stack
+
+```powershell
+cd C:\Program Files\UAIL\ITDashboard\app
+..\runtime-tools\node_modules\.bin\pm2.cmd start ecosystem.config.js --update-env
+..\runtime-tools\node_modules\.bin\pm2.cmd save
+```
+
+## Configure Firewall
+Allow inbound:
+- TCP `21060` for operators
+- TCP `21061` for admins
+
+Do not expose externally:
+- TCP `3001`
+- TCP `4000`
+
+## First Browser Validation
+Open:
+- `http://<server>:21060/login`
+- `http://<server>:21061/login`
+
+Validate:
+- operator login works on `21060`
+- operator login is rejected on `21061`
+- admin login works on `21061`
+- `/admin` loads on `21061`
+- dashboard loads on `21060`
+
+## HSD and SolarWinds Session Recovery
+Use the admin web surface on `21061`.
+
+Admin actions available there:
+- service status
+- start, stop, restart per service
+- full stack restart
+- source URL and credential configuration
+- HSD session import and reauthentication launch
+- SolarWinds session import and reauthentication launch
+
+## Validation Checklist
+Run:
+
+```powershell
+cd C:\Program Files\UAIL\ITDashboard\app
+..\runtime-tools\node_modules\.bin\pm2.cmd status
+```
+
+Expected:
+- `api-gateway` online
+- `dashboard-ui` online
+- `dashboard-frontdoor-operator` online
+- `dashboard-frontdoor-admin` online
+- `nutanix-collector` online if configured
+- `solarwinds-collector` online if configured
+- `symphony-collector` online if configured
+
+## Operational Commands
+
+```powershell
+cd C:\Program Files\UAIL\ITDashboard\app
+..\runtime-tools\node_modules\.bin\pm2.cmd status
+..\runtime-tools\node_modules\.bin\pm2.cmd logs
+..\runtime-tools\node_modules\.bin\pm2.cmd restart ecosystem.config.js --update-env
+..\runtime-tools\node_modules\.bin\pm2.cmd save
+```

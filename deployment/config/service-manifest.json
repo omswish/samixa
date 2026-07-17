@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "generatedOn": "2026-07-15",
+  "runtimeRoot": "C:\\ProgramData\\UAIL\\itdash",
+  "frontdoorPort": 21060,
+  "adminPort": 21061,
+  "services": [
+    {
+      "id": "api-gateway",
+      "displayName": "API Gateway",
+      "manager": "pm2",
+      "exposedToLan": false,
+      "listen": "127.0.0.1:4000",
+      "startupOrder": 1,
+      "healthKind": "http",
+      "healthTarget": "http://127.0.0.1:4000/api/status",
+      "restartAction": "pm2 restart api-gateway",
+      "notes": "Central ingest, websocket source, runtime config, and persistence layer."
+    },
+    {
+      "id": "dashboard-ui",
+      "displayName": "Dashboard UI",
+      "manager": "pm2",
+      "exposedToLan": false,
+      "listen": "127.0.0.1:3001",
+      "startupOrder": 2,
+      "healthKind": "http",
+      "healthTarget": "http://127.0.0.1:3001/login",
+      "restartAction": "pm2 restart dashboard-ui",
+      "notes": "Next.js viewer application behind the frontdoor."
+    },
+    {
+      "id": "dashboard-frontdoor-operator",
+      "displayName": "Operator Frontdoor",
+      "manager": "pm2",
+      "exposedToLan": true,
+      "listen": "0.0.0.0:21060",
+      "startupOrder": 3,
+      "healthKind": "http",
+      "healthTarget": "http://127.0.0.1:21060/login",
+      "restartAction": "pm2 restart dashboard-frontdoor-operator",
+      "notes": "Operator-facing wallboard entry point."
+    },
+    {
+      "id": "dashboard-frontdoor-admin",
+      "displayName": "Admin Frontdoor",
+      "manager": "pm2",
+      "exposedToLan": true,
+      "listen": "0.0.0.0:21061",
+      "startupOrder": 4,
+      "healthKind": "http",
+      "healthTarget": "http://127.0.0.1:21061/login",
+      "restartAction": "pm2 restart dashboard-frontdoor-admin",
+      "notes": "Admin web console entry point."
+    },
+    {
+      "id": "nutanix-collector",
+      "displayName": "Nutanix Collector",
+      "manager": "pm2",
+      "exposedToLan": false,
+      "listen": null,
+      "startupOrder": 5,
+      "healthKind": "logical",
+      "healthTarget": "source:nutanix",
+      "restartAction": "pm2 restart nutanix-collector",
+      "notes": "Primary truth source for HCI VM telemetry."
+    },
+    {
+      "id": "solarwinds-collector",
+      "displayName": "SolarWinds Collector",
+      "manager": "pm2",
+      "exposedToLan": false,
+      "listen": null,
+      "startupOrder": 6,
+      "healthKind": "logical",
+      "healthTarget": "source:solarwinds",
+      "restartAction": "pm2 restart solarwinds-collector",
+      "sessionWorkflow": "solarwinds",
+      "notes": "Network and on-prem server telemetry, plus Nutanix fallback path."
+    },
+    {
+      "id": "symphony-collector",
+      "displayName": "HSD Collector",
+      "manager": "pm2",
+      "exposedToLan": false,
+      "listen": null,
+      "startupOrder": 7,
+      "healthKind": "logical",
+      "healthTarget": "source:symphony",
+      "restartAction": "pm2 restart symphony-collector",
+      "sessionWorkflow": "symphony",
+      "notes": "Requires session state import/refresh when the HSD login expires."
+    }
+  ],
+  "sessionWorkflows": [
+    {
+      "id": "symphony",
+      "displayName": "HSD Session",
+      "strategy": "playwright-storage-state-import",
+      "targets": [
+        {
+          "id": "primary",
+          "label": "Primary session file",
+          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\symphony\\symphony-storage-state.json"
+        }
+      ]
+    },
+    {
+      "id": "solarwinds",
+      "displayName": "SolarWinds Session",
+      "strategy": "playwright-storage-state-import-or-login-helper",
+      "targets": [
+        {
+          "id": "servers",
+          "label": "Servers portal session",
+          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\solarwinds\\solarwinds-servers-storage-state.json"
+        },
+        {
+          "id": "networks",
+          "label": "Networks portal session",
+          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\solarwinds\\solarwinds-networks-storage-state.json"
+        }
+      ]
+    }
+  ]
+}

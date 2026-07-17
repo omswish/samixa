@@ -1,6 +1,13 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import {
+  AssetCurrentRecord,
+  AssetTelemetryRecord,
+  DashboardStateMirrorPayload,
+  NormalizedAssetsMirrorPayload,
+  mirrorDashboardStateToPostgres
+} from './postgres';
 
 type CollectorSource = 'nutanix' | 'solarwinds' | 'symphony';
 type SectionKey = 'nutanix' | 'servers' | 'networks' | 'symphony';
@@ -163,6 +170,7 @@ export interface DbSchema extends Omit<StoredDbSchema, 'sections'> {
 
 interface UpdateMeta {
   attemptedAt?: string;
+  finishedAt?: string;
   ok?: boolean;
   error?: string;
 }
@@ -546,12 +554,271 @@ function loadState(): StoredDbSchema {
   return normalizeState(JSON.parse(row.state_json));
 }
 
+function parsePercentageString(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+function mapNodeStatusToAssetStatus(status: NutanixNodeStatus): AssetStatus {
+  if (status === 'warning') {
+    return 'degraded';
+  }
+
+  if (status === 'critical' || status === 'offline') {
+    return 'down';
+  }
+
+  return 'operational';
+}
+
+function deriveClusterAssetStatus(nutanix: NutanixState): AssetStatus {
+  if (nutanix.nodes.some((node) => node.status === 'critical' || node.status === 'offline')) {
+    return 'down';
+  }
+
+  if (nutanix.nodes.some((node) => node.status === 'warning')) {
+    return 'degraded';
+  }
+
+  return 'operational';
+}
+
+function pushNumericTelemetry(
+  telemetry: AssetTelemetryRecord[],
+  assetId: string,
+  assetType: string,
+  metricName: string,
+  value: number | null,
+  unit: string | null,
+  collectedAt: string | null,
+  truthSource: string | null,
+  quality: AssetTelemetryRecord['quality']
+) {
+  if (value === null || !collectedAt || !truthSource) {
+    return;
+  }
+
+  telemetry.push({
+    assetId,
+    assetType,
+    metricName,
+    metricValueNumeric: value,
+    metricValueText: null,
+    unit,
+    collectedAt,
+    truthSource,
+    quality
+  });
+}
+
+function buildDashboardSnapshot(nextState: StoredDbSchema): DbSchema {
+  const snapshot = normalizeState(nextState);
+  const sections = {} as Record<SectionKey, SectionHealth>;
+
+  for (const key of SECTION_KEYS) {
+    sections[key] = {
+      ...snapshot.sections[key],
+      status: deriveSectionStatus(snapshot.sections[key])
+    };
+  }
+
+  const { sections: _storedSections, ...rest } = snapshot;
+  return {
+    ...rest,
+    servers: snapshot.servers.map((server) => materializeServer(server, sections)),
+    sections,
+    sources: deriveSources(sections)
+  };
+}
+
+function buildNormalizedAssets(snapshot: DbSchema, capturedAt: string): NormalizedAssetsMirrorPayload {
+  const assets: AssetCurrentRecord[] = [];
+  const telemetry: AssetTelemetryRecord[] = [];
+
+  for (const server of snapshot.servers) {
+    const truthSource = server.effectiveTelemetrySource ?? server.sourceOfTruth ?? null;
+    const sourceSectionKey: SectionKey | null =
+      truthSource === 'nutanix' ? 'nutanix' :
+      truthSource === 'solarwinds' ? 'servers' :
+      null;
+    const lastMetricAt = sourceSectionKey ? snapshot.sections[sourceSectionKey].lastSuccessAt : null;
+
+    assets.push({
+      assetId: server.id,
+      assetType: 'server',
+      displayName: server.name,
+      status: server.status,
+      statusOrigin: server.usingFallback ? 'collector_fallback' : 'asset',
+      truthSource,
+      fallbackSource: server.usingFallback ? 'solarwinds' : null,
+      lastMetricAt,
+      lastStatusChangeAt: null,
+      lastSyncedAt: lastMetricAt,
+      stateJson: JSON.stringify(server),
+      updatedAt: capturedAt
+    });
+
+    pushNumericTelemetry(telemetry, server.id, 'server', 'cpu_usage', server.cpu, 'percent', lastMetricAt, truthSource, 'observed');
+    pushNumericTelemetry(telemetry, server.id, 'server', 'memory_usage', server.memory, 'percent', lastMetricAt, truthSource, 'observed');
+    pushNumericTelemetry(telemetry, server.id, 'server', 'disk_usage', parsePercentageString(server.disk), 'percent', lastMetricAt, truthSource, 'observed');
+    pushNumericTelemetry(telemetry, server.id, 'server', 'availability_today', server.availabilityToday, 'percent', lastMetricAt, truthSource, 'observed');
+  }
+
+  for (const network of snapshot.networks) {
+    const lastMetricAt = snapshot.sections.networks.lastSuccessAt;
+    assets.push({
+      assetId: network.id,
+      assetType: 'network_link',
+      displayName: network.displayName ?? network.provider,
+      status: network.status,
+      statusOrigin: 'asset',
+      truthSource: 'solarwinds',
+      fallbackSource: null,
+      lastMetricAt,
+      lastStatusChangeAt: null,
+      lastSyncedAt: lastMetricAt,
+      stateJson: JSON.stringify(network),
+      updatedAt: capturedAt
+    });
+
+    pushNumericTelemetry(telemetry, network.id, 'network_link', 'utilization', network.utilization, 'percent', lastMetricAt, 'solarwinds', 'observed');
+    pushNumericTelemetry(telemetry, network.id, 'network_link', 'realtime_tx_utilization', network.realtimeTransmitUtilization ?? null, 'percent', lastMetricAt, 'solarwinds', 'observed');
+    pushNumericTelemetry(telemetry, network.id, 'network_link', 'realtime_rx_utilization', network.realtimeReceiveUtilization ?? null, 'percent', lastMetricAt, 'solarwinds', 'observed');
+    pushNumericTelemetry(telemetry, network.id, 'network_link', 'daily_tx_utilization', network.dailyTransmitUtilization ?? null, 'percent', lastMetricAt, 'solarwinds', 'observed');
+    pushNumericTelemetry(telemetry, network.id, 'network_link', 'daily_rx_utilization', network.dailyReceiveUtilization ?? null, 'percent', lastMetricAt, 'solarwinds', 'observed');
+    pushNumericTelemetry(telemetry, network.id, 'network_link', 'current_tx_traffic', network.currentTrafficTransmitMbps ?? null, 'Mbps', lastMetricAt, 'solarwinds', 'observed');
+    pushNumericTelemetry(telemetry, network.id, 'network_link', 'current_rx_traffic', network.currentTrafficReceiveMbps ?? null, 'Mbps', lastMetricAt, 'solarwinds', 'observed');
+  }
+
+  const nutanixLastMetricAt = snapshot.sections.nutanix.lastSuccessAt;
+  assets.push({
+    assetId: 'nutanix-cluster',
+    assetType: 'hci_cluster',
+    displayName: 'UAIL HCI Cluster',
+    status: deriveClusterAssetStatus(snapshot.nutanix),
+    statusOrigin: 'asset',
+    truthSource: 'nutanix',
+    fallbackSource: null,
+    lastMetricAt: nutanixLastMetricAt,
+    lastStatusChangeAt: null,
+    lastSyncedAt: nutanixLastMetricAt,
+    stateJson: JSON.stringify(snapshot.nutanix),
+    updatedAt: capturedAt
+  });
+
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'storage_usage', snapshot.nutanix.storageUsage, 'percent', nutanixLastMetricAt, 'nutanix', 'observed');
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'physical_memory_usage', snapshot.nutanix.physicalMemoryUsage, 'percent', nutanixLastMetricAt, 'nutanix', 'observed');
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'logical_memory_usage', snapshot.nutanix.logicalMemoryUsage, 'percent', nutanixLastMetricAt, 'nutanix', 'observed');
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'storage_used_tib', snapshot.nutanix.storageUsedTib, 'TiB', nutanixLastMetricAt, 'nutanix', 'observed');
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'storage_capacity_tib', snapshot.nutanix.storageCapacityTib, 'TiB', nutanixLastMetricAt, 'nutanix', 'observed');
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'memory_used_gib', snapshot.nutanix.memoryUsedGib, 'GiB', nutanixLastMetricAt, 'nutanix', 'observed');
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'memory_capacity_gib', snapshot.nutanix.memoryCapacityGib, 'GiB', nutanixLastMetricAt, 'nutanix', 'observed');
+  pushNumericTelemetry(telemetry, 'nutanix-cluster', 'hci_cluster', 'nodes_count', snapshot.nutanix.nodesCount, 'count', nutanixLastMetricAt, 'nutanix', 'observed');
+
+  for (const node of snapshot.nutanix.nodes) {
+    const nodeId = `hci-node-${cleanHostname(node.name)}`;
+    assets.push({
+      assetId: nodeId,
+      assetType: 'hci_node',
+      displayName: node.name,
+      status: mapNodeStatusToAssetStatus(node.status),
+      statusOrigin: 'asset',
+      truthSource: 'nutanix',
+      fallbackSource: null,
+      lastMetricAt: nutanixLastMetricAt,
+      lastStatusChangeAt: null,
+      lastSyncedAt: nutanixLastMetricAt,
+      stateJson: JSON.stringify(node),
+      updatedAt: capturedAt
+    });
+  }
+
+  const symphonyLastMetricAt = snapshot.sections.symphony.lastSuccessAt;
+  const serviceDeskMetrics: Array<{
+    assetId: string;
+    displayName: string;
+    metricName: string;
+    value: number | null;
+    unit: string;
+  }> = [
+    { assetId: 'symphony-open-incidents', displayName: 'Open Incidents', metricName: 'count', value: snapshot.symphony.openIncidents, unit: 'count' },
+    { assetId: 'symphony-service-requests', displayName: 'Service Requests', metricName: 'count', value: snapshot.symphony.serviceRequests, unit: 'count' },
+    { assetId: 'symphony-work-orders', displayName: 'Work Orders', metricName: 'count', value: snapshot.symphony.workOrders, unit: 'count' },
+    { assetId: 'symphony-change-records', displayName: 'Change Records', metricName: 'count', value: snapshot.symphony.changeRecords, unit: 'count' },
+    { assetId: 'symphony-priority1', displayName: 'Priority 1 Incidents', metricName: 'count', value: snapshot.symphony.priority1Incidents, unit: 'count' },
+    { assetId: 'symphony-priority2', displayName: 'Priority 2 Incidents', metricName: 'count', value: snapshot.symphony.priority2Incidents, unit: 'count' },
+    { assetId: 'symphony-onboarding', displayName: 'Onboarding Requests', metricName: 'count', value: snapshot.symphony.onboardingRequests, unit: 'count' },
+    { assetId: 'symphony-security', displayName: 'Security Requests', metricName: 'count', value: snapshot.symphony.securityRequests, unit: 'count' },
+    { assetId: 'symphony-incidents-response-sla', displayName: 'Incident Response SLA', metricName: 'percent', value: snapshot.symphony.incidentsResponseSla, unit: 'percent' },
+    { assetId: 'symphony-incidents-resolution-sla', displayName: 'Incident Resolution SLA', metricName: 'percent', value: snapshot.symphony.incidentsResolutionSla, unit: 'percent' },
+    { assetId: 'symphony-requests-response-sla', displayName: 'Request Response SLA', metricName: 'percent', value: snapshot.symphony.requestsResponseSla, unit: 'percent' },
+    { assetId: 'symphony-requests-resolution-sla', displayName: 'Request Resolution SLA', metricName: 'percent', value: snapshot.symphony.requestsResolutionSla, unit: 'percent' }
+  ];
+
+  for (const metric of serviceDeskMetrics) {
+    assets.push({
+      assetId: metric.assetId,
+      assetType: 'service_desk_metric',
+      displayName: metric.displayName,
+      status: null,
+      statusOrigin: 'derived',
+      truthSource: 'symphony',
+      fallbackSource: null,
+      lastMetricAt: symphonyLastMetricAt,
+      lastStatusChangeAt: null,
+      lastSyncedAt: symphonyLastMetricAt,
+      stateJson: JSON.stringify({ value: metric.value, unit: metric.unit }),
+      updatedAt: capturedAt
+    });
+
+    pushNumericTelemetry(
+      telemetry,
+      metric.assetId,
+      'service_desk_metric',
+      metric.metricName,
+      metric.value,
+      metric.unit,
+      symphonyLastMetricAt,
+      'symphony',
+      'observed'
+    );
+  }
+
+  return { assets, telemetry };
+}
+
+function buildDashboardStateMirrorPayload(nextState: StoredDbSchema): DashboardStateMirrorPayload {
+  const capturedAt = new Date().toISOString();
+  const snapshot = buildDashboardSnapshot(nextState);
+  return {
+    stateKey: STATE_KEY,
+    stateJson: JSON.stringify(nextState),
+    capturedAt,
+    sections: SECTION_KEYS.map((key) => ({
+      sectionKey: snapshot.sections[key].key,
+      sourceKey: snapshot.sections[key].source,
+      status: snapshot.sections[key].status,
+      lastAttemptAt: snapshot.sections[key].lastAttemptAt,
+      lastSuccessAt: snapshot.sections[key].lastSuccessAt,
+      errorMessage: snapshot.sections[key].lastError
+    })),
+    normalizedAssets: buildNormalizedAssets(snapshot, capturedAt)
+  };
+}
+
 function saveState(nextState: StoredDbSchema): void {
+  const mirrorPayload = buildDashboardStateMirrorPayload(nextState);
   upsertStateStmt.run({
     state_key: STATE_KEY,
     state_json: JSON.stringify(nextState),
-    updated_at: new Date().toISOString()
+    updated_at: mirrorPayload.capturedAt
   });
+
+  mirrorDashboardStateToPostgres(mirrorPayload);
 }
 
 function persist(): void {
@@ -787,27 +1054,15 @@ function materializeServer(server: ServerNode, sections: Record<SectionKey, Sect
 }
 
 function currentTimestamp(meta?: UpdateMeta): string {
-  return meta?.attemptedAt ?? new Date().toISOString();
+  return meta?.finishedAt ?? meta?.attemptedAt ?? new Date().toISOString();
 }
 
 export function getDashboardState(): DbSchema {
-  const snapshot = normalizeState(state);
-  const sections = {} as Record<SectionKey, SectionHealth>;
+  return buildDashboardSnapshot(state);
+}
 
-  for (const key of SECTION_KEYS) {
-    sections[key] = {
-      ...snapshot.sections[key],
-      status: deriveSectionStatus(snapshot.sections[key])
-    };
-  }
-
-  const { sections: _storedSections, ...rest } = snapshot;
-  return {
-    ...rest,
-    servers: snapshot.servers.map((server) => materializeServer(server, sections)),
-    sections,
-    sources: deriveSources(sections)
-  };
+export function getDashboardStateMirrorPayload(): DashboardStateMirrorPayload {
+  return buildDashboardStateMirrorPayload(normalizeState(state));
 }
 
 export function updateNutanix(data: {

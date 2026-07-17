@@ -2,17 +2,15 @@ import { chromium, type Browser, type BrowserContext, type BrowserContextOptions
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import { DEBUG_ROOT, PROFILE_ROOT, STORAGE_STATE_PATH } from './sessionPaths';
+import { DEBUG_ROOT, prepareRuntimeStorage, STORAGE_STATE_PATH } from './sessionPaths';
+import { loadSymphonyRuntimeConfig } from './runtimeConfig';
+import { loadSymphonyRuntimeSecrets } from './runtimeSecrets';
 
 // Load env from workspace root
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
 const API_URL = process.env.API_URL || 'http://localhost:4000/api/update';
-const SYM_USER = process.env.SYM_USER;
-const SYM_PASS = process.env.SYM_PASS;
-const SYM_URL = process.env.SYM_URL || 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
 const SYM_DEBUG = /^(1|true)$/i.test(process.env.SYM_DEBUG || '');
-const POLL_INTERVAL = 60000; // 60 seconds (tickets poll less frequently)
 const NAVIGATION_TIMEOUT = 30000;
 const QUEUE_NAVIGATION_TIMEOUT = 45000;
 const QUEUE_READY_TIMEOUT = 45000;
@@ -56,14 +54,16 @@ async function postUpdate(payload: object) {
   }
 }
 
-async function reportFailure(attemptedAt: string, error: string) {
+async function reportFailure(attemptedAt: string, error: string, targetHost: string | null) {
   try {
     await postUpdate({
       symphony: {
         meta: {
           ok: false,
           attemptedAt,
-          error
+          finishedAt: new Date().toISOString(),
+          error,
+          targetHost
         }
       }
     });
@@ -122,7 +122,7 @@ async function closeBrowser() {
 }
 
 function ensureRuntimeDirs() {
-  fs.mkdirSync(PROFILE_ROOT, { recursive: true });
+  prepareRuntimeStorage();
   if (SYM_DEBUG) {
     fs.mkdirSync(DEBUG_ROOT, { recursive: true });
   }
@@ -180,20 +180,20 @@ async function clickSubmit(page: Page) {
   await page.waitForTimeout(1500);
 }
 
-async function attemptCredentialLogin(page: Page) {
-  if (!SYM_USER || !SYM_PASS) {
+async function attemptCredentialLogin(page: Page, username: string, password: string) {
+  if (!username || !password) {
     throw new Error(buildBootstrapRequiredMessage('Symphony login requires credentials or a saved session.'));
   }
 
   const usernameInput = page.locator(USERNAME_SELECTOR).first();
   if (await usernameInput.isVisible().catch(() => false)) {
-    await usernameInput.fill(SYM_USER);
+    await usernameInput.fill(username);
     await clickSubmit(page);
   }
 
   const passwordInput = page.locator(PASSWORD_SELECTOR).first();
   await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
-  await passwordInput.fill(SYM_PASS);
+  await passwordInput.fill(password);
   await clickSubmit(page);
 
   const bodyText = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
@@ -239,17 +239,17 @@ async function assertSessionIsAuthenticated(page: Page, contextLabel: string) {
   }
 }
 
-async function ensureAuthenticatedPage(): Promise<{ context: BrowserContext; page: Page }> {
+async function ensureAuthenticatedPage(targetUrl: string, credentials: { username: string; password: string }): Promise<{ context: BrowserContext; page: Page }> {
   const { context, hasSavedSession } = await createContext();
   const page = await context.newPage();
 
   try {
-    console.log(`Navigating to Symphony HSD at ${SYM_URL}`);
-    await page.goto(SYM_URL, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    console.log(`Navigating to Symphony HSD at ${targetUrl}`);
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
 
     if (await isLoginPromptVisible(page)) {
       console.log('Symphony login prompt detected. Attempting authenticated session setup...');
-      await attemptCredentialLogin(page);
+      await attemptCredentialLogin(page, credentials.username, credentials.password);
     }
 
     if (await isLoginPromptVisible(page)) {
@@ -260,7 +260,7 @@ async function ensureAuthenticatedPage(): Promise<{ context: BrowserContext; pag
     }
 
     if (!/SDE_Dashboard|Summit|MDLIncidentMgmt/i.test(page.url())) {
-      await page.goto(SYM_URL, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
     }
 
     await dismissDuplicateLoginPopup(page);
@@ -516,7 +516,7 @@ async function parseSla(page: Page, renderTargetId: string): Promise<number | nu
   return Number(((num / den) * 100).toFixed(2));
 }
 
-async function scrapeSymphonyPage(page: Page, attemptedAt: string) {
+async function scrapeSymphonyPage(page: Page, attemptedAt: string, targetHost: string | null) {
   const dashboardSignals = await page.locator('svg, table, [ng-bind]').count();
   if (dashboardSignals === 0) {
     throw new Error('Symphony dashboard did not render expected data elements');
@@ -587,7 +587,9 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string) {
   return {
     meta: {
       ok: true,
-      attemptedAt
+      attemptedAt,
+      finishedAt: new Date().toISOString(),
+      targetHost
     },
     openIncidents,
     openIncidentsBreakdown,
@@ -606,7 +608,12 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string) {
   };
 }
 
-async function collectSymphonyData(attemptedAt: string) {
+async function collectSymphonyData(
+  attemptedAt: string,
+  targetUrl: string,
+  targetHost: string | null,
+  credentials: { username: string; password: string }
+) {
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= MAX_SCRAPE_ATTEMPTS; attempt += 1) {
@@ -614,10 +621,10 @@ async function collectSymphonyData(attemptedAt: string) {
     let page: Page | undefined;
 
     try {
-      const authenticated = await ensureAuthenticatedPage();
+      const authenticated = await ensureAuthenticatedPage(targetUrl, credentials);
       context = authenticated.context;
       page = authenticated.page;
-      return await scrapeSymphonyPage(page, attemptedAt);
+      return await scrapeSymphonyPage(page, attemptedAt, targetHost);
     } catch (error) {
       lastError = error;
       const message = getErrorMessage(error);
@@ -654,19 +661,34 @@ async function scrapeSymphony() {
   const cycleStartedAt = Date.now();
   const attemptedAt = new Date().toISOString();
   console.log(`[${attemptedAt}] Starting Symphony HSD scraping session...`);
+  const [runtimeConfig, runtimeSecrets] = await Promise.all([
+    loadSymphonyRuntimeConfig(API_URL),
+    loadSymphonyRuntimeSecrets(API_URL)
+  ]);
+  const targetHost = (() => {
+    try {
+      return new URL(runtimeConfig.targetUrl).host;
+    } catch {
+      return null;
+    }
+  })();
 
   try {
-    const symphonyData = await collectSymphonyData(attemptedAt);
+    const credentials = {
+      username: runtimeSecrets.username || '',
+      password: runtimeSecrets.password || ''
+    };
+    const symphonyData = await collectSymphonyData(attemptedAt, runtimeConfig.targetUrl, targetHost, credentials);
     console.log('Symphony Data Scraped Successfully:', JSON.stringify(symphonyData, null, 2));
     await postUpdate({ symphony: symphonyData });
     console.log(`[${new Date().toISOString()}] Symphony metrics posted successfully.`);
   } catch (err: any) {
     console.error(`[${new Date().toISOString()}] Error in Symphony scraper:`, err.message);
-    await reportFailure(attemptedAt, err.message);
+    await reportFailure(attemptedAt, err.message, targetHost);
   } finally {
     cycleInProgress = false;
     const elapsed = Date.now() - cycleStartedAt;
-    scheduleNextCycle(Math.max(1000, POLL_INTERVAL - elapsed));
+    scheduleNextCycle(Math.max(1000, runtimeConfig.pollIntervalMs - elapsed));
   }
 }
 

@@ -10,9 +10,11 @@ import {
   CheckCircle2,
   Clock,
   Layers,
+  LogOut,
   Power,
   RefreshCw,
   Server,
+  Settings,
   SlidersHorizontal,
   Ticket
 } from 'lucide-react';
@@ -170,6 +172,14 @@ interface DashboardState {
     symphony: SourceHealth;
   };
   lastUpdate: string;
+}
+
+interface DashboardSession {
+  email: string;
+  role: 'viewer' | 'admin';
+  displayName: string | null;
+  isServerLocal: boolean;
+  expiresAt: string;
 }
 
 type SectionFilterKey = 'hci' | 'hsd' | 'network' | 'servers';
@@ -2574,6 +2584,8 @@ function ServerNodeCard({ server }: { server: ServerNode }) {
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardState | null>(null);
+  const [session, setSession] = useState<DashboardSession | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
   const [wsConnected, setWsConnected] = useState(false);
   const [time, setTime] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -2593,12 +2605,100 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadSession = async () => {
+      try {
+        const response = await fetch('/api/auth/session', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Session fetch failed with ${response.status}`);
+        }
+
+        const payload = await response.json();
+        if (!cancelled) {
+          setSession(payload.session);
+        }
+      } catch {
+        if (!cancelled) {
+          window.location.replace('/login');
+        }
+      } finally {
+        if (!cancelled) {
+          setSessionLoading(false);
+        }
+      }
+    };
+
+    void loadSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    let disposed = false;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+    const stopPolling = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch('/api/status', { cache: 'no-store' });
+        if (response.status === 401) {
+          window.location.replace('/login');
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Status fetch failed with ${response.status}`);
+        }
+
+        const nextState = await response.json();
+        if (!disposed) {
+          setData(nextState);
+        }
+      } catch (err) {
+        console.error('Failed to fetch dashboard status:', err);
+      }
+    };
+
+    const startPolling = () => {
+      if (pollInterval) {
+        return;
+      }
+
+      void fetchStatus();
+      pollInterval = setInterval(() => {
+        void fetchStatus();
+      }, 5000);
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimeout) {
+        return;
+      }
+
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = null;
+        connectWS();
+      }, 5000);
+    };
+
     const connectWS = () => {
       const configuredApiHost = process.env.NEXT_PUBLIC_API_URL;
-      const apiHost = configuredApiHost && !configuredApiHost.includes('localhost')
-        ? configuredApiHost
-        : `${window.location.protocol}//${window.location.hostname}:4000`;
-      const wsUrl = apiHost.replace(/^http/, 'ws');
+      const wsUrl = configuredApiHost && !configuredApiHost.includes('localhost')
+        ? configuredApiHost.replace(/^http/, 'ws')
+        : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
 
       console.log(`Connecting to WebSocket gateway at ${wsUrl}`);
       const ws = new WebSocket(wsUrl);
@@ -2607,6 +2707,7 @@ export default function Dashboard() {
       ws.onopen = () => {
         console.log('Connected to dashboard API gateway');
         setWsConnected(true);
+        stopPolling();
       };
 
       ws.onmessage = (event) => {
@@ -2623,7 +2724,8 @@ export default function Dashboard() {
       ws.onclose = () => {
         console.log('Disconnected from gateway. Retrying in 5 seconds...');
         setWsConnected(false);
-        setTimeout(connectWS, 5000);
+        startPolling();
+        scheduleReconnect();
       };
 
       ws.onerror = (err) => {
@@ -2632,13 +2734,29 @@ export default function Dashboard() {
       };
     };
 
+    void fetchStatus();
     connectWS();
     return () => {
+      disposed = true;
+      stopPolling();
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
       if (wsRef.current) {
         wsRef.current.close();
       }
     };
-  }, []);
+  }, [session]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST'
+      });
+    } finally {
+      window.location.replace('/login');
+    }
+  };
 
   useEffect(() => {
     if (!filtersOpen) {
@@ -2655,6 +2773,15 @@ export default function Dashboard() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [filtersOpen]);
 
+  if (sessionLoading || !session) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', justifyContent: 'center', alignItems: 'center', gap: '16px' }}>
+        <RefreshCw className="animate-spin" size={32} style={{ color: 'var(--primary)' }} />
+        <p style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>Validating dashboard access...</p>
+      </div>
+    );
+  }
+
   if (!data) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', justifyContent: 'center', alignItems: 'center', gap: '16px' }}>
@@ -2665,6 +2792,9 @@ export default function Dashboard() {
   }
 
   const overallSystemStatus = getSystemStatusText(data);
+  const showHsdSessionImport = session.role === 'admin'
+    && !!data.sections.symphony.lastError
+    && /session expired|authentication|login|unauthorized|forbidden|authenticated session/i.test(data.sections.symphony.lastError);
   const filteredServers = data.servers.filter((server) => {
     const visual = getServerVisualState(server);
     return (
@@ -2819,6 +2949,13 @@ export default function Dashboard() {
 
   const resetFilters = () => setFilters(createDefaultFilters());
   const applyIssuesOnly = () => setFilters(createIssuesOnlyFilters());
+  const handleOpenAdminSurface = () => {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.port = '21061';
+    nextUrl.pathname = '/';
+    nextUrl.search = '';
+    window.location.assign(nextUrl.toString());
+  };
 
   return (
     <>
@@ -2847,6 +2984,29 @@ export default function Dashboard() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '0 0 auto' }}>
+          {session.role === 'admin' ? (
+            <button
+              type="button"
+              onClick={handleOpenAdminSurface}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '7px 12px',
+                borderRadius: '999px',
+                border: '1px solid rgba(141,110,99,0.14)',
+                background: 'rgba(255,255,255,0.52)',
+                color: 'var(--text-primary)',
+                fontSize: '0.72rem',
+                fontWeight: 800,
+                letterSpacing: '0.06em',
+                cursor: 'pointer'
+              }}
+            >
+              <Settings size={15} />
+              ADMIN
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => setFiltersOpen(true)}
@@ -2871,6 +3031,13 @@ export default function Dashboard() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: 'var(--wall-header-clock-size)', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
             <Clock size={16} style={{ color: 'var(--primary)' }} />
             <span>{time}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', color: 'var(--text-primary)' }}>
+            <span style={{ fontSize: '0.74rem', fontWeight: 800, letterSpacing: '0.06em' }}>{session.role === 'admin' ? 'ADMIN' : 'OPERATOR'}</span>
+            <span style={{ fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.displayName || session.email}</span>
+            <button type="button" onClick={() => void handleLogout()} style={{ border: 0, background: 'transparent', color: 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
       </header>
@@ -2973,7 +3140,32 @@ export default function Dashboard() {
                   <div style={{ fontSize: 'var(--wall-subtitle-size)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>hsd.adityabirla.com</div>
                 </div>
               </div>
-              <SectionHealthMeta health={data.sections.symphony} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {showHsdSessionImport ? (
+                  <button
+                    type="button"
+                    onClick={handleOpenAdminSurface}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '7px',
+                      padding: '8px 11px',
+                      borderRadius: '999px',
+                      border: '1px solid rgba(21,101,192,0.18)',
+                      background: 'rgba(21,101,192,0.08)',
+                      color: '#1565c0',
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      letterSpacing: '0.06em',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <Settings size={14} />
+                    IMPORT SESSION
+                  </button>
+                ) : null}
+                <SectionHealthMeta health={data.sections.symphony} />
+              </div>
             </div>
 
             <div className="hsd-modern-grid">
