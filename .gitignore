@@ -1,6 +1,8 @@
 node_modules/
 .next/
 .env
+.agents/
+.codex-artifacts/
 edge-profile/
 collectors/symphony/edge-profile/
 collectors/solarwinds/edge-profile/
@@ -17,6 +19,9 @@ dist/
 build/
 .DS_Store
 itdash.db
+
+!docs/assets/screenshots/
+!docs/assets/screenshots/*.png
 
 # Deployment build outputs
 deployment/release/
