@@ -22,6 +22,7 @@ itdash.db
 
 !docs/assets/screenshots/
 !docs/assets/screenshots/*.png
+!docs/executive-summary-pack.html
 
 # Deployment build outputs
 deployment/release/
