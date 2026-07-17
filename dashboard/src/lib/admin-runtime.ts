@@ -186,18 +186,18 @@ function getBundledNodeCandidates() {
 
 function getPm2ExecutableCandidates() {
   const projectRoot = getProjectRoot();
-  const localBinName = process.platform === 'win32' ? 'pm2.cmd' : 'pm2';
+  const appData = process.env.APPDATA;
 
   return [
-    localBinName,
-    path.join(projectRoot, 'node_modules', '.bin', localBinName),
-    path.join(projectRoot, 'runtime-tools', 'node_modules', '.bin', localBinName),
-    path.join(projectRoot, 'runtime', 'node', 'node_modules', 'pm2', 'bin', 'pm2')
-  ];
+    path.join(projectRoot, 'node_modules', 'pm2', 'bin', 'pm2'),
+    path.join(projectRoot, 'runtime-tools', 'node_modules', 'pm2', 'bin', 'pm2'),
+    path.join(projectRoot, 'runtime', 'node', 'node_modules', 'pm2', 'bin', 'pm2'),
+    appData ? path.join(appData, 'npm', 'node_modules', 'pm2', 'bin', 'pm2') : null
+  ].filter((candidate): candidate is string => Boolean(candidate));
 }
 
 function fileLooksUsable(candidate: string) {
-  if (candidate === 'pm2.cmd' || candidate === 'pm2' || candidate === 'node') {
+  if (candidate === 'node') {
     return true;
   }
 
@@ -205,22 +205,25 @@ function fileLooksUsable(candidate: string) {
 }
 
 async function runPm2(args: string[]) {
-  const candidates = getPm2ExecutableCandidates().filter(fileLooksUsable);
+  const scriptCandidates = getPm2ExecutableCandidates().filter(fileLooksUsable);
+  const nodeCandidates = getBundledNodeCandidates().filter(fileLooksUsable);
   let lastError: Error | null = null;
 
-  for (const candidate of candidates) {
-    try {
-      return await execFileAsync(candidate, args, {
-        cwd: getProjectRoot(),
-        windowsHide: true,
-        maxBuffer: 5 * 1024 * 1024
-      });
-    } catch (error: any) {
-      lastError = error;
+  for (const scriptCandidate of scriptCandidates) {
+    for (const nodeCandidate of nodeCandidates) {
+      try {
+        return await execFileAsync(nodeCandidate, [scriptCandidate, ...args], {
+          cwd: getProjectRoot(),
+          windowsHide: true,
+          maxBuffer: 5 * 1024 * 1024
+        });
+      } catch (error: any) {
+        lastError = error;
+      }
     }
   }
 
-  throw lastError ?? new Error('Unable to locate a usable PM2 executable.');
+  throw lastError ?? new Error('Unable to locate a usable PM2 runtime.');
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
