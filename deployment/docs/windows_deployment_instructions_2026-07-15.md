@@ -72,6 +72,11 @@ Expected install location:
 Expected runtime root:
 - `C:\ProgramData\UAIL\itdash`
 
+Session/runtime paths used by the deployed HSD flow:
+- HSD storage-state JSON: `C:\ProgramData\UAIL\itdash\sessions\symphony\symphony-storage-state.json`
+- HSD interactive Edge profile: `C:\ProgramData\UAIL\itdash\sessions\symphony\interactive-edge-profile`
+- HSD helper launcher scripts: `C:\ProgramData\UAIL\itdash\admin\reauth`
+
 After installer completion, validate:
 - `http://<server>:21060/login`
 - `http://<server>:21061/login`
@@ -139,8 +144,34 @@ Admin actions available there:
 - start, stop, restart per service
 - full stack restart
 - source URL and credential configuration
-- HSD session import and reauthentication launch
+- HSD session import
+- HSD live session validation against the actual HSD portal
+- HSD interactive reauthentication launch on the server host
+- HSD legacy-profile import launch on the server host
 - SolarWinds session import and reauthentication launch
+
+Important behavior:
+- the Sessions page does not treat "file exists" as authenticated
+- HSD and SolarWinds session badges are based on a live portal probe
+- the reauthentication and legacy-import buttons are shown only for a server-local admin session
+
+### HSD Interactive Reauthentication
+- Click `Launch Reauth on Server` from the HSD session card.
+- A PowerShell helper opens on the Windows server and launches the interactive Edge-based HSD login flow.
+- Complete Microsoft / HSD login in that Edge window.
+- Wait until the HSD dashboard is fully visible.
+- Return to the helper and confirm when prompted so the refreshed storage-state JSON is written back to:
+  - `C:\ProgramData\UAIL\itdash\sessions\symphony\symphony-storage-state.json`
+
+### HSD Legacy Profile Import
+- Use this only when an older authenticated Symphony Edge profile already exists and the normal interactive path is not desirable.
+- Click `Import Legacy HSD Profile` from the HSD session card.
+- The helper runs:
+  - `npm run login --workspace collectors/symphony -- --import-legacy-profile`
+- The legacy profile expected by the deployed build must exist at:
+  - `C:\Program Files\UAIL\ITDashboard\app\collectors\edge-profile`
+- The helper exports that legacy authenticated browser state into the active storage-state JSON under `C:\ProgramData\UAIL\itdash\sessions\symphony`.
+- If the legacy profile is missing or locked by another process, the helper will fail explicitly.
 
 ## Validation Checklist
 Run:

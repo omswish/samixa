@@ -37,6 +37,8 @@
 - `health:collect`
 - `sessions:import`
 - `sessions:status`
+- `sessions:launchReauth`
+- `sessions:launchLegacyImport`
 - `config:load`
 - `config:save`
 - `logs:tail`
@@ -46,3 +48,5 @@
 - no anonymous browser access
 - no service-control actions in the viewer dashboard
 - session imports must be limited to admin role
+- server-local HSD reauth and legacy-profile import must be limited to admin role
+- session status must reflect live portal validation, not only storage-state file presence

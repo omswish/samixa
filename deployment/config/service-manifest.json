@@ -89,19 +89,29 @@
       "healthTarget": "source:symphony",
       "restartAction": "pm2 restart symphony-collector",
       "sessionWorkflow": "symphony",
-      "notes": "Requires session state import/refresh when the HSD login expires."
+      "notes": "Uses live-validated browser session state and supports server-local reauth or legacy-profile import when the HSD login expires."
     }
   ],
   "sessionWorkflows": [
     {
       "id": "symphony",
       "displayName": "HSD Session",
-      "strategy": "playwright-storage-state-import",
+      "strategy": "playwright-storage-state-import-live-validated-with-server-local-reauth",
       "targets": [
         {
           "id": "primary",
           "label": "Primary session file",
           "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\symphony\\symphony-storage-state.json"
+        },
+        {
+          "id": "interactive-profile",
+          "label": "Interactive Edge profile",
+          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\symphony\\interactive-edge-profile"
+        },
+        {
+          "id": "helper-root",
+          "label": "Reauth helper scripts",
+          "path": "C:\\ProgramData\\UAIL\\itdash\\admin\\reauth"
         }
       ]
     },

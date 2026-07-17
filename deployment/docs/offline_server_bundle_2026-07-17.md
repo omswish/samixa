@@ -14,6 +14,13 @@ It includes:
 There is no separate admin desktop application in this bundle.
 Admin operations are done through the web admin surface on port `21061`.
 
+Current session-recovery behavior in the bundled app:
+- the admin Sessions page validates saved HSD and SolarWinds browser sessions against the live portals
+- HSD recovery exposes both:
+  - a server-local interactive reauthentication helper
+  - a separate legacy-profile import helper
+- helper launcher scripts are written under `C:\ProgramData\UAIL\itdash\admin\reauth`
+
 ## Primary Entry Point
 Run as administrator:
 

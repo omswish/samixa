@@ -30,3 +30,8 @@ Primary deployment model:
 4. browse to:
    - `http://<server>:21060/login`
    - `http://<server>:21061/login`
+
+Operational note:
+- the admin surface now validates saved HSD and SolarWinds browser sessions against the live portals
+- HSD reauthentication is a server-local action that opens an interactive Edge/PowerShell helper on the Windows host
+- HSD also exposes an explicit legacy-profile import helper for recovery cases where an older authenticated Edge profile must be migrated into storage-state JSON
