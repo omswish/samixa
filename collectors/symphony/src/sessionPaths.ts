@@ -11,6 +11,7 @@ export const DEBUG_ROOT = path.join(DEFAULT_RUNTIME_ROOT, 'debug', 'symphony');
 export const STORAGE_STATE_PATH = path.join(PROFILE_ROOT, 'symphony-storage-state.json');
 export const INTERACTIVE_PROFILE_DIR = path.join(PROFILE_ROOT, 'interactive-edge-profile');
 export const LEGACY_PROFILE_DIR = path.join(__dirname, '../../edge-profile');
+export const COLLECTOR_LOCAL_PROFILE_DIR = path.join(__dirname, '../edge-profile');
 export const LEGACY_STORAGE_STATE_PATH = path.join(LEGACY_RUNTIME_ROOT, 'symphony-storage-state.json');
 
 let prepared = false;
@@ -29,4 +30,50 @@ export function prepareRuntimeStorage() {
   }
 
   prepared = true;
+}
+
+function directoryLooksPopulated(targetPath: string) {
+  if (!fs.existsSync(targetPath)) {
+    return false;
+  }
+
+  try {
+    return fs.readdirSync(targetPath).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function getImportProfileCandidates() {
+  const configuredPath = process.env.SYM_LEGACY_PROFILE_DIR?.trim();
+  const candidates = [
+    configuredPath
+      ? {
+          label: 'Configured legacy profile directory',
+          path: path.resolve(configuredPath)
+        }
+      : null,
+    {
+      label: 'Legacy shared collector profile directory',
+      path: LEGACY_PROFILE_DIR
+    },
+    {
+      label: 'Legacy Symphony-local profile directory',
+      path: COLLECTOR_LOCAL_PROFILE_DIR
+    },
+    {
+      label: 'Current interactive Edge profile directory',
+      path: INTERACTIVE_PROFILE_DIR
+    }
+  ].filter((candidate): candidate is { label: string; path: string } => Boolean(candidate));
+
+  return candidates.map((candidate) => ({
+    ...candidate,
+    exists: fs.existsSync(candidate.path),
+    populated: directoryLooksPopulated(candidate.path)
+  }));
+}
+
+export function resolveImportProfileCandidate() {
+  return getImportProfileCandidates().find((candidate) => candidate.exists && candidate.populated) ?? null;
 }

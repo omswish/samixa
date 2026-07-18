@@ -2,9 +2,12 @@ import { chromium, type BrowserContext, type Page } from 'playwright';
 import fs from 'fs';
 import readline from 'readline';
 import {
+  COLLECTOR_LOCAL_PROFILE_DIR,
   DEBUG_ROOT,
   INTERACTIVE_PROFILE_DIR,
   LEGACY_PROFILE_DIR,
+  getImportProfileCandidates,
+  resolveImportProfileCandidate,
   prepareRuntimeStorage,
   STORAGE_STATE_PATH
 } from './sessionPaths';
@@ -172,22 +175,33 @@ async function interactiveLogin() {
 }
 
 async function importLegacyProfileSession() {
+  const selectedProfile = resolveImportProfileCandidate();
   console.log(`Legacy Profile Directory: ${LEGACY_PROFILE_DIR}`);
-  if (!fs.existsSync(LEGACY_PROFILE_DIR)) {
-    throw new Error(`Legacy profile directory does not exist: ${LEGACY_PROFILE_DIR}`);
+  console.log(`Symphony Local Profile Directory: ${COLLECTOR_LOCAL_PROFILE_DIR}`);
+  console.log(`Interactive Profile Directory: ${INTERACTIVE_PROFILE_DIR}`);
+
+  if (!selectedProfile) {
+    const checked = getImportProfileCandidates()
+      .map((candidate) => `${candidate.label}: ${candidate.path} (${candidate.exists ? (candidate.populated ? 'available' : 'empty') : 'missing'})`)
+      .join('\n');
+    throw new Error(
+      `No importable Symphony profile directory was found.\nChecked:\n${checked}\nUse the normal interactive login command or set SYM_LEGACY_PROFILE_DIR to a valid Edge profile directory.`
+    );
   }
 
+  console.log(`Using profile import source: ${selectedProfile.label}`);
+  console.log(`Resolved import path: ${selectedProfile.path}`);
   prepareRuntimeStorage();
 
   let context: BrowserContext | undefined;
   try {
-    context = await chromium.launchPersistentContext(LEGACY_PROFILE_DIR, {
+    context = await chromium.launchPersistentContext(selectedProfile.path, {
       channel: 'msedge',
       headless: true,
       viewport: { width: 1440, height: 900 }
     });
   } catch (err: any) {
-    throw new Error(`Could not open the legacy Symphony profile. Stop any running Symphony collector/browser using it, then retry. Original error: ${err.message}`);
+    throw new Error(`Could not open the selected Symphony profile import source. Stop any running Symphony collector/browser using it, then retry. Original error: ${err.message}`);
   }
 
   try {
