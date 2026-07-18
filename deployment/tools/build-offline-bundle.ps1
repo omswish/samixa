@@ -48,6 +48,7 @@ $resolvedReleaseRoot = [System.IO.Path]::GetFullPath($ReleaseRoot)
 $bundleRoot = Join-Path $resolvedReleaseRoot $BundleName
 $zipPath = Join-Path $resolvedReleaseRoot ($BundleName + '.zip')
 $sevenZipCommand = Get-Command 7z -ErrorAction SilentlyContinue
+$tarCommand = Get-Command tar.exe -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath (Join-Path $deploymentRoot 'staging\current\app'))) {
   throw 'Staged deployment payload not found. Build staging/current first.'
@@ -149,6 +150,16 @@ if ($sevenZipCommand) {
     & $sevenZipCommand.Source a -tzip $zipPath $BundleName | Out-Null
     if ($LASTEXITCODE -ne 0) {
       throw "7-Zip failed with exit code $LASTEXITCODE"
+    }
+  } finally {
+    Pop-Location
+  }
+} elseif ($tarCommand) {
+  Push-Location $resolvedReleaseRoot
+  try {
+    & $tarCommand.Source -a -c -f $zipPath $BundleName
+    if ($LASTEXITCODE -ne 0) {
+      throw "tar.exe failed with exit code $LASTEXITCODE"
     }
   } finally {
     Pop-Location
