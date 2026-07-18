@@ -7,8 +7,9 @@ import {
 } from './postgres';
 import { decryptSecret, encryptSecret, EncryptedSecretEnvelope, isPostgresSecretStoreEnabled } from './secretCrypto';
 import { RuntimeConfigSourceName } from './runtimeConfig';
+import { LocalCollectorSecretConfigRecord, readLocalCollectorSecretConfigs } from './localCollectorStore';
 
-type SecretOrigin = 'env' | 'postgres';
+type SecretOrigin = 'env' | 'local' | 'postgres';
 
 export interface RuntimeCollectorSecretTarget {
   configKey: string;
@@ -23,7 +24,7 @@ export interface RuntimeCollectorSecretTarget {
 export interface RuntimeCollectorSecretsPayload {
   sourceName: RuntimeConfigSourceName;
   resolvedAt: string;
-  backingStore: 'env' | 'postgres' | 'mixed' | 'unavailable';
+  backingStore: 'env' | 'local' | 'postgres' | 'mixed' | 'unavailable';
   targets: Record<string, RuntimeCollectorSecretTarget>;
 }
 
@@ -126,9 +127,10 @@ function toRuntimeSecretTarget(
 
 function applyPostgresSecrets(
   target: RuntimeCollectorSecretTarget,
-  rows: CollectorSecretConfigRecord[]
+  rows: Array<CollectorSecretConfigRecord | LocalCollectorSecretConfigRecord>,
+  secretOrigin: SecretOrigin
 ): RuntimeCollectorSecretTarget {
-  const next = { ...target, secretOrigin: 'postgres' as const };
+  const next = { ...target, secretOrigin };
   for (const row of rows) {
     const decrypted = decryptSecret(row.secretCipherJson as unknown as EncryptedSecretEnvelope);
     if (row.secretName === 'username') {
@@ -175,8 +177,37 @@ export async function loadRuntimeCollectorSecrets(sourceName: RuntimeConfigSourc
     envTargets.map((target) => [target.targetName, target])
   );
 
+  const hasEnvSecrets = envTargets.some((target) => target.username || target.password);
   let backingStore: RuntimeCollectorSecretsPayload['backingStore'] =
-    envTargets.some((target) => target.username || target.password) ? 'env' : 'unavailable';
+    hasEnvSecrets ? 'env' : 'unavailable';
+
+  try {
+    const localSecrets = readLocalCollectorSecretConfigs(sourceName);
+    const grouped = new Map<string, LocalCollectorSecretConfigRecord[]>();
+    for (const row of localSecrets) {
+      const bucket = grouped.get(row.targetName) ?? [];
+      bucket.push(row);
+      grouped.set(row.targetName, bucket);
+    }
+
+    for (const [targetName, rows] of grouped.entries()) {
+      const seedTarget = targets.get(targetName)
+        ?? toRuntimeSecretTarget(rows[0].configKey, sourceName, targetName, null, null, null, 'env');
+      targets.set(targetName, applyPostgresSecrets(seedTarget, rows, 'local'));
+    }
+
+    if (localSecrets.length > 0 && hasEnvSecrets) {
+      backingStore = 'mixed';
+    }
+    if (localSecrets.length > 0 && [...targets.values()].every((target) => target.secretOrigin === 'local')) {
+      backingStore = 'local';
+    }
+    if (localSecrets.length > 0 && backingStore === 'unavailable') {
+      backingStore = 'local';
+    }
+  } catch (error) {
+    console.error(`[runtime-secrets] failed to load local secrets for ${sourceName}:`, error);
+  }
 
   if (isPostgresMirrorEnabled() && isPostgresSecretStoreEnabled()) {
     try {
@@ -192,10 +223,10 @@ export async function loadRuntimeCollectorSecrets(sourceName: RuntimeConfigSourc
       for (const [targetName, rows] of grouped.entries()) {
         const seedTarget = targets.get(targetName)
           ?? toRuntimeSecretTarget(rows[0].configKey, sourceName, targetName, null, null, null, 'env');
-        targets.set(targetName, applyPostgresSecrets(seedTarget, rows));
+        targets.set(targetName, applyPostgresSecrets(seedTarget, rows, 'postgres'));
       }
 
-      if (postgresSecrets.length > 0 && envTargets.length > 0) {
+      if (postgresSecrets.length > 0 && hasEnvSecrets) {
         backingStore = 'mixed';
       }
       if (postgresSecrets.length > 0 && [...targets.values()].every((target) => target.secretOrigin === 'postgres')) {

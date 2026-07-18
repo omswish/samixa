@@ -30,3 +30,5 @@ deployment/staging/
 deployment/installer/output/
 deployment/admin-console/release/
 deployment/admin-console/node_modules/
+deployment.zip
+docs/pdf.zip

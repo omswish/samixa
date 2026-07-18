@@ -26,7 +26,7 @@ Use the packaged installer or offline bundle as the standard deployment path for
 Reason:
 - the installer packages the staged payload, bundled Node runtime, PM2 runtime tools, metadata, and support scripts
 - the installer writes the runtime `.env` file during setup
-- the installer validates Postgres connectivity before finishing provisioning
+- the installer validates Postgres connectivity only when PostgreSQL is configured
 - the installer can optionally create the firewall rules, bootstrap the stack, and register startup restore
 - the admin experience now lives inside the same web app on a separate port, so there is no separate desktop admin executable to ship or maintain
 
@@ -58,24 +58,23 @@ Run:
 
 The installer performs these steps:
 - copies the staged application, bundled Node runtime, runtime tools, and metadata
-- prompts for Postgres host, port, database, user, password, SSL requirement, operator port, and admin port
+- prompts for optional Postgres host, port, database, user, password, SSL requirement, operator port, and admin port
 - prompts for the secret-store passphrase used by the application
+- prompts for Nutanix, SolarWinds, and HSD bootstrap credentials
 - generates the installed `app\.env`
-- validates Postgres connectivity using the bundled Node runtime and installed `pg` client
+- validates Postgres connectivity using the bundled Node runtime and installed `pg` client only when PostgreSQL is configured
 - optionally creates inbound Windows Firewall rules for the selected operator and admin ports
 - optionally bootstraps the PM2 stack immediately after install
 - optionally registers a Scheduled Task to resurrect PM2 on server startup
 
 Expected install location:
-- `C:\Program Files\UAIL\ITDashboard`
-
-Expected runtime root:
-- `C:\ProgramData\UAIL\itdash`
+- `C:\ProgramData\UAIL\ITDashboard`
 
 Session/runtime paths used by the deployed HSD flow:
-- HSD storage-state JSON: `C:\ProgramData\UAIL\itdash\sessions\symphony\symphony-storage-state.json`
-- HSD interactive Edge profile: `C:\ProgramData\UAIL\itdash\sessions\symphony\interactive-edge-profile`
-- HSD helper launcher scripts: `C:\ProgramData\UAIL\itdash\admin\reauth`
+- HSD storage-state JSON: `C:\ProgramData\UAIL\ITDashboard\sessions\symphony\symphony-storage-state.json`
+- HSD interactive Edge profile: `C:\ProgramData\UAIL\ITDashboard\sessions\symphony\interactive-edge-profile`
+- HSD helper launcher scripts: `C:\ProgramData\UAIL\ITDashboard\admin\reauth`
+- Local collector settings: `C:\ProgramData\UAIL\ITDashboard\config\collector-settings.json`
 
 After installer completion, validate:
 - `http://<server>:21060/login`
@@ -89,20 +88,24 @@ Single entrypoint:
 Fully unattended example:
 
 ```bat
-deploy-windows-server.bat -NonInteractive -PostgresHost localhost -PostgresPort 5432 -PostgresDatabase hil-dor-itdash -PostgresUser postgres -PostgresPassword sa -PostgresSecretPassphrase your-secret-passphrase -PostgresSsl false -OperatorPort 21060 -AdminPort 21061
+deploy-windows-server.bat -NonInteractive -SecretStorePassphrase your-secret-passphrase -NutanixUser nutanix-user -NutanixPassword nutanix-pass -SolarWindsUser sw-user -SolarWindsPassword sw-pass -SkipPostgresInstall -OperatorPort 21060 -AdminPort 21061
 ```
 
 ## Runtime Environment File
 The installed `app\.env` must include:
-- `POSTGRES_URL`
-- `POSTGRES_SSL`
-- `POSTGRES_SECRET_PASSPHRASE`
+- `SECRET_STORE_PASSPHRASE`
 - `APP_AUTH_SECRET`
 - `APP_LOGIN_PASSWORD`
 - `VIEWER_SESSION_DAYS`
 - `ADMIN_SESSION_HOURS`
 - `OPERATOR_FRONTDOOR_PORT`
 - `ADMIN_FRONTDOOR_PORT`
+- source-specific values for enabled Nutanix, SolarWinds, and HSD collectors
+
+Optional:
+- `POSTGRES_URL`
+- `POSTGRES_SSL`
+- `POSTGRES_SECRET_PASSPHRASE`
 
 Default local login password:
 - `APP_LOGIN_PASSWORD=17172737`
@@ -110,7 +113,7 @@ Default local login password:
 ## Start The Stack
 
 ```powershell
-cd C:\Program Files\UAIL\ITDashboard\app
+cd C:\ProgramData\UAIL\ITDashboard\app
 ..\runtime-tools\node_modules\.bin\pm2.cmd start ecosystem.config.js --update-env
 ..\runtime-tools\node_modules\.bin\pm2.cmd save
 ```
@@ -161,7 +164,7 @@ Important behavior:
 - Complete Microsoft / HSD login in that Edge window.
 - Wait until the HSD dashboard is fully visible.
 - Return to the helper and confirm when prompted so the refreshed storage-state JSON is written back to:
-  - `C:\ProgramData\UAIL\itdash\sessions\symphony\symphony-storage-state.json`
+  - `C:\ProgramData\UAIL\ITDashboard\sessions\symphony\symphony-storage-state.json`
 
 ### HSD Legacy Profile Import
 - Use this only when an older authenticated Symphony Edge profile already exists and the normal interactive path is not desirable.
@@ -169,15 +172,15 @@ Important behavior:
 - The helper runs:
   - `npm run login --workspace collectors/symphony -- --import-legacy-profile`
 - The legacy profile expected by the deployed build must exist at:
-  - `C:\Program Files\UAIL\ITDashboard\app\collectors\edge-profile`
-- The helper exports that legacy authenticated browser state into the active storage-state JSON under `C:\ProgramData\UAIL\itdash\sessions\symphony`.
+  - `C:\ProgramData\UAIL\ITDashboard\app\collectors\edge-profile`
+- The helper exports that legacy authenticated browser state into the active storage-state JSON under `C:\ProgramData\UAIL\ITDashboard\sessions\symphony`.
 - If the legacy profile is missing or locked by another process, the helper will fail explicitly.
 
 ## Validation Checklist
 Run:
 
 ```powershell
-cd C:\Program Files\UAIL\ITDashboard\app
+cd C:\ProgramData\UAIL\ITDashboard\app
 ..\runtime-tools\node_modules\.bin\pm2.cmd status
 ```
 
@@ -193,7 +196,7 @@ Expected:
 ## Operational Commands
 
 ```powershell
-cd C:\Program Files\UAIL\ITDashboard\app
+cd C:\ProgramData\UAIL\ITDashboard\app
 ..\runtime-tools\node_modules\.bin\pm2.cmd status
 ..\runtime-tools\node_modules\.bin\pm2.cmd logs
 ..\runtime-tools\node_modules\.bin\pm2.cmd restart ecosystem.config.js --update-env

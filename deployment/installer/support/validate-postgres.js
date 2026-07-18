@@ -47,7 +47,12 @@ async function main() {
 
   const env = parseDotEnv(fs.readFileSync(envPath, 'utf8'));
   if (!env.POSTGRES_URL) {
-    throw new Error('POSTGRES_URL is missing from .env');
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      skipped: true,
+      reason: 'POSTGRES_URL not configured'
+    }));
+    return;
   }
 
   const pg = require(path.join(appRoot, 'node_modules', 'pg'));

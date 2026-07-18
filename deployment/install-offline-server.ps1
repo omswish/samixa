@@ -6,10 +6,22 @@ param(
   [int]$PostgresPort = 5432,
   [string]$PostgresSuperuser = 'postgres',
   [string]$PostgresPassword = '',
+  [string]$SecretStorePassphrase = '',
   [string]$PostgresDatabase = 'hil-dor-itdash',
   [string]$PostgresSecretPassphrase = '',
-  [string]$InstallRoot = 'C:\Program Files\UAIL\ITDashboard',
-  [string]$RuntimeRoot = 'C:\ProgramData\UAIL\itdash',
+  [string]$InstallRoot = 'C:\ProgramData\UAIL\ITDashboard',
+  [string]$RuntimeRoot = '',
+  [string]$NutanixHost = '',
+  [int]$NutanixPort = 9440,
+  [string]$NutanixUser = '',
+  [string]$NutanixPassword = '',
+  [string]$SolarWindsServersHost = '',
+  [string]$SolarWindsNetworksHost = '',
+  [string]$SolarWindsUser = '',
+  [string]$SolarWindsPassword = '',
+  [string]$SymphonyUrl = '',
+  [string]$SymphonyUser = '',
+  [string]$SymphonyPassword = '',
   [int]$OperatorPort = 21060,
   [int]$AdminPort = 21061,
   [switch]$SkipPostgresInstall,
@@ -34,6 +46,10 @@ if ($AdminPort -lt 1 -or $AdminPort -gt 65535) {
 
 if ($OperatorPort -eq $AdminPort) {
   throw 'OperatorPort and AdminPort must be different.'
+}
+
+if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+  $RuntimeRoot = $InstallRoot
 }
 
 function ConvertTo-PlainText {
@@ -74,7 +90,7 @@ function Assert-RequiredValue {
   }
 }
 
-if ([string]::IsNullOrWhiteSpace($PostgresPassword)) {
+if (-not $SkipPostgresInstall -and [string]::IsNullOrWhiteSpace($PostgresPassword)) {
   if ($NonInteractive) {
     Assert-RequiredValue -Name 'PostgresPassword' -Value $PostgresPassword
   } else {
@@ -82,11 +98,15 @@ if ([string]::IsNullOrWhiteSpace($PostgresPassword)) {
   }
 }
 
-if ([string]::IsNullOrWhiteSpace($PostgresSecretPassphrase)) {
+if ([string]::IsNullOrWhiteSpace($SecretStorePassphrase) -and -not [string]::IsNullOrWhiteSpace($PostgresSecretPassphrase)) {
+  $SecretStorePassphrase = $PostgresSecretPassphrase
+}
+
+if ([string]::IsNullOrWhiteSpace($SecretStorePassphrase)) {
   if ($NonInteractive) {
-    Assert-RequiredValue -Name 'PostgresSecretPassphrase' -Value $PostgresSecretPassphrase
+    Assert-RequiredValue -Name 'SecretStorePassphrase' -Value $SecretStorePassphrase
   } else {
-    $PostgresSecretPassphrase = Read-RequiredSecret -Prompt 'Application secret-store passphrase'
+    $SecretStorePassphrase = Read-RequiredSecret -Prompt 'Application secret-store passphrase'
   }
 }
 
@@ -127,13 +147,25 @@ if (-not $SkipPostgresInstall) {
   -PackageRoot $resolvedBundleRoot `
   -InstallRoot $InstallRoot `
   -RuntimeRoot $RuntimeRoot `
-  -PostgresHost 'localhost' `
+  -InstallBundledPostgres:$false `
+  -PostgresHost $(if ($SkipPostgresInstall) { '' } else { 'localhost' }) `
   -PostgresPort $PostgresPort `
-  -PostgresDatabase $PostgresDatabase `
-  -PostgresUser $PostgresSuperuser `
-  -PostgresPassword $PostgresPassword `
-  -PostgresSecretPassphrase $PostgresSecretPassphrase `
-  -PostgresSsl false `
+  -PostgresDatabase $(if ($SkipPostgresInstall) { '' } else { $PostgresDatabase }) `
+  -PostgresUser $(if ($SkipPostgresInstall) { '' } else { $PostgresSuperuser }) `
+  -PostgresPassword $(if ($SkipPostgresInstall) { '' } else { $PostgresPassword }) `
+  -SecretStorePassphrase $SecretStorePassphrase `
+  -PostgresSsl $(if ($SkipPostgresInstall) { 'false' } else { 'false' }) `
+  -NutanixHost $NutanixHost `
+  -NutanixPort $NutanixPort `
+  -NutanixUser $NutanixUser `
+  -NutanixPassword $NutanixPassword `
+  -SolarWindsServersHost $SolarWindsServersHost `
+  -SolarWindsNetworksHost $SolarWindsNetworksHost `
+  -SolarWindsUser $SolarWindsUser `
+  -SolarWindsPassword $SolarWindsPassword `
+  -SymphonyUrl $SymphonyUrl `
+  -SymphonyUser $SymphonyUser `
+  -SymphonyPassword $SymphonyPassword `
   -OperatorPort $OperatorPort `
   -AdminPort $AdminPort `
   -NonInteractive:$NonInteractive `

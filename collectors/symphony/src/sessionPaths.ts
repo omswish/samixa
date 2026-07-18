@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 const DEFAULT_RUNTIME_ROOT = process.env.ITDASH_RUNTIME_ROOT
-  || path.join(process.env.PROGRAMDATA || path.resolve(__dirname, '../../../runtime_data'), 'UAIL', 'itdash');
+  || path.join(process.env.PROGRAMDATA || path.resolve(__dirname, '../../../runtime_data'), 'UAIL', 'ITDashboard');
 
 const LEGACY_RUNTIME_ROOT = path.resolve(__dirname, '../runtime');
 

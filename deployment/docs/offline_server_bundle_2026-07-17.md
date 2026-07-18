@@ -7,8 +7,8 @@ It includes:
 - the staged dashboard payload with bundled `node_modules`
 - the bundled Node runtime
 - bundled PM2 runtime tools
-- bundled PostgreSQL 18 server runtime
-- local PostgreSQL VC++ redistributable installer
+- optional bundled PostgreSQL 18 server runtime when it is available in the packaging environment
+- optional local PostgreSQL VC++ redistributable installer when bundled PostgreSQL is included
 - batch and PowerShell entrypoints for full offline installation
 
 There is no separate admin desktop application in this bundle.
@@ -19,7 +19,7 @@ Current session-recovery behavior in the bundled app:
 - HSD recovery exposes both:
   - a server-local interactive reauthentication helper
   - a separate legacy-profile import helper
-- helper launcher scripts are written under `C:\ProgramData\UAIL\itdash\admin\reauth`
+- helper launcher scripts are written under `C:\ProgramData\UAIL\ITDashboard\admin\reauth`
 
 ## Primary Entry Point
 Run as administrator:
@@ -29,37 +29,36 @@ install-offline-server.bat
 ```
 
 That entrypoint:
-1. installs the bundled PostgreSQL runtime locally
-2. initializes a PostgreSQL data directory
-3. registers and starts the PostgreSQL Windows service
-4. creates the application database
-5. deploys the dashboard stack
-6. writes `.env`
-7. validates PostgreSQL connectivity
-8. optionally creates the Windows Firewall rules
-9. optionally starts the dashboard stack and registers autostart
+1. optionally installs the bundled PostgreSQL runtime locally when requested
+2. optionally initializes a PostgreSQL data directory and service when bundled PostgreSQL is used
+3. deploys the dashboard stack into a single writable runtime root
+4. writes `.env`
+5. validates PostgreSQL connectivity only when PostgreSQL is configured
+6. optionally creates the Windows Firewall rules
+7. optionally starts the dashboard stack and registers autostart
 
 ## Non-Interactive Example
 
 ```bat
-install-offline-server.bat -NonInteractive -PostgresPassword sa -PostgresSecretPassphrase your-secret-passphrase
+install-offline-server.bat -NonInteractive -SkipPostgresInstall -SecretStorePassphrase your-secret-passphrase -NutanixUser nutanix-user -NutanixPassword nutanix-pass -SolarWindsUser sw-user -SolarWindsPassword sw-pass
 ```
 
 You can override defaults such as:
-- `-PostgresPort`
-- `-PostgresDatabase`
+- `-SkipPostgresInstall`
+- `-SecretStorePassphrase`
 - `-OperatorPort`
 - `-AdminPort`
 - `-InstallRoot`
 - `-RuntimeRoot`
+- `-PostgresPort`
+- `-PostgresDatabase`
 - `-PostgresInstallRoot`
 - `-PostgresDataRoot`
 
 ## Default Install Paths
 - PostgreSQL binaries: `C:\Program Files\UAIL\PostgreSQL\18`
 - PostgreSQL data: `C:\ProgramData\UAIL\postgresql-18\data`
-- Dashboard app: `C:\Program Files\UAIL\ITDashboard`
-- Dashboard runtime: `C:\ProgramData\UAIL\itdash`
+- Dashboard app/runtime root: `C:\ProgramData\UAIL\ITDashboard`
 
 ## Web Surfaces After Install
 - operator: `http://<server>:21060/login`

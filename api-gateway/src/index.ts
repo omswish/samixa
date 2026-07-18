@@ -18,6 +18,7 @@ import {
 import { ensureCollectorTargetConfigBootstrap, loadRuntimeCollectorConfig, RuntimeConfigSourceName } from './runtimeConfig';
 import { ensureCollectorSecretConfigBootstrap, loadRuntimeCollectorSecrets } from './runtimeSecrets';
 import { encryptSecret } from './secretCrypto';
+import { replaceLocalCollectorSecretConfig, upsertLocalCollectorTargetConfig } from './localCollectorStore';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -492,11 +493,6 @@ app.put('/api/admin/settings', async (req, res) => {
     return;
   }
 
-  if (!isPostgresMirrorEnabled()) {
-    res.status(503).json({ error: 'Postgres-backed settings are not enabled.' });
-    return;
-  }
-
   const collectors = req.body?.collectors as AdminSettingsCollectorsInput | undefined;
 
   if (!isPlainObject(collectors)) {
@@ -507,6 +503,7 @@ app.put('/api/admin/settings', async (req, res) => {
   const typedCollectors = collectors as AdminSettingsCollectorsInput;
 
   try {
+    const saveToPostgres = isPostgresMirrorEnabled();
     const existingSecrets = {
       nutanix: await loadRuntimeCollectorSecrets('nutanix'),
       solarwinds: await loadRuntimeCollectorSecrets('solarwinds'),
@@ -549,7 +546,7 @@ app.put('/api/admin/settings', async (req, res) => {
         throw new Error(`Target URL is required for ${write.sourceName}:${write.targetName}.`);
       }
 
-      await upsertCollectorTargetConfigInPostgres({
+      const targetSeed = {
         configKey,
         sourceName: write.sourceName,
         targetName: write.targetName,
@@ -562,7 +559,13 @@ app.put('/api/admin/settings', async (req, res) => {
           ? Number(write.target.pollIntervalSeconds)
           : null,
         metadataJson: sanitizeMetadata(write.target.metadata)
-      });
+      };
+
+      if (saveToPostgres) {
+        await upsertCollectorTargetConfigInPostgres(targetSeed);
+      } else {
+        upsertLocalCollectorTargetConfig(targetSeed);
+      }
 
       const existingSecretTarget = existingSecrets[write.sourceName].targets[write.targetName];
       const nextUsername = typeof write.target.username === 'string'
@@ -573,7 +576,14 @@ app.put('/api/admin/settings', async (req, res) => {
         : undefined;
       const clearPassword = Boolean(write.target.clearPassword);
 
-      const secretSeeds = [];
+      const secretSeeds: Array<{
+        configKey: string;
+        sourceName: 'nutanix' | 'solarwinds' | 'symphony';
+        targetName: string;
+        secretName: 'username' | 'password';
+        keyVersion: string;
+        secretCipherJson: ReturnType<typeof encryptSecret>;
+      }> = [];
       if (nextUsername) {
         secretSeeds.push({
           configKey,
@@ -602,7 +612,11 @@ app.put('/api/admin/settings', async (req, res) => {
         });
       }
 
-      await replaceCollectorSecretConfigInPostgres(write.sourceName, write.targetName, configKey, secretSeeds);
+      if (saveToPostgres) {
+        await replaceCollectorSecretConfigInPostgres(write.sourceName, write.targetName, configKey, secretSeeds);
+      } else {
+        replaceLocalCollectorSecretConfig(write.sourceName, write.targetName, configKey, secretSeeds);
+      }
     }
     res.json(await buildAdminSettingsPayload());
   } catch (err: any) {

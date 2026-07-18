@@ -38,11 +38,12 @@ These are not required on the target server if you are using only the staged bat
 - `deployment\installer\support\provision-staged-deployment.ps1`
 
 That script then:
-- copies the staged application payload into `C:\Program Files\UAIL\ITDashboard`
-- creates `C:\ProgramData\UAIL\itdash`
-- prompts for Postgres and runtime values
+- copies the staged application payload into `C:\ProgramData\UAIL\ITDashboard`
+- keeps app payload, sessions, logs, and local collector settings under the same runtime root
+- prompts for the secret-store passphrase and source bootstrap values
+- prompts for PostgreSQL values only when that optional path is being used
 - writes `app\.env`
-- validates Postgres connectivity
+- validates Postgres connectivity only when PostgreSQL is configured
 - patches the service manifest for the selected operator and admin ports
 - optionally creates the firewall rules
 - optionally starts the PM2 stack
@@ -64,11 +65,11 @@ deploy-windows-server.bat -DryRun
 Optional explicit values:
 
 ```bat
-deploy-windows-server.bat -PostgresHost localhost -PostgresPort 5432 -PostgresDatabase hil-dor-itdash -PostgresUser postgres -PostgresSsl false -OperatorPort 21060 -AdminPort 21061
+deploy-windows-server.bat -SecretStorePassphrase your-secret-passphrase -NutanixUser nutanix-user -NutanixPassword nutanix-pass -SolarWindsUser sw-user -SolarWindsPassword sw-pass -SkipStartStack -SkipAutostart
 ```
 
 Fully unattended run:
 
 ```bat
-deploy-windows-server.bat -NonInteractive -PostgresHost localhost -PostgresPort 5432 -PostgresDatabase hil-dor-itdash -PostgresUser postgres -PostgresPassword sa -PostgresSecretPassphrase your-secret-passphrase -PostgresSsl false -OperatorPort 21060 -AdminPort 21061
+deploy-windows-server.bat -NonInteractive -SecretStorePassphrase your-secret-passphrase -NutanixUser nutanix-user -NutanixPassword nutanix-pass -SolarWindsUser sw-user -SolarWindsPassword sw-pass -OperatorPort 21060 -AdminPort 21061
 ```

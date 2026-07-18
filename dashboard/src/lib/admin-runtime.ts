@@ -131,7 +131,7 @@ const OPERATOR_PORT = Number(process.env.OPERATOR_FRONTDOOR_PORT || 21060);
 const ADMIN_PORT = Number(process.env.ADMIN_FRONTDOOR_PORT || 21061);
 const DEFAULT_RUNTIME_ROOT =
   process.env.ITDASH_RUNTIME_ROOT
-  || path.join(process.env.PROGRAMDATA || path.resolve(process.cwd(), 'runtime_data'), 'UAIL', 'itdash');
+  || path.join(process.env.PROGRAMDATA || path.resolve(process.cwd(), 'runtime_data'), 'UAIL', 'ITDashboard');
 
 function findProjectRoot(startDirectory = process.cwd()) {
   let current = path.resolve(startDirectory);

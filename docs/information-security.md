@@ -7,7 +7,7 @@
 | Status | Internal review |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-17 |
+| Last Updated | 2026-07-19 |
 | Primary Reviewers | Information Security, Infrastructure, Operations |
 
 ## Review Position
@@ -82,11 +82,10 @@ flowchart TB
 - Collector runtime config and secret endpoints enforce loopback access
 
 ### 4.3 Secret Handling
-- Current bootstrap still supports environment-variable secrets
-- PostgreSQL can store encrypted secrets when both:
-  - `POSTGRES_URL`
-  - `POSTGRES_SECRET_PASSPHRASE`
-  are configured
+- Current bootstrap supports an encrypted local collector settings store under the shared runtime root
+- The preferred passphrase variable is `SECRET_STORE_PASSPHRASE`
+- Current bootstrap still supports environment-variable secrets as a fallback
+- PostgreSQL can still store mirrored secrets when `POSTGRES_URL` is configured
 - Secret encryption uses AES-256-GCM with scrypt-derived keys
 
 ### 4.4 Session Handling
@@ -109,15 +108,14 @@ flowchart TB
 - Do not expose the application to the public internet
 - Block direct external access to ports `3001` and `4000`
 - Restrict local server logon rights to administrators
-- Protect `C:\ProgramData\UAIL\itdash` with admin-only filesystem ACLs
-- Protect `C:\Program Files\UAIL\ITDashboard` from non-admin write access
+- Protect `C:\ProgramData\UAIL\ITDashboard` with admin-only filesystem ACLs
 - Use a dedicated service account for upstream portal access
 - Backup runtime config and session-state locations securely
 
 ## 7. Recommended Hardening Roadmap
 
 ### Phase 1. Immediate
-- Move production collector secrets into PostgreSQL encrypted storage
+- Move production collector secrets out of plain `.env` values into the encrypted local collector settings store
 - Keep application services on the dedicated server only
 - Restrict LAN access by Windows Firewall and network ACL
 - Rotate `APP_AUTH_SECRET` and use a long random value
@@ -130,7 +128,7 @@ flowchart TB
 - Place the front doors behind TLS termination on the server or an internal reverse proxy
 
 ### Phase 3. Medium Term
-- Complete the move of operational configuration into PostgreSQL
+- Add auditable write trails if the deployment later requires multi-user configuration history
 - Replace browser-dependent HSD collection with API-based access if the enterprise endpoint becomes available
 - Reduce reliance on disk-stored browser sessions
 
@@ -141,7 +139,7 @@ flowchart TB
 - Firewall rules limited to approved operator/admin ports
 - Loopback-only internal services validated
 - Strong `APP_AUTH_SECRET` configured
-- Strong PostgreSQL secret-store passphrase configured if PostgreSQL is enabled
+- Strong `SECRET_STORE_PASSPHRASE` configured
 - Runtime directories ACL-hardened
 - Backup and restore procedure documented
 

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedOn": "2026-07-15",
-  "runtimeRoot": "C:\\ProgramData\\UAIL\\itdash",
+  "runtimeRoot": "C:\\ProgramData\\UAIL\\ITDashboard",
   "frontdoorPort": 21060,
   "adminPort": 21061,
   "services": [
@@ -101,17 +101,17 @@
         {
           "id": "primary",
           "label": "Primary session file",
-          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\symphony\\symphony-storage-state.json"
+          "path": "C:\\ProgramData\\UAIL\\ITDashboard\\sessions\\symphony\\symphony-storage-state.json"
         },
         {
           "id": "interactive-profile",
           "label": "Interactive Edge profile",
-          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\symphony\\interactive-edge-profile"
+          "path": "C:\\ProgramData\\UAIL\\ITDashboard\\sessions\\symphony\\interactive-edge-profile"
         },
         {
           "id": "helper-root",
           "label": "Reauth helper scripts",
-          "path": "C:\\ProgramData\\UAIL\\itdash\\admin\\reauth"
+          "path": "C:\\ProgramData\\UAIL\\ITDashboard\\admin\\reauth"
         }
       ]
     },
@@ -123,12 +123,12 @@
         {
           "id": "servers",
           "label": "Servers portal session",
-          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\solarwinds\\solarwinds-servers-storage-state.json"
+          "path": "C:\\ProgramData\\UAIL\\ITDashboard\\sessions\\solarwinds\\solarwinds-servers-storage-state.json"
         },
         {
           "id": "networks",
           "label": "Networks portal session",
-          "path": "C:\\ProgramData\\UAIL\\itdash\\sessions\\solarwinds\\solarwinds-networks-storage-state.json"
+          "path": "C:\\ProgramData\\UAIL\\ITDashboard\\sessions\\solarwinds\\solarwinds-networks-storage-state.json"
         }
       ]
     }

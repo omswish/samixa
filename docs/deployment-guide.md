@@ -7,7 +7,7 @@
 | Status | Internal review |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-17 |
+| Last Updated | 2026-07-19 |
 | Primary Audience | Infrastructure and deployment owners |
 
 ## Deployment Scope
@@ -45,8 +45,9 @@ For detailed packaging mechanics, keep the deployment-specific runbooks under `d
 - `ADMIN_SESSION_HOURS`
 - `OPERATOR_FRONTDOOR_PORT`
 - `ADMIN_FRONTDOOR_PORT`
-- source-specific values for Nutanix, SolarWinds, and Symphony when PostgreSQL config is not fully enabled
-- `POSTGRES_URL` and `POSTGRES_SECRET_PASSPHRASE` when PostgreSQL control-plane features are enabled
+- `SECRET_STORE_PASSPHRASE`
+- source-specific values for Nutanix, SolarWinds, and Symphony when local runtime config is not yet saved
+- `POSTGRES_URL` only when optional PostgreSQL mirror/config features are enabled
 
 ## 6. Deployment Topology
 
@@ -75,9 +76,9 @@ flowchart TD
 
 ## 8. Standard Steps
 1. Copy the installer or offline bundle to the Windows server.
-2. Install to `C:\Program Files\UAIL\ITDashboard`.
-3. Confirm runtime data root under `C:\ProgramData\UAIL\itdash`.
-4. Configure required environment values.
+2. Install to `C:\ProgramData\UAIL\ITDashboard`.
+3. Confirm the runtime root, app payload, sessions, logs, and local collector settings all resolve under that same root.
+4. Configure source credentials and the secret-store passphrase.
 5. Start the stack with PM2.
 6. Validate operator and admin login pages.
 7. Validate service state in the admin console.
@@ -86,7 +87,7 @@ flowchart TD
 ## 9. PM2 Commands
 
 ```powershell
-cd C:\Program Files\UAIL\ITDashboard\app
+cd C:\ProgramData\UAIL\ITDashboard\app
 ..\runtime-tools\node_modules\.bin\pm2.cmd start ecosystem.config.js --update-env
 ..\runtime-tools\node_modules\.bin\pm2.cmd status
 ..\runtime-tools\node_modules\.bin\pm2.cmd logs
@@ -104,9 +105,10 @@ Do not expose:
 - TCP `4000`
 
 ## 11. Session Runtime Paths
-- HSD storage state: `C:\ProgramData\UAIL\itdash\sessions\symphony\symphony-storage-state.json`
-- HSD interactive Edge profile: `C:\ProgramData\UAIL\itdash\sessions\symphony\interactive-edge-profile`
-- HSD helper scripts: `C:\ProgramData\UAIL\itdash\admin\reauth`
+- HSD storage state: `C:\ProgramData\UAIL\ITDashboard\sessions\symphony\symphony-storage-state.json`
+- HSD interactive Edge profile: `C:\ProgramData\UAIL\ITDashboard\sessions\symphony\interactive-edge-profile`
+- HSD helper scripts: `C:\ProgramData\UAIL\ITDashboard\admin\reauth`
+- Local collector settings: `C:\ProgramData\UAIL\ITDashboard\config\collector-settings.json`
 
 ## 12. Validation Checklist
 - Operator login works on `21060`
@@ -120,7 +122,8 @@ Do not expose:
 - Deploy behind LAN restrictions only
 - Protect runtime folders with admin-only permissions
 - Keep front doors on the internal network only
-- Prefer PostgreSQL encrypted secrets over long-term environment-variable secrets
+- Prefer the encrypted local secret store over long-term environment-variable secrets
+- Enable optional PostgreSQL only when mirror/config features are explicitly required
 
 ## 14. Reference Runbooks
 - [deployment/README.md](../deployment/README.md)

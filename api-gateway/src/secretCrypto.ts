@@ -10,9 +10,9 @@ export interface EncryptedSecretEnvelope {
 }
 
 function getMasterPassphrase(): string {
-  const value = process.env.POSTGRES_SECRET_PASSPHRASE;
+  const value = process.env.SECRET_STORE_PASSPHRASE || process.env.POSTGRES_SECRET_PASSPHRASE;
   if (!value) {
-    throw new Error('POSTGRES_SECRET_PASSPHRASE is not configured.');
+    throw new Error('SECRET_STORE_PASSPHRASE is not configured.');
   }
 
   return value;
@@ -23,7 +23,7 @@ function deriveKey(passphrase: string, salt: Buffer) {
 }
 
 export function isPostgresSecretStoreEnabled() {
-  return Boolean(process.env.POSTGRES_SECRET_PASSPHRASE);
+  return Boolean(process.env.SECRET_STORE_PASSPHRASE || process.env.POSTGRES_SECRET_PASSPHRASE);
 }
 
 export function encryptSecret(plaintext: string): EncryptedSecretEnvelope {

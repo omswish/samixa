@@ -1,15 +1,31 @@
 param(
   [string]$PackageRoot = (Join-Path $PSScriptRoot '..\..'),
-  [string]$InstallRoot = 'C:\Program Files\UAIL\ITDashboard',
-  [string]$RuntimeRoot = 'C:\ProgramData\UAIL\itdash',
+  [string]$InstallRoot = 'C:\ProgramData\UAIL\ITDashboard',
+  [string]$RuntimeRoot = '',
+  [switch]$InstallBundledPostgres,
+  [string]$PostgresInstallRoot = 'C:\Program Files\UAIL\PostgreSQL\18',
+  [string]$PostgresDataRoot = 'C:\ProgramData\UAIL\postgresql-18\data',
+  [string]$PostgresServiceName = 'UAILPostgreSQL18',
   [string]$PostgresHost = '',
   [int]$PostgresPort = 5432,
   [string]$PostgresDatabase = '',
   [string]$PostgresUser = '',
   [string]$PostgresPassword = '',
+  [string]$SecretStorePassphrase = '',
   [string]$PostgresSecretPassphrase = '',
   [ValidateSet('false', 'true')]
   [string]$PostgresSsl = 'false',
+  [string]$NutanixHost = '',
+  [int]$NutanixPort = 9440,
+  [string]$NutanixUser = '',
+  [string]$NutanixPassword = '',
+  [string]$SolarWindsServersHost = '',
+  [string]$SolarWindsNetworksHost = '',
+  [string]$SolarWindsUser = '',
+  [string]$SolarWindsPassword = '',
+  [string]$SymphonyUrl = '',
+  [string]$SymphonyUser = '',
+  [string]$SymphonyPassword = '',
   [int]$OperatorPort = 21060,
   [int]$AdminPort = 21061,
   [switch]$NonInteractive,
@@ -21,6 +37,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+  $RuntimeRoot = $InstallRoot
+}
 
 if ($OperatorPort -lt 1 -or $OperatorPort -gt 65535) {
   throw 'OperatorPort must be between 1 and 65535.'
@@ -161,26 +181,34 @@ function Get-UrlEncoded {
   return [Uri]::EscapeDataString($Value)
 }
 
+function Invoke-PowerShellScriptChecked {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [string[]]$Arguments = @()
+  )
+
+  if ($DryRun) {
+    Write-Host "[dry-run] powershell -File $ScriptPath $($Arguments -join ' ')"
+    return
+  }
+
+  if (-not (Test-Path -LiteralPath $ScriptPath)) {
+    throw "PowerShell support script not found: $ScriptPath"
+  }
+
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "Support script failed: $ScriptPath (exit code $LASTEXITCODE)"
+  }
+}
+
 function Invoke-InstalledPowerShellScript {
   param(
     [Parameter(Mandatory = $true)][string]$Name,
     [string[]]$Arguments = @()
   )
 
-  $scriptPath = Join-Path $InstallRoot "support\$Name"
-  if ($DryRun) {
-    Write-Host "[dry-run] powershell -File $scriptPath $($Arguments -join ' ')"
-    return
-  }
-
-  if (-not (Test-Path -LiteralPath $scriptPath)) {
-    throw "Installed support script not found: $scriptPath"
-  }
-
-  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath @Arguments
-  if ($LASTEXITCODE -ne 0) {
-    throw "Support script failed: $Name (exit code $LASTEXITCODE)"
-  }
+  Invoke-PowerShellScriptChecked -ScriptPath (Join-Path $InstallRoot "support\$Name") -Arguments $Arguments
 }
 
 function Invoke-PostgresValidation {
@@ -199,9 +227,24 @@ function Invoke-PostgresValidation {
   }
 }
 
+function Get-TrimmedOrDefault {
+  param(
+    [string]$Value,
+    [string]$Default = ''
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $Default
+  }
+
+  return $Value.Trim()
+}
+
 $resolvedPackageRoot = [System.IO.Path]::GetFullPath($PackageRoot)
 $stageRoot = Join-Path $resolvedPackageRoot 'staging\current'
 $supportRoot = Join-Path $resolvedPackageRoot 'installer\support'
+$postgresRuntimeRoot = Join-Path $stageRoot 'postgres\runtime'
+$postgresInstallerScript = Join-Path $resolvedPackageRoot 'postgres\support\install-postgres-offline.ps1'
 
 foreach ($requiredPath in @(
   (Join-Path $stageRoot 'app'),
@@ -215,40 +258,155 @@ foreach ($requiredPath in @(
   }
 }
 
-if ([string]::IsNullOrWhiteSpace($PostgresHost)) {
+$bundledPostgresAvailable =
+  (Test-Path -LiteralPath $postgresInstallerScript) -and
+  (Test-Path -LiteralPath (Join-Path $postgresRuntimeRoot 'bin')) -and
+  (Test-Path -LiteralPath (Join-Path $postgresRuntimeRoot 'lib')) -and
+  (Test-Path -LiteralPath (Join-Path $postgresRuntimeRoot 'share')) -and
+  (Test-Path -LiteralPath (Join-Path $postgresRuntimeRoot 'installer'))
+
+if (-not $PSBoundParameters.ContainsKey('InstallBundledPostgres')) {
   if ($NonInteractive) {
+    $InstallBundledPostgres = $false
+  } elseif ($bundledPostgresAvailable) {
+    $InstallBundledPostgres = Read-YesNo -Prompt 'Install the bundled PostgreSQL server locally on this machine?' -Default $true
+  } else {
+    $InstallBundledPostgres = $false
+  }
+}
+
+if ($InstallBundledPostgres -and -not $bundledPostgresAvailable) {
+  throw 'Bundled PostgreSQL install was requested, but the staged PostgreSQL payload is missing.'
+}
+
+$postgresSettingsProvided =
+  -not [string]::IsNullOrWhiteSpace($PostgresHost) -or
+  -not [string]::IsNullOrWhiteSpace($PostgresDatabase) -or
+  -not [string]::IsNullOrWhiteSpace($PostgresUser) -or
+  -not [string]::IsNullOrWhiteSpace($PostgresPassword)
+
+$UseExternalPostgres = $false
+if (-not $InstallBundledPostgres) {
+  if ($NonInteractive) {
+    $UseExternalPostgres = $postgresSettingsProvided
+  } else {
+    $UseExternalPostgres = Read-YesNo -Prompt 'Use an external PostgreSQL mirror/config database?' -Default $false
+  }
+}
+
+$usePostgres = $InstallBundledPostgres -or $UseExternalPostgres
+
+if ($usePostgres -and [string]::IsNullOrWhiteSpace($PostgresHost)) {
+  if ($InstallBundledPostgres) {
+    $PostgresHost = 'localhost'
+  } elseif ($NonInteractive) {
     $PostgresHost = 'localhost'
   } else {
     $PostgresHost = Read-RequiredText -Prompt 'Postgres host' -Default 'localhost'
   }
 }
-if ([string]::IsNullOrWhiteSpace($PostgresDatabase)) {
+if ($usePostgres -and [string]::IsNullOrWhiteSpace($PostgresDatabase)) {
   if ($NonInteractive) {
     Assert-RequiredValue -Name 'PostgresDatabase' -Value $PostgresDatabase
   } else {
-    $PostgresDatabase = Read-RequiredText -Prompt 'Postgres database name'
+    $PostgresDatabase = Read-RequiredText -Prompt 'Postgres database name' -Default 'hil-dor-itdash'
   }
 }
-if ([string]::IsNullOrWhiteSpace($PostgresUser)) {
-  if ($NonInteractive) {
+if ($usePostgres -and [string]::IsNullOrWhiteSpace($PostgresUser)) {
+  if ($InstallBundledPostgres) {
+    $PostgresUser = 'postgres'
+  } elseif ($NonInteractive) {
     Assert-RequiredValue -Name 'PostgresUser' -Value $PostgresUser
   } else {
-    $PostgresUser = Read-RequiredText -Prompt 'Postgres user'
+    $PostgresUser = Read-RequiredText -Prompt 'Postgres user' -Default 'postgres'
   }
 }
-if ([string]::IsNullOrWhiteSpace($PostgresPassword)) {
+if ($usePostgres -and [string]::IsNullOrWhiteSpace($PostgresPassword)) {
   if ($NonInteractive) {
     Assert-RequiredValue -Name 'PostgresPassword' -Value $PostgresPassword
   } else {
     $PostgresPassword = Read-RequiredSecret -Prompt 'Postgres password'
   }
 }
-if ([string]::IsNullOrWhiteSpace($PostgresSecretPassphrase)) {
+if ([string]::IsNullOrWhiteSpace($SecretStorePassphrase) -and -not [string]::IsNullOrWhiteSpace($PostgresSecretPassphrase)) {
+  $SecretStorePassphrase = $PostgresSecretPassphrase
+}
+
+if ([string]::IsNullOrWhiteSpace($SecretStorePassphrase)) {
   if ($NonInteractive) {
-    Assert-RequiredValue -Name 'PostgresSecretPassphrase' -Value $PostgresSecretPassphrase
+    Assert-RequiredValue -Name 'SecretStorePassphrase' -Value $SecretStorePassphrase
   } else {
-    $PostgresSecretPassphrase = Read-RequiredSecret -Prompt 'Secret-store passphrase'
+    $SecretStorePassphrase = Read-RequiredSecret -Prompt 'Secret-store passphrase'
   }
+}
+
+if ([string]::IsNullOrWhiteSpace($NutanixHost)) {
+  if ($NonInteractive) {
+    $NutanixHost = '10.23.50.27'
+  } else {
+    $NutanixHost = Read-RequiredText -Prompt 'Nutanix host' -Default '10.23.50.27'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($NutanixUser)) {
+  if ($NonInteractive) {
+    Assert-RequiredValue -Name 'NutanixUser' -Value $NutanixUser
+  } else {
+    $NutanixUser = Read-RequiredText -Prompt 'Nutanix username'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($NutanixPassword)) {
+  if ($NonInteractive) {
+    Assert-RequiredValue -Name 'NutanixPassword' -Value $NutanixPassword
+  } else {
+    $NutanixPassword = Read-RequiredSecret -Prompt 'Nutanix password'
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($SolarWindsServersHost)) {
+  if ($NonInteractive) {
+    $SolarWindsServersHost = '10.36.91.45'
+  } else {
+    $SolarWindsServersHost = Read-RequiredText -Prompt 'SolarWinds servers host' -Default '10.36.91.45'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($SolarWindsNetworksHost)) {
+  if ($NonInteractive) {
+    $SolarWindsNetworksHost = '10.36.91.46'
+  } else {
+    $SolarWindsNetworksHost = Read-RequiredText -Prompt 'SolarWinds networks host' -Default '10.36.91.46'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($SolarWindsUser)) {
+  if ($NonInteractive) {
+    Assert-RequiredValue -Name 'SolarWindsUser' -Value $SolarWindsUser
+  } else {
+    $SolarWindsUser = Read-RequiredText -Prompt 'SolarWinds/HSD username'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($SolarWindsPassword)) {
+  if ($NonInteractive) {
+    Assert-RequiredValue -Name 'SolarWindsPassword' -Value $SolarWindsPassword
+  } else {
+    $SolarWindsPassword = Read-RequiredSecret -Prompt 'SolarWinds/HSD password'
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($SymphonyUrl)) {
+  if ($NonInteractive) {
+    $SymphonyUrl = 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx'
+  } else {
+    $SymphonyUrl = Read-RequiredText -Prompt 'HSD dashboard URL' -Default 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx'
+  }
+}
+$SymphonyUser = Get-TrimmedOrDefault -Value $SymphonyUser -Default $SolarWindsUser
+$SymphonyPassword = Get-TrimmedOrDefault -Value $SymphonyPassword -Default $SolarWindsPassword
+
+if ([string]::IsNullOrWhiteSpace($SymphonyUser)) {
+  throw 'SymphonyUser could not be resolved. Provide SolarWinds/HSD credentials.'
+}
+
+if ([string]::IsNullOrWhiteSpace($SymphonyPassword)) {
+  throw 'SymphonyPassword could not be resolved. Provide SolarWinds/HSD credentials.'
 }
 
 if (-not $PSBoundParameters.ContainsKey('SkipFirewallRule')) {
@@ -273,21 +431,48 @@ if (-not $PSBoundParameters.ContainsKey('SkipAutostart')) {
   }
 }
 
-$postgresUrl = 'postgresql://{0}:{1}@{2}:{3}/{4}' -f `
-  (Get-UrlEncoded -Value $PostgresUser), `
-  (Get-UrlEncoded -Value $PostgresPassword), `
-  $PostgresHost.Trim(), `
-  $PostgresPort, `
-  (Get-UrlEncoded -Value $PostgresDatabase)
+if ($InstallBundledPostgres) {
+  $PostgresHost = 'localhost'
+  $PostgresUser = 'postgres'
+  $PostgresSsl = 'false'
+}
+
+$postgresConfigured =
+  -not [string]::IsNullOrWhiteSpace($PostgresHost) -and
+  -not [string]::IsNullOrWhiteSpace($PostgresDatabase) -and
+  -not [string]::IsNullOrWhiteSpace($PostgresUser) -and
+  -not [string]::IsNullOrWhiteSpace($PostgresPassword)
+
+$postgresUrl = if ($postgresConfigured) {
+  'postgresql://{0}:{1}@{2}:{3}/{4}' -f `
+    (Get-UrlEncoded -Value $PostgresUser), `
+    (Get-UrlEncoded -Value $PostgresPassword), `
+    $PostgresHost.Trim(), `
+    $PostgresPort, `
+    (Get-UrlEncoded -Value $PostgresDatabase)
+} else {
+  $null
+}
 
 $appAuthSecret = New-RandomHex -ByteCount 32
 $appRoot = Join-Path $InstallRoot 'app'
 $envPath = Join-Path $appRoot '.env'
 
 $envLines = @(
-  "POSTGRES_URL=$postgresUrl",
-  "POSTGRES_SSL=$PostgresSsl",
-  "POSTGRES_SECRET_PASSPHRASE=$PostgresSecretPassphrase",
+  "NUTANIX_USER=$NutanixUser",
+  "NUTANIX_PASS=$NutanixPassword",
+  "NUTANIX_HOST=$NutanixHost",
+  "NUTANIX_PORT=$NutanixPort",
+  "SW_USER=$SolarWindsUser",
+  "SW_PASS=$SolarWindsPassword",
+  "SW_HOST_SERVERS=$SolarWindsServersHost",
+  "SW_HOST_NETWORKS=$SolarWindsNetworksHost",
+  "SYM_USER=$SymphonyUser",
+  "SYM_PASS=$SymphonyPassword",
+  "SYM_URL=$SymphonyUrl",
+  "ITDASH_RUNTIME_ROOT=$RuntimeRoot",
+  "SECRET_STORE_PASSPHRASE=$SecretStorePassphrase",
+  "POSTGRES_SECRET_PASSPHRASE=$SecretStorePassphrase",
   "APP_AUTH_SECRET=$appAuthSecret",
   'APP_LOGIN_PASSWORD=17172737',
   'VIEWER_SESSION_DAYS=365',
@@ -296,16 +481,28 @@ $envLines = @(
   "ADMIN_FRONTDOOR_PORT=$AdminPort"
 )
 
+if ($postgresConfigured) {
+  $envLines += "POSTGRES_URL=$postgresUrl"
+  $envLines += "POSTGRES_SSL=$PostgresSsl"
+}
+
 Write-Host 'Deployment package root:' $resolvedPackageRoot
 Write-Host 'Install root:' $InstallRoot
 Write-Host 'Runtime root:' $RuntimeRoot
+Write-Host 'Install bundled PostgreSQL:' $InstallBundledPostgres
 Write-Host 'Operator port:' $OperatorPort
 Write-Host 'Admin port:' $AdminPort
 Write-Host 'Non-interactive mode:' $NonInteractive
 Write-Host 'Postgres host:' $PostgresHost
 Write-Host 'Postgres database:' $PostgresDatabase
 Write-Host 'Postgres user:' $PostgresUser
+Write-Host 'Postgres enabled:' $postgresConfigured
 Write-Host 'Postgres SSL:' $PostgresSsl
+Write-Host 'Secret store enabled:' (-not [string]::IsNullOrWhiteSpace($SecretStorePassphrase))
+Write-Host 'Nutanix host:' $NutanixHost
+Write-Host 'SolarWinds servers host:' $SolarWindsServersHost
+Write-Host 'SolarWinds networks host:' $SolarWindsNetworksHost
+Write-Host 'HSD URL:' $SymphonyUrl
 Write-Host 'Configure firewall rule:' (-not $SkipFirewallRule)
 Write-Host 'Start stack:' (-not $SkipStartStack)
 Write-Host 'Register autostart:' (-not $SkipAutostart)
@@ -317,6 +514,21 @@ if ($DryRun) {
   [System.IO.Directory]::CreateDirectory($RuntimeRoot) | Out-Null
   [System.IO.Directory]::CreateDirectory((Join-Path $RuntimeRoot 'sessions')) | Out-Null
   [System.IO.Directory]::CreateDirectory((Join-Path $RuntimeRoot 'logs')) | Out-Null
+}
+
+if ($InstallBundledPostgres) {
+  Invoke-PowerShellScriptChecked -ScriptPath $postgresInstallerScript -Arguments @(
+    '-BundleRoot', $stageRoot,
+    '-PostgresInstallRoot', $PostgresInstallRoot,
+    '-PostgresDataRoot', $PostgresDataRoot,
+    '-PostgresServiceName', $PostgresServiceName,
+    '-PostgresPort', $PostgresPort.ToString(),
+    '-PostgresSuperuser', $PostgresUser,
+    '-PostgresPassword', $PostgresPassword,
+    '-DatabaseName', $PostgresDatabase,
+    '-NonInteractive:' + $NonInteractive.ToString().ToLowerInvariant(),
+    '-DryRun:' + $DryRun.ToString().ToLowerInvariant()
+  )
 }
 
 Invoke-RobocopyCopy -Source (Join-Path $stageRoot 'app') -Destination (Join-Path $InstallRoot 'app')
@@ -337,7 +549,9 @@ Invoke-InstalledPowerShellScript -Name 'update-service-manifest.ps1' -Arguments 
   '-OperatorPort', $OperatorPort.ToString(),
   '-AdminPort', $AdminPort.ToString()
 )
-Invoke-PostgresValidation
+if ($postgresConfigured) {
+  Invoke-PostgresValidation
+}
 
 if (-not $SkipFirewallRule) {
   Invoke-InstalledPowerShellScript -Name 'configure-firewall.ps1' -Arguments @(

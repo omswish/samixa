@@ -53,15 +53,17 @@ if (-not (Test-Path -LiteralPath (Join-Path $deploymentRoot 'staging\current\app
   throw 'Staged deployment payload not found. Build staging/current first.'
 }
 
-foreach ($requiredPath in @(
+$bundledPostgresAvailable = @(
   (Join-Path $PostgresSourceRoot 'bin'),
   (Join-Path $PostgresSourceRoot 'lib'),
   (Join-Path $PostgresSourceRoot 'share'),
   (Join-Path $PostgresSourceRoot 'installer')
-)) {
-  if (-not (Test-Path -LiteralPath $requiredPath)) {
-    throw "Required PostgreSQL source path not found: $requiredPath"
-  }
+) | ForEach-Object {
+  Test-Path -LiteralPath $_
+} | Where-Object { $_ -eq $false } | Measure-Object | Select-Object -ExpandProperty Count
+
+if ($bundledPostgresAvailable -gt 0) {
+  Write-Warning "Bundled PostgreSQL source is incomplete under $PostgresSourceRoot. The offline bundle will be created without local PostgreSQL payload."
 }
 
 [System.IO.Directory]::CreateDirectory($resolvedReleaseRoot) | Out-Null
@@ -95,24 +97,26 @@ foreach ($docName in @(
   }
 }
 
-Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'bin') -Destination (Join-Path $bundleRoot 'postgres\runtime\bin')
-Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'lib') -Destination (Join-Path $bundleRoot 'postgres\runtime\lib')
-Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'share') -Destination (Join-Path $bundleRoot 'postgres\runtime\share')
-Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'installer') -Destination (Join-Path $bundleRoot 'postgres\runtime\installer')
+if ($bundledPostgresAvailable -eq 0) {
+  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'bin') -Destination (Join-Path $bundleRoot 'postgres\runtime\bin')
+  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'lib') -Destination (Join-Path $bundleRoot 'postgres\runtime\lib')
+  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'share') -Destination (Join-Path $bundleRoot 'postgres\runtime\share')
+  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'installer') -Destination (Join-Path $bundleRoot 'postgres\runtime\installer')
 
-if (Test-Path -LiteralPath (Join-Path $PostgresSourceRoot 'scripts')) {
-  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'scripts') -Destination (Join-Path $bundleRoot 'postgres\runtime\scripts')
-}
+  if (Test-Path -LiteralPath (Join-Path $PostgresSourceRoot 'scripts')) {
+    Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'scripts') -Destination (Join-Path $bundleRoot 'postgres\runtime\scripts')
+  }
 
-foreach ($fileName in @(
-  'pg_env.bat',
-  'server_license.txt',
-  'commandlinetools_3rd_party_licenses.txt',
-  'StackBuilder_3rd_party_licenses.txt'
-)) {
-  $sourceFile = Join-Path $PostgresSourceRoot $fileName
-  if (Test-Path -LiteralPath $sourceFile) {
-    Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $bundleRoot "postgres\runtime\$fileName") -Force
+  foreach ($fileName in @(
+    'pg_env.bat',
+    'server_license.txt',
+    'commandlinetools_3rd_party_licenses.txt',
+    'StackBuilder_3rd_party_licenses.txt'
+  )) {
+    $sourceFile = Join-Path $PostgresSourceRoot $fileName
+    if (Test-Path -LiteralPath $sourceFile) {
+      Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $bundleRoot "postgres\runtime\$fileName") -Force
+    }
   }
 }
 
@@ -127,9 +131,11 @@ $manifestLines = @(
   'Included major payloads:',
   '  staging\current',
   '  installer\support',
-  '  postgres\runtime',
   '  postgres\support',
   '  docs',
+  '',
+  'Optional payloads when available:',
+  '  postgres\runtime',
   '',
   'Exposed web surfaces after install:',
   '  operator: http://<server>:21060/login',

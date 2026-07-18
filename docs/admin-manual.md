@@ -7,7 +7,7 @@
 | Status | Internal review |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-17 |
+| Last Updated | 2026-07-19 |
 | Audience | Administrators and support owners |
 
 ## 1. Audience
@@ -20,7 +20,10 @@ Browse to the admin surface:
 Use the admin password on the admin login page.
 
 ## 3. Admin Console Layout
-The admin console is organized as tabbed views:
+The admin console is organized as a compact fixed-height control surface with:
+- a top action header
+- a summary strip for services, sessions, and source targets
+- tabbed workflow views for:
 - Overview
 - Services
 - Sessions
@@ -32,6 +35,8 @@ The admin console is organized as tabbed views:
 Use Overview to:
 - see how many services need attention
 - see whether collector sessions need renewal
+- launch the operator surface
+- run a full-stack restart
 - jump directly into the affected tab
 
 ## 5. Services Tab
@@ -87,6 +92,7 @@ Use Sources to manage:
 - usernames and passwords
 - poll intervals
 - metadata values used by specific collectors
+- values saved to the encrypted local collector settings store when PostgreSQL is not enabled
 
 Current source groups:
 - Nutanix primary

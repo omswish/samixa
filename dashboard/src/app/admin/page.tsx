@@ -61,6 +61,7 @@ type ServiceSnapshot = {
   displayName: string;
   exposedToLan: boolean;
   listen: string | null;
+  startupOrder?: number;
   notes: string;
   processStatus: string;
   overallStatus: 'online' | 'warning' | 'error' | 'stopped' | 'unknown';
@@ -160,6 +161,10 @@ function sessionStatusLabel(status: SessionSnapshot['overallStatus']) {
     default:
       return status.toUpperCase();
   }
+}
+
+function joinDetails(parts: Array<string | null | undefined>) {
+  return parts.filter((part): part is string => Boolean(part && part.trim())).join(' | ');
 }
 
 export default function AdminPage() {
@@ -479,13 +484,13 @@ export default function AdminPage() {
   ];
 
   const renderOverviewPanel = () => (
-    <div style={{ display: 'grid', gap: '18px' }}>
-      <section style={{ display: 'grid', gap: '18px', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+    <div style={panelScrollerStyle}>
+      <section style={overviewTopGridStyle}>
         <div className="glass-panel" style={panelStyle}>
           <div style={panelHeaderStyle}>
             <div>
               <h2 style={panelTitleStyle}>Control Overview</h2>
-              <div style={panelHintStyle}>Use this page as the first stop for stack health, quick recovery, and source readiness.</div>
+              <div style={panelHintStyle}>First-stop recovery view for stack health, source readiness, and operator routing.</div>
             </div>
             <span style={{ ...statusChipStyle, color: '#1565c0', background: 'rgba(21,101,192,0.10)', borderColor: 'rgba(21,101,192,0.20)' }}>
               LIVE
@@ -516,7 +521,7 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={compactActionRowStyle}>
             <button type="button" onClick={() => window.location.assign(buildSurfaceUrl('/', OPERATOR_PORT))} style={secondaryButtonStyle}>
               <ShieldCheck size={16} />
               Open Operator View
@@ -535,12 +540,12 @@ export default function AdminPage() {
         <div className="glass-panel" style={panelStyle}>
           <div style={panelHeaderStyle}>
             <div>
-              <h2 style={panelTitleStyle}>What Changed</h2>
-              <div style={panelHintStyle}>Each workflow now sits in its own tab so service actions, session recovery, and source editing stay separated.</div>
+              <h2 style={panelTitleStyle}>Workflow Areas</h2>
+              <div style={panelHintStyle}>Compact lanes for service control, session recovery, and source administration.</div>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gap: '12px' }}>
+          <div style={{ display: 'grid', gap: '8px' }}>
             {tabs.filter((tab) => tab.key !== 'overview').map((tab) => (
               <button
                 key={tab.key}
@@ -562,12 +567,12 @@ export default function AdminPage() {
         </div>
       </section>
 
-      <section style={{ display: 'grid', gap: '18px', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+      <section style={overviewBottomGridStyle}>
         <div className="glass-panel" style={panelStyle}>
           <div style={panelHeaderStyle}>
             <div>
               <h2 style={panelTitleStyle}>Service Snapshot</h2>
-              <div style={panelHintStyle}>Live PM2 and gateway status across the shared dashboard stack.</div>
+              <div style={panelHintStyle}>Live PM2 and gateway status across the shared stack.</div>
             </div>
           </div>
 
@@ -603,7 +608,7 @@ export default function AdminPage() {
           <div style={panelHeaderStyle}>
             <div>
               <h2 style={panelTitleStyle}>Session Snapshot</h2>
-              <div style={panelHintStyle}>Imported browser state and renew / reauthenticate readiness.</div>
+              <div style={panelHintStyle}>Imported browser state and renewal readiness.</div>
             </div>
           </div>
 
@@ -639,15 +644,19 @@ export default function AdminPage() {
   );
 
   const renderServicesPanel = () => (
-    <section className="glass-panel" style={panelStyle}>
+    <section className="glass-panel" style={contentPanelStyle}>
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Services</h2>
-          <div style={panelHintStyle}>Run, stop, restart, and verify the live stack.</div>
+          <div style={panelHintStyle}>Run, stop, restart, and verify the live stack without leaving the admin surface.</div>
         </div>
+        <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
+          <RefreshCw size={14} />
+          Refresh state
+        </button>
       </div>
 
-      <div style={{ display: 'grid', gap: '12px' }}>
+      <div style={cardGridStyle}>
         {loading ? (
           <div style={loadingRowStyle}>
             <RefreshCw size={18} className="animate-spin" />
@@ -655,26 +664,40 @@ export default function AdminPage() {
           </div>
         ) : services.map((service) => {
           const tone = toneStyles(service.overallStatus);
+          const endpointDetails = joinDetails([
+            service.listen || 'No direct listen socket',
+            service.pid ? `PID ${service.pid}` : null,
+            service.uptime ? `Uptime ${service.uptime}` : null
+          ]);
+          const healthDetails = joinDetails([
+            service.lastSync ? `Last sync ${service.lastSync}` : null,
+            service.lastError || null
+          ]);
           return (
-            <div key={service.id} style={itemCardStyle}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+            <div key={service.id} style={compactCardStyle}>
+              <div style={compactCardHeaderStyle}>
                 <div style={{ display: 'grid', gap: '4px' }}>
                   <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{service.displayName}</div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{service.notes}</div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                    {service.listen || 'No direct listen socket'}{service.pid ? ` | PID ${service.pid}` : ''}{service.uptime ? ` | Uptime ${service.uptime}` : ''}
-                  </div>
                 </div>
                 <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
                   {service.overallStatus.toUpperCase()}
                 </span>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-                <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                  <strong style={{ color: 'var(--text-primary)' }}>{service.healthSummary}</strong>
-                  {service.lastSync ? ` | Last sync ${service.lastSync}` : ''}
-                  {service.lastError ? ` | ${service.lastError}` : ''}
+              <div style={metaRowStyle}>
+                <span style={metaPillStyle}>{service.exposedToLan ? 'LAN exposed' : 'Loopback only'}</span>
+                {endpointDetails ? <span style={metaPillStyle}>{endpointDetails}</span> : null}
+              </div>
+
+              <div style={serviceHealthStyle}>
+                <strong style={{ color: 'var(--text-primary)' }}>{service.healthSummary}</strong>
+                {healthDetails ? <span>{healthDetails}</span> : null}
+              </div>
+
+              <div style={compactActionRowStyle}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  Startup order {service.startupOrder ?? '-'}
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button type="button" onClick={() => void handleServiceAction('start', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
@@ -699,18 +722,22 @@ export default function AdminPage() {
   );
 
   const renderSessionsPanel = () => (
-    <section className="glass-panel" style={panelStyle}>
+    <section className="glass-panel" style={contentPanelStyle}>
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Sessions</h2>
-          <div style={panelHintStyle}>Import copies refreshed storage-state JSON. Reauthentication opens an interactive browser on the server host.</div>
+          <div style={panelHintStyle}>Import refreshed storage-state JSON. Server-local reauth opens an interactive browser on the host.</div>
         </div>
+        <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
+          <RefreshCw size={14} />
+          Refresh state
+        </button>
       </div>
 
       <input ref={hsdImportRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={(event) => void handleImport('symphony', event.target.files?.[0] || null)} />
       <input ref={solarwindsImportRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={(event) => void handleImport('solarwinds', event.target.files?.[0] || null)} />
 
-      <div style={{ display: 'grid', gap: '12px' }}>
+      <div style={cardGridStyle}>
         {loading ? (
           <div style={loadingRowStyle}>
             <RefreshCw size={18} className="animate-spin" />
@@ -719,8 +746,8 @@ export default function AdminPage() {
         ) : sessions.map((workflow) => {
           const tone = toneStyles(workflow.overallStatus);
           return (
-            <div key={workflow.id} style={itemCardStyle}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
+            <div key={workflow.id} style={compactCardStyle}>
+              <div style={compactCardHeaderStyle}>
                 <div style={{ display: 'grid', gap: '4px' }}>
                   <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{workflow.displayName}</div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{workflow.summary}</div>
@@ -732,18 +759,22 @@ export default function AdminPage() {
 
               <div style={{ display: 'grid', gap: '8px' }}>
                 {workflow.targets.map((target) => (
-                  <div key={target.id} style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{target.label}</strong>
-                    {target.updatedAt ? ` | Updated ${target.updatedAt}` : ' | Not present'}
-                    {target.sizeBytes ? ` | ${(target.sizeBytes / 1024).toFixed(1)} KB` : ''}
-                    {target.issue ? ` | ${target.issue}` : ''}
-                    {target.authSummary ? ` | ${target.authSummary}` : ''}
-                    {target.validatedAt ? ` | Checked ${target.validatedAt}` : ''}
+                  <div key={target.id} style={targetCardStyle}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>{target.label}</strong>
+                      <span style={metaPillStyle}>{target.updatedAt ? `Updated ${target.updatedAt}` : 'Not present'}</span>
+                    </div>
+                    <div style={metaRowStyle}>
+                      {target.sizeBytes ? <span style={metaPillStyle}>{(target.sizeBytes / 1024).toFixed(1)} KB</span> : null}
+                      {target.authSummary ? <span style={metaPillStyle}>{target.authSummary}</span> : null}
+                      {target.validatedAt ? <span style={metaPillStyle}>Checked {target.validatedAt}</span> : null}
+                      {target.issue ? <span style={{ ...metaPillStyle, color: '#b3261e' }}>{target.issue}</span> : null}
+                    </div>
                   </div>
                 ))}
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={compactActionRowStyle}>
                 <button
                   type="button"
                   onClick={() => (workflow.id === 'symphony' ? hsdImportRef.current : solarwindsImportRef.current)?.click()}
@@ -786,11 +817,11 @@ export default function AdminPage() {
   );
 
   const renderSourcesPanel = () => (
-    <section className="glass-panel" style={panelStyle}>
+    <section className="glass-panel" style={contentPanelStyle}>
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Source Configuration</h2>
-          <div style={panelHintStyle}>Configure Nutanix, SolarWinds 45, SolarWinds 46, and HSD from one place.</div>
+          <div style={panelHintStyle}>Configure Nutanix, SolarWinds 45, SolarWinds 46, and HSD from one compact control lane.</div>
         </div>
         <button type="button" onClick={() => void handleSave()} disabled={saving || !draft} style={primaryButtonStyle(saving || !draft)}>
           <Save size={16} />
@@ -799,12 +830,12 @@ export default function AdminPage() {
       </div>
 
       {!draft ? (
-        <div style={loadingRowStyle}>
-          <RefreshCw size={18} className="animate-spin" />
-          Loading source settings...
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gap: '14px' }}>
+          <div style={loadingRowStyle}>
+            <RefreshCw size={18} className="animate-spin" />
+            Loading source settings...
+          </div>
+        ) : (
+        <div style={sourceGridStyle}>
           {renderTargetCard(
             'HSD / Symphony',
             draft.collectors.symphony.primary,
@@ -877,22 +908,17 @@ export default function AdminPage() {
 
   return (
     <main
-      style={{
-        minHeight: '100vh',
-        background:
-          'radial-gradient(circle at top left, rgba(21,101,192,0.14), transparent 42%), linear-gradient(135deg, #f7f4ef 0%, #ece4d8 100%)',
-        padding: '24px'
-      }}
+      style={pageShellStyle}
     >
-      <div style={{ maxWidth: '1480px', margin: '0 auto', display: 'grid', gap: '18px' }}>
-        <header className="glass-panel" style={{ padding: '18px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'grid', gap: '4px' }}>
+      <div style={pageFrameStyle}>
+        <header className="glass-panel" style={headerShellStyle}>
+          <div style={{ display: 'grid', gap: '2px' }}>
             <div style={{ fontSize: '0.78rem', letterSpacing: '0.16em', fontWeight: 800, color: '#1565c0' }}>ADMIN SURFACE</div>
-            <h1 style={{ margin: 0, fontSize: '1.9rem', color: 'var(--text-primary)' }}>Utkal IT Dashboard Control</h1>
-            <div style={{ color: 'var(--text-secondary)' }}>Services, source credentials, and session recovery on the same web stack.</div>
+            <h1 style={{ margin: 0, fontSize: '1.45rem', color: 'var(--text-primary)' }}>Utkal IT Dashboard Control</h1>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>Services, credentials, and session recovery on the same web stack.</div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <button type="button" onClick={() => window.location.assign(buildSurfaceUrl('/', OPERATOR_PORT))} style={secondaryButtonStyle}>
               <ShieldCheck size={16} />
               Operator View
@@ -918,20 +944,29 @@ export default function AdminPage() {
         {error ? <div style={{ ...messageBarStyle, color: '#b3261e', background: 'rgba(198,40,40,0.10)', borderColor: 'rgba(198,40,40,0.18)' }}>{error}</div> : null}
         {message ? <div style={{ ...messageBarStyle, color: '#2e7d32', background: 'rgba(46,125,50,0.10)', borderColor: 'rgba(46,125,50,0.18)' }}>{message}</div> : null}
 
-        <section style={{ display: 'grid', gap: '16px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <section style={summaryStripStyle}>
           <button type="button" className="glass-panel" onClick={() => setActiveTab('services')} style={summaryCardButtonStyle(activeTab === 'services')}>
             <ServerCog size={18} style={{ color: '#1565c0' }} />
-            <div style={{ fontSize: '0.8rem', letterSpacing: '0.08em', fontWeight: 800, color: '#1565c0' }}>SERVICES ONLINE</div>
+            <div style={{ display: 'grid', gap: '2px' }}>
+              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#1565c0' }}>SERVICES ONLINE</div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{servicesAttention} need action</div>
+            </div>
             <div style={summaryValueStyle}>{servicesOnline}/{services.length}</div>
           </button>
           <button type="button" className="glass-panel" onClick={() => setActiveTab('sessions')} style={summaryCardButtonStyle(activeTab === 'sessions')}>
             <KeyRound size={18} style={{ color: '#2e7d32' }} />
-            <div style={{ fontSize: '0.8rem', letterSpacing: '0.08em', fontWeight: 800, color: '#2e7d32' }}>VALID SESSIONS</div>
+            <div style={{ display: 'grid', gap: '2px' }}>
+              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#2e7d32' }}>VALID SESSIONS</div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{sessionsAttention} need renewal</div>
+            </div>
             <div style={summaryValueStyle}>{sessionsAvailable}/{sessions.length}</div>
           </button>
           <button type="button" className="glass-panel" onClick={() => setActiveTab('sources')} style={summaryCardButtonStyle(activeTab === 'sources')}>
             <Settings2 size={18} style={{ color: '#ef6c00' }} />
-            <div style={{ fontSize: '0.8rem', letterSpacing: '0.08em', fontWeight: 800, color: '#ef6c00' }}>SOURCE TARGETS</div>
+            <div style={{ display: 'grid', gap: '2px' }}>
+              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#ef6c00' }}>SOURCE TARGETS</div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Saved collector endpoints</div>
+            </div>
             <div style={summaryValueStyle}>{enabledTargets}/4</div>
           </button>
         </section>
@@ -960,10 +995,12 @@ export default function AdminPage() {
           </div>
         </section>
 
-        {activeTab === 'overview' ? renderOverviewPanel() : null}
-        {activeTab === 'services' ? renderServicesPanel() : null}
-        {activeTab === 'sessions' ? renderSessionsPanel() : null}
-        {activeTab === 'sources' ? renderSourcesPanel() : null}
+        <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+          {activeTab === 'overview' ? renderOverviewPanel() : null}
+          {activeTab === 'services' ? renderServicesPanel() : null}
+          {activeTab === 'sessions' ? renderSessionsPanel() : null}
+          {activeTab === 'sources' ? renderSourcesPanel() : null}
+        </div>
       </div>
     </main>
   );
@@ -979,7 +1016,7 @@ export default function AdminPage() {
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'grid', gap: '4px' }}>
             <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{title}</div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
               Config: {target.configOrigin} | Secret: {target.secretOrigin}
             </div>
           </div>
@@ -989,7 +1026,13 @@ export default function AdminPage() {
           </label>
         </div>
 
-        <div style={{ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+        <div style={metaRowStyle}>
+          {target.host ? <span style={metaPillStyle}>{target.host}</span> : null}
+          <span style={metaPillStyle}>Poll {target.pollIntervalSeconds ?? '-'} s</span>
+          {target.owner ? <span style={metaPillStyle}>{target.owner}</span> : null}
+        </div>
+
+        <div style={sourceFieldGridStyle}>
           <label style={fieldBlockStyle}>
             Target URL
             <input value={target.targetUrl} onChange={(event) => onChange({ targetUrl: event.target.value })} style={fieldStyle} />
@@ -1042,11 +1085,46 @@ const loadingShellStyle: React.CSSProperties = {
     'radial-gradient(circle at top left, rgba(21,101,192,0.14), transparent 42%), linear-gradient(135deg, #f7f4ef 0%, #ece4d8 100%)'
 };
 
-const summaryCardStyle: React.CSSProperties = {
-  padding: '18px',
+const pageShellStyle: React.CSSProperties = {
+  minHeight: '100vh',
+  height: '100vh',
+  overflow: 'hidden',
+  background:
+    'radial-gradient(circle at top left, rgba(21,101,192,0.14), transparent 42%), linear-gradient(135deg, #f7f4ef 0%, #ece4d8 100%)',
+  padding: '14px'
+};
+
+const pageFrameStyle: React.CSSProperties = {
+  maxWidth: '1560px',
+  height: '100%',
+  margin: '0 auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '10px'
+};
+
+const headerShellStyle: React.CSSProperties = {
+  padding: '14px 16px',
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '12px',
+  flexWrap: 'wrap'
+};
+
+const summaryStripStyle: React.CSSProperties = {
   display: 'grid',
   gap: '10px',
-  alignContent: 'start'
+  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))'
+};
+
+const summaryCardStyle: React.CSSProperties = {
+  padding: '12px 14px',
+  display: 'grid',
+  gap: '4px',
+  alignContent: 'center',
+  gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+  alignItems: 'center'
 };
 
 const summaryCardButtonStyle = (active: boolean): React.CSSProperties => ({
@@ -1058,73 +1136,102 @@ const summaryCardButtonStyle = (active: boolean): React.CSSProperties => ({
 });
 
 const summaryValueStyle: React.CSSProperties = {
-  fontSize: '2rem',
+  fontSize: '1.8rem',
   fontWeight: 800,
+  lineHeight: 1,
   color: 'var(--text-primary)'
 };
 
 const panelStyle: React.CSSProperties = {
-  padding: '18px',
+  padding: '14px',
   display: 'grid',
-  gap: '14px'
+  gap: '12px'
 };
 
 const tabShellStyle: React.CSSProperties = {
-  padding: '12px'
+  padding: '8px 10px'
 };
 
 const tabListStyle: React.CSSProperties = {
   display: 'grid',
-  gap: '10px',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))'
+  gap: '8px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'
 };
 
 const tabButtonStyle = (active: boolean): React.CSSProperties => ({
   display: 'grid',
-  gap: '6px',
+  gap: '4px',
   alignContent: 'start',
   textAlign: 'left',
-  borderRadius: '16px',
+  borderRadius: '14px',
   border: active ? '1px solid rgba(21,101,192,0.24)' : '1px solid rgba(141,110,99,0.14)',
   background: active ? 'rgba(21,101,192,0.10)' : 'rgba(255,255,255,0.62)',
   color: 'var(--text-primary)',
-  padding: '14px 16px',
+  padding: '10px 12px',
   fontWeight: 800,
   cursor: 'pointer'
 });
 
 const tabButtonDetailStyle: React.CSSProperties = {
-  fontSize: '0.78rem',
+  fontSize: '0.72rem',
   fontWeight: 600,
   color: 'var(--text-secondary)'
+};
+
+const panelScrollerStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  minHeight: '100%',
+  maxHeight: '100%',
+  overflow: 'auto',
+  paddingRight: '4px'
+};
+
+const contentPanelStyle: React.CSSProperties = {
+  ...panelStyle,
+  minHeight: '100%',
+  maxHeight: '100%',
+  overflow: 'auto'
 };
 
 const panelHeaderStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
-  gap: '12px',
+  gap: '10px',
   alignItems: 'center',
   flexWrap: 'wrap'
 };
 
-const overviewMetricGridStyle: React.CSSProperties = {
+const overviewTopGridStyle: React.CSSProperties = {
   display: 'grid',
   gap: '12px',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'
+  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))'
+};
+
+const overviewBottomGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))'
+};
+
+const overviewMetricGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))'
 };
 
 const overviewMetricCardStyle: React.CSSProperties = {
-  borderRadius: '16px',
+  borderRadius: '14px',
   border: '1px solid rgba(141,110,99,0.12)',
   background: 'rgba(255,255,255,0.62)',
-  padding: '14px',
+  padding: '12px',
   display: 'grid',
-  gap: '10px',
+  gap: '6px',
   alignContent: 'start'
 };
 
 const overviewMetricLabelStyle: React.CSSProperties = {
-  fontSize: '0.76rem',
+  fontSize: '0.72rem',
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
   fontWeight: 800,
@@ -1132,10 +1239,18 @@ const overviewMetricLabelStyle: React.CSSProperties = {
 };
 
 const overviewMetricValueStyle: React.CSSProperties = {
-  fontSize: '2rem',
+  fontSize: '1.9rem',
   lineHeight: 1,
   fontWeight: 800,
   color: 'var(--text-primary)'
+};
+
+const compactActionRowStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '8px',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'space-between'
 };
 
 const overviewLinkButtonStyle: React.CSSProperties = {
@@ -1155,11 +1270,11 @@ const overviewNavCardStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center',
-  gap: '12px',
-  borderRadius: '16px',
+  gap: '10px',
+  borderRadius: '14px',
   border: '1px solid rgba(141,110,99,0.12)',
   background: 'rgba(255,255,255,0.62)',
-  padding: '14px 16px',
+  padding: '10px 12px',
   cursor: 'pointer',
   textAlign: 'left',
   color: 'var(--text-primary)'
@@ -1181,55 +1296,128 @@ const overviewNavPillStyle: React.CSSProperties = {
 const overviewListRowStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
-  gap: '12px',
+  gap: '10px',
   alignItems: 'center',
-  borderRadius: '16px',
+  borderRadius: '14px',
   border: '1px solid rgba(141,110,99,0.12)',
   background: 'rgba(255,255,255,0.62)',
-  padding: '12px 14px',
+  padding: '10px 12px',
   cursor: 'pointer',
   color: 'var(--text-primary)'
 };
 
 const panelTitleStyle: React.CSSProperties = {
   margin: 0,
-  fontSize: '1.1rem',
+  fontSize: '1rem',
   color: 'var(--text-primary)'
 };
 
 const panelHintStyle: React.CSSProperties = {
-  fontSize: '0.82rem',
+  fontSize: '0.78rem',
   color: 'var(--text-secondary)'
 };
 
+const cardGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))'
+};
+
+const compactCardStyle: React.CSSProperties = {
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.14)',
+  background: 'rgba(255,255,255,0.70)',
+  padding: '12px',
+  display: 'grid',
+  gap: '10px',
+  alignContent: 'start'
+};
+
+const compactCardHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '10px',
+  alignItems: 'flex-start'
+};
+
+const metaRowStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '6px',
+  flexWrap: 'wrap',
+  alignItems: 'center'
+};
+
+const metaPillStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '6px',
+  padding: '4px 8px',
+  borderRadius: '999px',
+  border: '1px solid rgba(141,110,99,0.14)',
+  background: 'rgba(255,255,255,0.76)',
+  color: 'var(--text-secondary)',
+  fontSize: '0.72rem',
+  fontWeight: 700
+};
+
+const serviceHealthStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '4px',
+  fontSize: '0.8rem',
+  color: 'var(--text-secondary)'
+};
+
+const targetCardStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '8px',
+  padding: '10px',
+  borderRadius: '12px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.58)'
+};
+
 const itemCardStyle: React.CSSProperties = {
-  borderRadius: '18px',
+  borderRadius: '16px',
   border: '1px solid rgba(141,110,99,0.16)',
   background: 'rgba(255,255,255,0.68)',
-  padding: '15px',
+  padding: '12px',
   display: 'grid',
-  gap: '12px'
+  gap: '10px'
+};
+
+const sourceGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))'
+};
+
+const sourceFieldGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))'
 };
 
 const fieldBlockStyle: React.CSSProperties = {
   display: 'grid',
-  gap: '6px',
+  gap: '5px',
   fontWeight: 700,
+  fontSize: '0.82rem',
   color: 'var(--text-primary)'
 };
 
 const fieldStyle: React.CSSProperties = {
-  borderRadius: '12px',
+  borderRadius: '10px',
   border: '1px solid rgba(141,110,99,0.16)',
   background: 'rgba(255,255,255,0.82)',
-  padding: '10px 12px',
+  padding: '9px 11px',
   color: 'var(--text-primary)'
 };
 
 const textAreaStyle: React.CSSProperties = {
   ...fieldStyle,
   resize: 'vertical',
-  minHeight: '72px'
+  minHeight: '60px'
 };
 
 const loadingRowStyle: React.CSSProperties = {
@@ -1244,7 +1432,8 @@ const loadingRowStyle: React.CSSProperties = {
 const messageBarStyle: React.CSSProperties = {
   borderRadius: '14px',
   border: '1px solid',
-  padding: '10px 12px',
+  padding: '8px 10px',
+  fontSize: '0.82rem',
   fontWeight: 700
 };
 
@@ -1264,11 +1453,12 @@ const secondaryButtonStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: '8px',
-  borderRadius: '12px',
+  borderRadius: '10px',
   border: '1px solid rgba(141,110,99,0.16)',
   background: 'rgba(255,255,255,0.72)',
   color: 'var(--text-primary)',
-  padding: '10px 14px',
+  padding: '8px 12px',
+  fontSize: '0.8rem',
   fontWeight: 700,
   cursor: 'pointer'
 };
@@ -1277,11 +1467,12 @@ const primaryButtonStyle = (disabled: boolean): React.CSSProperties => ({
   display: 'inline-flex',
   alignItems: 'center',
   gap: '8px',
-  borderRadius: '12px',
+  borderRadius: '10px',
   border: 0,
   background: disabled ? 'rgba(21,101,192,0.42)' : '#1565c0',
   color: '#fff',
-  padding: '10px 14px',
+  padding: '8px 12px',
+  fontSize: '0.82rem',
   fontWeight: 800,
   cursor: disabled ? 'not-allowed' : 'pointer'
 });

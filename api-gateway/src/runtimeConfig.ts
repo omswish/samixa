@@ -5,9 +5,10 @@ import {
   getCollectorTargetConfigsFromPostgres,
   isPostgresMirrorEnabled
 } from './postgres';
+import { LocalCollectorTargetConfigRecord, readLocalCollectorTargetConfigs } from './localCollectorStore';
 
 export type RuntimeConfigSourceName = 'nutanix' | 'solarwinds' | 'symphony';
-type ConfigOrigin = 'env' | 'postgres';
+type ConfigOrigin = 'env' | 'local' | 'postgres';
 
 export interface RuntimeCollectorTargetConfig {
   configKey: string;
@@ -26,7 +27,7 @@ export interface RuntimeCollectorTargetConfig {
 export interface RuntimeCollectorConfigPayload {
   sourceName: RuntimeConfigSourceName;
   resolvedAt: string;
-  backingStore: 'env' | 'postgres';
+  backingStore: 'env' | 'local' | 'postgres';
   targets: Record<string, RuntimeCollectorTargetConfig>;
 }
 
@@ -124,7 +125,7 @@ function buildEnvCollectorTargetSeeds(): CollectorTargetConfigSeed[] {
 }
 
 function toRuntimeTarget(
-  target: CollectorTargetConfigSeed | CollectorTargetConfigRecord,
+  target: CollectorTargetConfigSeed | CollectorTargetConfigRecord | LocalCollectorTargetConfigRecord,
   configOrigin: ConfigOrigin
 ): RuntimeCollectorTargetConfig {
   return {
@@ -167,7 +168,20 @@ export async function loadRuntimeCollectorConfig(sourceName: RuntimeConfigSource
     envTargets.map((target) => [target.targetName, target])
   );
 
-  let backingStore: 'env' | 'postgres' = 'env';
+  let backingStore: 'env' | 'local' | 'postgres' = 'env';
+
+  try {
+    const localTargets = readLocalCollectorTargetConfigs(sourceName);
+    for (const target of localTargets) {
+      targets.set(target.targetName, toRuntimeTarget(target, 'local'));
+    }
+    if (localTargets.length > 0) {
+      backingStore = 'local';
+    }
+  } catch (error) {
+    console.error(`[runtime-config] failed to load local config for ${sourceName}:`, error);
+  }
+
   if (isPostgresMirrorEnabled()) {
     try {
       await ensureCollectorTargetConfigBootstrap();

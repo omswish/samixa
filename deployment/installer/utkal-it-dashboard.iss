@@ -10,7 +10,7 @@ AppId={{44E2B0D0-7D50-4F2A-8E8E-6B7F3C2E8B1A}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\UAIL\ITDashboard
+DefaultDirName={commonappdata}\UAIL\ITDashboard
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 ArchitecturesInstallIn64BitMode=x64
@@ -33,47 +33,67 @@ Source: "{#StageRoot}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recurse
 Source: "{#StageRoot}\runtime\node\*"; DestDir: "{app}\runtime\node"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageRoot}\runtime-tools\*"; DestDir: "{app}\runtime-tools"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageRoot}\metadata\*"; DestDir: "{app}\metadata"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageRoot}\postgres\runtime\*"; DestDir: "{app}\postgres\runtime"; Flags: skipifsourcedoesntexist ignoreversion recursesubdirs createallsubdirs
 Source: "support\*"; DestDir: "{app}\support"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\postgres\support\install-postgres-offline.ps1"; DestDir: "{app}\support"; Flags: skipifsourcedoesntexist ignoreversion
 
 [Dirs]
-Name: "{commonappdata}\UAIL\itdash"
-Name: "{commonappdata}\UAIL\itdash\sessions"
-Name: "{commonappdata}\UAIL\itdash\logs"
+Name: "{commonappdata}\UAIL\ITDashboard"
+Name: "{commonappdata}\UAIL\ITDashboard\sessions"
+Name: "{commonappdata}\UAIL\ITDashboard\logs"
+Name: "{commonappdata}\UAIL\ITDashboard\config"
+Name: "{commonappdata}\UAIL\ITDashboard\admin\reauth"
 
 [Code]
 var
+  PostgresModePage: TInputOptionWizardPage;
   PostgresHostPage: TInputQueryWizardPage;
   PostgresSecretPage: TInputQueryWizardPage;
   PostgresSslPage: TInputOptionWizardPage;
+  NutanixPage: TInputQueryWizardPage;
+  SolarWindsPage: TInputQueryWizardPage;
   DashboardPortsPage: TInputQueryWizardPage;
   GeneratedAppAuthSecret: string;
 
 procedure InitializeWizard;
 begin
+  Randomize;
   GeneratedAppAuthSecret := '';
+
+  PostgresModePage :=
+    CreateInputOptionPage(
+      wpSelectDir,
+      'Database Setup',
+      'Choose how PostgreSQL will be provided',
+      'Leave this unchecked for the simpler SQLite-first deployment. Enable it only when you explicitly want bundled PostgreSQL.',
+      False,
+      False
+    );
+  PostgresModePage.Add('Install bundled PostgreSQL locally on this server');
+  PostgresModePage.Values[0] := False;
 
   PostgresHostPage :=
     CreateInputQueryPage(
-      wpSelectDir,
+      PostgresModePage.ID,
       'Postgres Connection',
       'Enter the Postgres connection details',
-      'These values should point to the production Postgres instance for this dashboard.'
+      'These values are optional when using the SQLite-first deployment. For bundled local PostgreSQL, keep host as localhost and user as postgres.'
     );
   PostgresHostPage.Add('Postgres host', False);
   PostgresHostPage.Add('Postgres port', False);
   PostgresHostPage.Add('Database name', False);
   PostgresHostPage.Add('Database user', False);
-  PostgresHostPage.Values[0] := 'localhost';
+  PostgresHostPage.Values[0] := '';
   PostgresHostPage.Values[1] := '5432';
-  PostgresHostPage.Values[2] := 'itdash';
-  PostgresHostPage.Values[3] := 'itdash_user';
+  PostgresHostPage.Values[2] := '';
+  PostgresHostPage.Values[3] := '';
 
   PostgresSecretPage :=
     CreateInputQueryPage(
       PostgresHostPage.ID,
-      'Postgres Security',
-      'Enter the Postgres password and secret-store passphrase',
-      'The installer will write these values to the application .env file and validate connectivity.'
+      'Secret Store',
+      'Enter the local secret-store passphrase',
+      'The passphrase is required for encrypted collector credentials. Postgres password is required only when bundled PostgreSQL is enabled.'
     );
   PostgresSecretPage.Add('Postgres password', True);
   PostgresSecretPage.Add('Secret-store passphrase', True);
@@ -83,16 +103,46 @@ begin
       PostgresSecretPage.ID,
       'Postgres SSL',
       'Choose whether SSL is required',
-      'Enable this only if the target Postgres server expects SSL/TLS.',
+      'Leave this disabled for the bundled local PostgreSQL install.',
       False,
       False
     );
   PostgresSslPage.Add('Require SSL for Postgres connection');
   PostgresSslPage.Values[0] := False;
 
-  DashboardPortsPage :=
+  NutanixPage :=
     CreateInputQueryPage(
       PostgresSslPage.ID,
+      'Nutanix Source',
+      'Enter the Nutanix collector connection details',
+      'These values seed the deployed .env file and the Postgres-backed collector configuration.'
+    );
+  NutanixPage.Add('Nutanix host', False);
+  NutanixPage.Add('Nutanix port', False);
+  NutanixPage.Add('Nutanix username', False);
+  NutanixPage.Add('Nutanix password', True);
+  NutanixPage.Values[0] := '10.23.50.27';
+  NutanixPage.Values[1] := '9440';
+
+  SolarWindsPage :=
+    CreateInputQueryPage(
+      NutanixPage.ID,
+      'SolarWinds and HSD Sources',
+      'Enter the SolarWinds and HSD connection details',
+      'The same portal credentials are used for SolarWinds and HSD by default.'
+    );
+  SolarWindsPage.Add('SolarWinds servers host', False);
+  SolarWindsPage.Add('SolarWinds networks host', False);
+  SolarWindsPage.Add('SolarWinds/HSD username', False);
+  SolarWindsPage.Add('SolarWinds/HSD password', True);
+  SolarWindsPage.Add('HSD dashboard URL', False);
+  SolarWindsPage.Values[0] := '10.36.91.45';
+  SolarWindsPage.Values[1] := '10.36.91.46';
+  SolarWindsPage.Values[4] := 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
+
+  DashboardPortsPage :=
+    CreateInputQueryPage(
+      SolarWindsPage.ID,
       'Dashboard Ports',
       'Choose the operator and admin web ports',
       'Expose only these two web ports to approved internal users. Internal service ports remain loopback-only.'
@@ -149,6 +199,23 @@ begin
   end;
 end;
 
+function ShouldInstallBundledPostgres(): Boolean;
+begin
+  Result := PostgresModePage.Values[0];
+end;
+
+function IsLocalhostValue(const Value: string): Boolean;
+var
+  Normalized: string;
+begin
+  Normalized := Lowercase(Trim(Value));
+  Result :=
+    (Normalized = 'localhost') or
+    (Normalized = '127.0.0.1') or
+    (Normalized = '::1') or
+    (Normalized = '.');
+end;
+
 function BuildPostgresUrl(): string;
 begin
   Result :=
@@ -196,7 +263,7 @@ end;
 
 function GetRuntimeRoot(): string;
 begin
-  Result := ExpandConstant('{commonappdata}\UAIL\itdash');
+  Result := GetInstallRoot();
 end;
 
 function GetPowerShellExe(): string;
@@ -213,13 +280,39 @@ function WriteEnvFile(): string;
 var
   EnvPath: string;
   Contents: string;
+  PostgresUrlLine: string;
+  PostgresSslLine: string;
 begin
   EnvPath := AddBackslash(GetAppRoot()) + '.env';
   ForceDirectories(GetAppRoot());
 
+  if (TrimmedPageValue(PostgresHostPage, 0) <> '') and (TrimmedPageValue(PostgresHostPage, 2) <> '') and (TrimmedPageValue(PostgresHostPage, 3) <> '') and (TrimmedPageValue(PostgresSecretPage, 0) <> '') then
+  begin
+    PostgresUrlLine := 'POSTGRES_URL=' + BuildPostgresUrl() + #13#10;
+    PostgresSslLine := 'POSTGRES_SSL=' + GetPostgresSslValue() + #13#10;
+  end
+  else
+  begin
+    PostgresUrlLine := '';
+    PostgresSslLine := '';
+  end;
+
   Contents :=
-    'POSTGRES_URL=' + BuildPostgresUrl() + #13#10 +
-    'POSTGRES_SSL=' + GetPostgresSslValue() + #13#10 +
+    'NUTANIX_USER=' + TrimmedPageValue(NutanixPage, 2) + #13#10 +
+    'NUTANIX_PASS=' + TrimmedPageValue(NutanixPage, 3) + #13#10 +
+    'NUTANIX_HOST=' + TrimmedPageValue(NutanixPage, 0) + #13#10 +
+    'NUTANIX_PORT=' + TrimmedPageValue(NutanixPage, 1) + #13#10 +
+    'SW_USER=' + TrimmedPageValue(SolarWindsPage, 2) + #13#10 +
+    'SW_PASS=' + TrimmedPageValue(SolarWindsPage, 3) + #13#10 +
+    'SW_HOST_SERVERS=' + TrimmedPageValue(SolarWindsPage, 0) + #13#10 +
+    'SW_HOST_NETWORKS=' + TrimmedPageValue(SolarWindsPage, 1) + #13#10 +
+    'SYM_USER=' + TrimmedPageValue(SolarWindsPage, 2) + #13#10 +
+    'SYM_PASS=' + TrimmedPageValue(SolarWindsPage, 3) + #13#10 +
+    'SYM_URL=' + TrimmedPageValue(SolarWindsPage, 4) + #13#10 +
+    'ITDASH_RUNTIME_ROOT=' + GetRuntimeRoot() + #13#10 +
+    'SECRET_STORE_PASSPHRASE=' + TrimmedPageValue(PostgresSecretPage, 1) + #13#10 +
+    PostgresUrlLine +
+    PostgresSslLine +
     'POSTGRES_SECRET_PASSPHRASE=' + TrimmedPageValue(PostgresSecretPage, 1) + #13#10 +
     'APP_AUTH_SECRET=' + GetOrCreateAppAuthSecret() + #13#10 +
     'APP_LOGIN_PASSWORD=17172737' + #13#10 +
@@ -246,15 +339,46 @@ begin
   Result := ResultCode;
 end;
 
+procedure RunPowerShellScript(const ScriptPath: string; const ExtraArgs: string; const ErrorMessage: string);
+var
+  Params: string;
+begin
+  Params := '-NoProfile -ExecutionPolicy Bypass -File ' + QuoteForParam(ScriptPath);
+  if Trim(ExtraArgs) <> '' then
+    Params := Params + ' ' + ExtraArgs;
+  ExecAndCheck(GetPowerShellExe(), Params, ErrorMessage);
+end;
+
 procedure RunPowerShellSupport(const ScriptName: string; const ExtraArgs: string; const ErrorMessage: string);
 var
   ScriptPath: string;
-  Params: string;
 begin
   ScriptPath := AddBackslash(GetInstallRoot()) + 'support\' + ScriptName;
+  RunPowerShellScript(ScriptPath, ExtraArgs, ErrorMessage);
+end;
+
+procedure RunBundledPostgresInstall();
+var
+  ScriptPath: string;
+  InstallRoot: string;
+  Params: string;
+begin
+  InstallRoot := GetInstallRoot();
+  ScriptPath := AddBackslash(InstallRoot) + 'support\install-postgres-offline.ps1';
   Params :=
-    '-NoProfile -ExecutionPolicy Bypass -File ' + QuoteForParam(ScriptPath) + ' ' + ExtraArgs;
-  ExecAndCheck(GetPowerShellExe(), Params, ErrorMessage);
+    '-BundleRoot ' + QuoteForParam(InstallRoot) + ' ' +
+    '-PostgresInstallRoot ' + QuoteForParam('C:\Program Files\UAIL\PostgreSQL\18') + ' ' +
+    '-PostgresDataRoot ' + QuoteForParam('C:\ProgramData\UAIL\postgresql-18\data') + ' ' +
+    '-PostgresServiceName ' + QuoteForParam('UAILPostgreSQL18') + ' ' +
+    '-PostgresPort ' + TrimmedPageValue(PostgresHostPage, 1) + ' ' +
+    '-PostgresSuperuser ' + QuoteForParam(TrimmedPageValue(PostgresHostPage, 3)) + ' ' +
+    '-PostgresPassword ' + QuoteForParam(TrimmedPageValue(PostgresSecretPage, 0)) + ' ' +
+    '-DatabaseName ' + QuoteForParam(TrimmedPageValue(PostgresHostPage, 2));
+  RunPowerShellScript(
+    ScriptPath,
+    Params,
+    'Failed to install bundled PostgreSQL.'
+  );
 end;
 
 procedure RunNodeSupportValidation();
@@ -280,6 +404,9 @@ begin
   RuntimeRoot := GetRuntimeRoot();
   OperatorPortValue := TrimmedPageValue(DashboardPortsPage, 0);
   AdminPortValue := TrimmedPageValue(DashboardPortsPage, 1);
+
+  if ShouldInstallBundledPostgres() then
+    RunBundledPostgresInstall();
 
   WriteEnvFile();
   RunPowerShellSupport(
@@ -318,31 +445,36 @@ begin
 
   if CurPageID = PostgresHostPage.ID then
   begin
-    if TrimmedPageValue(PostgresHostPage, 0) = '' then
+    if ShouldInstallBundledPostgres() and (TrimmedPageValue(PostgresHostPage, 0) = '') then
     begin
       MsgBox('Postgres host is required.', mbError, MB_OK);
       Result := False;
     end;
-    if Result and (not IsNumberInRange(TrimmedPageValue(PostgresHostPage, 1), 1, 65535)) then
+    if Result and (TrimmedPageValue(PostgresHostPage, 0) <> '') and (not IsNumberInRange(TrimmedPageValue(PostgresHostPage, 1), 1, 65535)) then
     begin
       MsgBox('Postgres port must be a valid number between 1 and 65535.', mbError, MB_OK);
       Result := False;
     end;
-    if Result and (TrimmedPageValue(PostgresHostPage, 2) = '') then
+    if Result and ShouldInstallBundledPostgres() and (TrimmedPageValue(PostgresHostPage, 2) = '') then
     begin
       MsgBox('Database name is required.', mbError, MB_OK);
       Result := False;
     end;
-    if Result and (TrimmedPageValue(PostgresHostPage, 3) = '') then
+    if Result and ShouldInstallBundledPostgres() and (TrimmedPageValue(PostgresHostPage, 3) = '') then
     begin
       MsgBox('Database user is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and ShouldInstallBundledPostgres() and (not IsLocalhostValue(TrimmedPageValue(PostgresHostPage, 0))) then
+    begin
+      MsgBox('Bundled PostgreSQL install requires the Postgres host to remain localhost.', mbError, MB_OK);
       Result := False;
     end;
   end;
 
   if CurPageID = PostgresSecretPage.ID then
   begin
-    if TrimmedPageValue(PostgresSecretPage, 0) = '' then
+    if ShouldInstallBundledPostgres() and (TrimmedPageValue(PostgresSecretPage, 0) = '') then
     begin
       MsgBox('Postgres password is required.', mbError, MB_OK);
       Result := False;
@@ -350,6 +482,68 @@ begin
     if Result and (TrimmedPageValue(PostgresSecretPage, 1) = '') then
     begin
       MsgBox('Secret-store passphrase is required.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+
+  if CurPageID = PostgresSslPage.ID then
+  begin
+    if ShouldInstallBundledPostgres() and PostgresSslPage.Values[0] then
+    begin
+      MsgBox('Leave Postgres SSL disabled when using the bundled local PostgreSQL install.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+
+  if CurPageID = NutanixPage.ID then
+  begin
+    if TrimmedPageValue(NutanixPage, 0) = '' then
+    begin
+      MsgBox('Nutanix host is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (not IsNumberInRange(TrimmedPageValue(NutanixPage, 1), 1, 65535)) then
+    begin
+      MsgBox('Nutanix port must be a valid number between 1 and 65535.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(NutanixPage, 2) = '') then
+    begin
+      MsgBox('Nutanix username is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(NutanixPage, 3) = '') then
+    begin
+      MsgBox('Nutanix password is required.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+
+  if CurPageID = SolarWindsPage.ID then
+  begin
+    if TrimmedPageValue(SolarWindsPage, 0) = '' then
+    begin
+      MsgBox('SolarWinds servers host is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(SolarWindsPage, 1) = '') then
+    begin
+      MsgBox('SolarWinds networks host is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(SolarWindsPage, 2) = '') then
+    begin
+      MsgBox('SolarWinds/HSD username is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(SolarWindsPage, 3) = '') then
+    begin
+      MsgBox('SolarWinds/HSD password is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(SolarWindsPage, 4) = '') then
+    begin
+      MsgBox('HSD dashboard URL is required.', mbError, MB_OK);
       Result := False;
     end;
   end;

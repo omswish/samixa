@@ -2,6 +2,7 @@ require('dotenv').config({ path: './.env' });
 
 const operatorFrontdoorPort = process.env.OPERATOR_FRONTDOOR_PORT || '21060';
 const adminFrontdoorPort = process.env.ADMIN_FRONTDOOR_PORT || '21061';
+const runtimeRoot = process.env.ITDASH_RUNTIME_ROOT || 'C:\\ProgramData\\UAIL\\ITDashboard';
 
 module.exports = {
   apps: [
@@ -14,7 +15,9 @@ module.exports = {
         DB_PATH: '../data/itdash.db',
         POSTGRES_URL: process.env.POSTGRES_URL,
         POSTGRES_SSL: process.env.POSTGRES_SSL || 'false',
+        SECRET_STORE_PASSPHRASE: process.env.SECRET_STORE_PASSPHRASE || process.env.POSTGRES_SECRET_PASSPHRASE,
         POSTGRES_SECRET_PASSPHRASE: process.env.POSTGRES_SECRET_PASSPHRASE,
+        ITDASH_RUNTIME_ROOT: runtimeRoot,
         NODE_ENV: 'production'
       }
     },
@@ -30,7 +33,7 @@ module.exports = {
       script: './collectors/solarwinds/dist/index.js',
       env: {
         API_URL: 'http://127.0.0.1:4000/api/update',
-        ITDASH_RUNTIME_ROOT: 'C:\\ProgramData\\UAIL\\itdash'
+        ITDASH_RUNTIME_ROOT: runtimeRoot
       }
     },
     {
@@ -38,7 +41,7 @@ module.exports = {
       script: './collectors/symphony/dist/index.js',
       env: {
         API_URL: 'http://127.0.0.1:4000/api/update',
-        ITDASH_RUNTIME_ROOT: 'C:\\ProgramData\\UAIL\\itdash'
+        ITDASH_RUNTIME_ROOT: runtimeRoot
       }
     },
     {
@@ -56,7 +59,7 @@ module.exports = {
         ADMIN_SESSION_HOURS: process.env.ADMIN_SESSION_HOURS || '12',
         OPERATOR_FRONTDOOR_PORT: operatorFrontdoorPort,
         ADMIN_FRONTDOOR_PORT: adminFrontdoorPort,
-        ITDASH_RUNTIME_ROOT: 'C:\\ProgramData\\UAIL\\itdash',
+        ITDASH_RUNTIME_ROOT: runtimeRoot,
         NODE_ENV: 'production'
       }
     },
