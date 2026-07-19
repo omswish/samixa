@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-PRD-001 |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
@@ -110,6 +110,7 @@ The admin surface shall:
 - Only `21060` and `21061` should be LAN-exposed.
 - Internal application services shall remain loopback-only.
 - Source credentials shall be configurable through the admin surface and stored in the supported local encrypted settings model when available.
+- Bootstrap and deployment flows shall not assume shared credentials between SolarWinds 45, SolarWinds 46, and HSD.
 - Runtime session files shall be treated as sensitive operational credentials.
 - Admin actions shall require the admin login surface.
 
@@ -136,6 +137,7 @@ The admin surface shall:
 | AC-05 | HSD metrics reflect portal-mapped status buckets and special queues. |
 | AC-06 | Admin users can inspect services, validate sessions, update sources, and open help PDFs. |
 | AC-07 | The wallboard remains usable on the primary `1920x1200` display target. |
+| AC-08 | Deployment bootstrap prompts independently for SolarWinds 45, SolarWinds 46, and HSD credentials. |
 
 ## 14. Future Considerations
 - Enterprise authentication integration

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-UM-001 |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
@@ -144,6 +144,10 @@ Typical states:
 - `MISSING`
 - `INVALID`
 
+Important:
+- SolarWinds servers, SolarWinds networks, and HSD are maintained separately
+- a session problem on one source does not imply the others are invalid
+
 ## 11. HSD Recovery
 When HSD is expired:
 1. Open the admin console on the server if possible.
@@ -170,6 +174,11 @@ Use `Sources` to manage:
 - source-specific metadata such as monitored servers or network object IDs
 
 Save source changes before expecting the new values to take effect.
+
+Credential model:
+- Nutanix credentials are configured independently
+- SolarWinds 45 and SolarWinds 46 credentials are configured independently
+- HSD credentials are configured independently
 
 ## 14. Help Tab
 The `Help` tab exposes the maintained PDF documentation set directly inside the admin console.
@@ -201,7 +210,7 @@ Use it for:
 3. Restart the affected collector if necessary.
 4. Verify the next successful sync.
 
-## 16. Operational Dos And Don’ts
+## 16. Operational Dos And Don'ts
 
 Do:
 - use the data-link state to judge freshness

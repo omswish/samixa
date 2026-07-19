@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-SDD-001 |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
@@ -42,16 +42,17 @@ flowchart TB
         HSD[Symphony HSD]
     end
 
-    O --> FO --> UI
-    A --> FA --> UI
-    UI --> GW
-    UI -. WebSocket .-> GW
-    GW --> DB
-    GW --> CFG
-    NX --> NXP
-    SW --> SW45
-    SW --> SW46
-    SY --> HSD
+    O <--> FO
+    FO <--> UI
+    A <--> FA
+    FA <--> UI
+    UI <--> GW
+    GW <--> DB
+    GW <--> CFG
+    NX <--> NXP
+    SW <--> SW45
+    SW <--> SW46
+    SY <--> HSD
     NX --> GW
     SW --> GW
     SY --> GW
@@ -66,7 +67,7 @@ flowchart TB
 | `dashboard-ui` | Shared Next.js web app | Loopback |
 | `api-gateway` | REST API, WebSocket broadcast, admin endpoints | Loopback |
 | `nutanix-collector` | Direct Nutanix API polling | Host-local |
-| `solarwinds-collector` | SolarWinds portal scraping for servers and networks | Host-local |
+| `solarwinds-collector` | SolarWinds portal scraping for servers and networks with independently configured portal credentials | Host-local |
 | `symphony-collector` | Symphony HSD portal scraping | Host-local |
 
 ## 4. Data Flow
@@ -145,6 +146,7 @@ The UI uses this data to derive link state and staleness messaging. The dashboar
 ### 8.2 Local Config And Secrets
 - runtime config and secrets stored under the shared runtime root
 - encrypted local secret handling supported through the configured secret-store passphrase
+- installer and bootstrap paths maintain separate credentials for Nutanix, SolarWinds 45, SolarWinds 46, and HSD
 
 ### 8.3 Optional Extensions
 - PostgreSQL remains optional and is not required for the current production baseline
@@ -153,11 +155,11 @@ The UI uses this data to derive link state and staleness messaging. The dashboar
 
 ```mermaid
 flowchart LR
-    O[Operator browser] -->|operator login| FO[Operator front door]
-    A[Admin browser] -->|admin login| FA[Admin front door]
-    FO --> UI
-    FA --> UI
-    UI --> S[Surface-aware session cookie]
+    O[Operator browser] <-->|operator login| FO[Operator front door]
+    A[Admin browser] <-->|admin login| FA[Admin front door]
+    FO <--> UI
+    FA <--> UI
+    UI <--> S[Surface-aware session cookie]
     S --> R[Role checks in app and APIs]
 ```
 
@@ -177,6 +179,10 @@ flowchart LR
 | Internal gateway port | `4000` loopback |
 | Process manager | PM2 |
 | Runtime store | SQLite |
+
+Bootstrap expectations:
+- installer and staged deployment prompt separately for SolarWinds 45 credentials, SolarWinds 46 credentials, and HSD credentials
+- generated runtime configuration uses `SW_SERVERS_*`, `SW_NETWORKS_*`, and `SYM_*` variables rather than assuming a shared portal identity
 
 ## 11. Auto-Heal And Recovery
 

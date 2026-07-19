@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-DEV-001 |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
@@ -61,12 +61,15 @@ pm2 save
 
 ```mermaid
 flowchart LR
-    NX[Nutanix collector] --> GW[API gateway]
-    SW[SolarWinds collector] --> GW
-    SY[Symphony collector] --> GW
-    GW --> DB[(SQLite)]
-    GW --> UI[Next.js app]
-    UI --> FO[Operator/admin front doors]
+    NXUP[Nutanix Prism] <--> NX[Nutanix collector]
+    SWUP[SolarWinds 45/46] <--> SW[SolarWinds collector]
+    SYUP[Symphony HSD] <--> SY[Symphony collector]
+    NX --> GW[API gateway]
+    SW --> GW
+    SY --> GW
+    GW <--> DB[(SQLite)]
+    UI[Next.js app] <--> GW
+    FO[Operator/admin front doors] <--> UI
 ```
 
 Key rule:
@@ -97,11 +100,13 @@ Key rule:
 - Playwright-based
 - session-state dependent
 - handles both server and network telemetry
+- preserve separate credential handling for `SW_SERVERS_*` and `SW_NETWORKS_*`
 
 ### 8.3 Symphony HSD
 - Playwright-based
 - session-state dependent
 - supports reauthentication and explicit legacy-profile import
+- uses its own `SYM_*` credentials and session state, independent from SolarWinds
 
 ## 9. Admin Surface Responsibilities
 The admin surface is not just a UI add-on. It is part of the operating model and must continue to support:
@@ -133,6 +138,7 @@ This writes PDFs to:
 - PM2 is the current supervision model
 - offline bundle generation remains important for Windows server deployment
 - documentation changes that affect operations should also be reflected in the admin Help PDF set
+- when bootstrap behavior changes, validate all three paths: source repo, offline bundle, and rebuilt installer artifact
 
 ## 12. Validation Checklist For Changes
 

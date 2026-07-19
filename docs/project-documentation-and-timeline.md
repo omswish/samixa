@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-PROJ-001 |
-| Version | 1.0 |
+| Version | 1.1 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
@@ -20,6 +20,7 @@ The project currently consists of:
 - live collectors for Nutanix, SolarWinds, and Symphony HSD
 - a SQLite-first runtime and deployment model
 - Windows deployment packaging with offline bundle support
+- separate bootstrap credentials for SolarWinds 45, SolarWinds 46, and HSD
 - documentation PDFs exposed directly in the admin console
 
 ## 3. Delivery Workstreams
@@ -43,7 +44,7 @@ The project currently consists of:
 | 2026-07-14 | Responsive support and planning | Filters, mobile support, and roadmap planning added |
 | 2026-07-17 | Admin and deployment readiness | Admin surface, packaging, and formal docs introduced |
 | 2026-07-18 | HSD recovery refinement | Legacy profile import and session flows stabilized |
-| 2026-07-19 | Deployment and docs consolidation | SQLite-first deployment and embedded documentation baseline completed |
+| 2026-07-19 | Deployment and docs consolidation | SQLite-first deployment, split bootstrap credentials, and embedded documentation baseline completed |
 
 ## 5. Detailed Timeline
 
@@ -115,10 +116,12 @@ Result:
 - `e131f5b` Use tar fallback for offline bundle packaging
 - `74ff7fb` Validate offline deployment packaging
 - `a29a064` Consolidate docs and embed admin help PDFs
+- `5cd164d` Split bootstrap credentials for SolarWinds and HSD
 
 Result:
 - deployment became simpler and more reliable around a SQLite-first model
 - the admin surface gained integrated documentation access
+- installer and bootstrap behavior no longer assume shared portal credentials
 
 ## 6. Delivery Themes
 
@@ -175,3 +178,4 @@ Result:
 | 2026-07-19 | `e131f5b` | Use tar fallback for offline bundle packaging |
 | 2026-07-19 | `74ff7fb` | Validate offline deployment packaging |
 | 2026-07-19 | `a29a064` | Consolidate docs and embed admin help PDFs |
+| 2026-07-19 | `5cd164d` | Split bootstrap credentials for SolarWinds and HSD |
