@@ -8,24 +8,31 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..', '..');
 const docsRoot = path.resolve(repoRoot, 'docs');
 const outputRoot = path.resolve(docsRoot, 'pdf');
+const adminHelpRoot = path.resolve(repoRoot, 'dashboard', 'public', 'help');
 
-const markdownFiles = [
-  path.resolve(repoRoot, 'README.md'),
-  path.resolve(docsRoot, 'README.md'),
-  path.resolve(docsRoot, 'document-register.md'),
-  path.resolve(docsRoot, 'product-requirements-specification.md'),
-  path.resolve(docsRoot, 'architecture-and-design.md'),
-  path.resolve(docsRoot, 'information-security.md'),
-  path.resolve(docsRoot, 'operator-manual.md'),
-  path.resolve(docsRoot, 'admin-manual.md'),
-  path.resolve(docsRoot, 'deployment-guide.md'),
-  path.resolve(docsRoot, 'executive-summary-pack.md')
+const documentDefinitions = [
+  {
+    markdownPath: path.resolve(docsRoot, 'README.md'),
+    outputName: 'UAIL-IT-Dashboard-Documentation-Index.pdf'
+  },
+  {
+    markdownPath: path.resolve(docsRoot, 'system-handbook.md'),
+    outputName: 'UAIL-IT-Dashboard-System-Handbook.pdf'
+  },
+  {
+    markdownPath: path.resolve(docsRoot, 'operations-guide.md'),
+    outputName: 'UAIL-IT-Dashboard-Operations-Guide.pdf'
+  },
+  {
+    markdownPath: path.resolve(docsRoot, 'project-timeline-2026-07-19.md'),
+    outputName: 'UAIL-IT-Dashboard-Project-Timeline-2026-07-19.pdf'
+  },
+  {
+    markdownPath: path.resolve(docsRoot, 'executive-summary-pack.md'),
+    outputName: 'UAIL-IT-Dashboard-Executive-Summary.pdf',
+    copyOnlyFrom: path.resolve(docsRoot, 'executive-summary-pack.pdf')
+  }
 ];
-
-function toOutputName(markdownPath) {
-  const relative = path.relative(repoRoot, markdownPath).replace(/\\/g, '/');
-  return `${relative.replace(/[/.]/g, '-')}.pdf`;
-}
 
 function escapeHtml(value) {
   return value
@@ -214,7 +221,8 @@ function buildStandardHtml(sourceMarkdown, baseHref, title) {
 </html>`;
 }
 
-async function renderMarkdownPdf(browser, markdownPath) {
+async function renderMarkdownPdf(browser, definition) {
+  const { markdownPath, outputName } = definition;
   const relativeDir = path.dirname(markdownPath);
   const baseHref = pathToFileURL(`${relativeDir}${path.sep}`).href;
   const markdown = await fs.readFile(markdownPath, 'utf8');
@@ -224,7 +232,7 @@ async function renderMarkdownPdf(browser, markdownPath) {
   await page.waitForFunction(() => window.__renderDone === true, null, { timeout: 60000 });
   await page.emulateMedia({ media: 'screen' });
 
-  const outputPath = path.resolve(outputRoot, toOutputName(markdownPath));
+  const outputPath = path.resolve(outputRoot, outputName);
   await page.pdf({
     path: outputPath,
     format: 'A4',
@@ -237,29 +245,44 @@ async function renderMarkdownPdf(browser, markdownPath) {
   return outputPath;
 }
 
-async function copyExecutiveLandscapePdf() {
-  const sourcePath = path.resolve(docsRoot, 'executive-summary-pack-2026-07-17.pdf');
-  const outputPath = path.resolve(outputRoot, toOutputName(path.resolve(docsRoot, 'executive-summary-pack.md')));
+async function copyPrebuiltPdf(definition) {
+  const sourcePath = definition.copyOnlyFrom;
+  const outputPath = path.resolve(outputRoot, definition.outputName);
   await fs.copyFile(sourcePath, outputPath);
   return outputPath;
 }
 
+async function mirrorToAdminHelp(outputPath) {
+  const targetPath = path.resolve(adminHelpRoot, path.basename(outputPath));
+  await fs.copyFile(outputPath, targetPath);
+  return targetPath;
+}
+
 async function main() {
   await fs.mkdir(outputRoot, { recursive: true });
+  await fs.mkdir(adminHelpRoot, { recursive: true });
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
 
   try {
     const outputs = [];
-    for (const markdownPath of markdownFiles) {
-      if (path.basename(markdownPath) === 'executive-summary-pack.md') {
-        outputs.push(await copyExecutiveLandscapePdf());
+    for (const definition of documentDefinitions) {
+      if (definition.copyOnlyFrom) {
+        outputs.push(await copyPrebuiltPdf(definition));
         continue;
       }
 
-      outputs.push(await renderMarkdownPdf(browser, markdownPath));
+      outputs.push(await renderMarkdownPdf(browser, definition));
+    }
+
+    const mirroredOutputs = [];
+    for (const output of outputs) {
+      mirroredOutputs.push(await mirrorToAdminHelp(output));
     }
 
     for (const output of outputs) {
+      console.log(path.relative(repoRoot, output));
+    }
+    for (const output of mirroredOutputs) {
       console.log(path.relative(repoRoot, output));
     }
   } finally {

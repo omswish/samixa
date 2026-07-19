@@ -12,7 +12,6 @@ Purpose:
 
 Current contents:
 - `config/` deployment-time manifests and shared metadata
-- `docs/` deployment runbooks and copy-set notes
 - `installer/` Inno Setup files and support scripts
 - `postgres/` offline PostgreSQL support
 - `runtime-tools/` bundled PM2 tooling
@@ -37,3 +36,8 @@ Operational note:
 - the admin surface now validates saved HSD and SolarWinds browser sessions against the live portals
 - HSD reauthentication is a server-local action that opens an interactive Edge/PowerShell helper on the Windows host
 - HSD also exposes an explicit legacy-profile import helper for recovery cases where an older authenticated Edge profile must be migrated into storage-state JSON
+
+Maintained references:
+- [docs/system-handbook.md](../docs/system-handbook.md)
+- [docs/operations-guide.md](../docs/operations-guide.md)
+- [docs/project-timeline-2026-07-19.md](../docs/project-timeline-2026-07-19.md)

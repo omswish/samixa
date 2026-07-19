@@ -7,12 +7,11 @@
 | Status | Internal review |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-17 |
-| Distribution Format | HTML and landscape PDF |
+| Last Updated | 2026-07-19 |
+| Distribution Format | Landscape PDF and admin Help tab |
 
 ## Artifacts
-- [HTML Pack](executive-summary-pack.html)
-- [Landscape PDF](executive-summary-pack-2026-07-17.pdf)
+- [Landscape PDF](executive-summary-pack.pdf)
 
 ## Purpose
 This pack condenses the requirements, implemented architecture, operational model, deployment posture, and information-security position into a management-friendly review artifact.

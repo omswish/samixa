@@ -9,7 +9,7 @@ Operational wallboard for Utkal Alumina IT operations. The application aggregate
 | Primary Audience | IT Operations and Tech-Unit IT |
 | Primary Resolution Target | 1920x1200 wallboard |
 | Current Documentation Set | [docs/README.md](docs/README.md) |
-| Last Updated | 2026-07-17 |
+| Last Updated | 2026-07-19 |
 
 ## Runtime Surfaces
 - Operator wallboard: `http://<host>:21060/login`
@@ -31,8 +31,12 @@ Operational wallboard for Utkal Alumina IT operations. The application aggregate
 - The dashboard must not fabricate normal operating values. On collector failure it continues to show the last successfully synced data and timestamp for that section.
 
 ## Documentation
-The consolidated documentation set is under [docs/README.md](docs/README.md).
-For corporate review, use the document register and executive summary pack listed there.
+The maintained document set is under [docs/README.md](docs/README.md).
+The primary reference documents are:
+- [System Handbook](docs/system-handbook.md)
+- [Operations Guide](docs/operations-guide.md)
+- [Project Timeline](docs/project-timeline-2026-07-19.md)
+- [Executive Summary Pack](docs/executive-summary-pack.md)
 
 ## Basic Operations
 Build the workspaces:

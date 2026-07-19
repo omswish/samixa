@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  BookOpenText,
   HardDriveDownload,
   KeyRound,
   LogOut,
@@ -94,9 +95,44 @@ type SessionSnapshot = {
   }>;
 };
 
-type AdminTabKey = 'overview' | 'services' | 'sessions' | 'sources';
+type AdminTabKey = 'overview' | 'services' | 'sessions' | 'sources' | 'help';
 
 const OPERATOR_PORT = '21060';
+
+const helpDocuments = [
+  {
+    id: 'docs-index',
+    title: 'Documentation Index',
+    detail: 'Lean document set and document map',
+    href: '/help/UAIL-IT-Dashboard-Documentation-Index.pdf'
+  },
+  {
+    id: 'system-handbook',
+    title: 'System Handbook',
+    detail: 'Architecture, deployment, trust model, and security baseline',
+    href: '/help/UAIL-IT-Dashboard-System-Handbook.pdf'
+  },
+  {
+    id: 'operations-guide',
+    title: 'Operations Guide',
+    detail: 'Operator and admin runtime workflows',
+    href: '/help/UAIL-IT-Dashboard-Operations-Guide.pdf'
+  },
+  {
+    id: 'timeline',
+    title: 'Project Timeline',
+    detail: 'Git-history-based delivery progression',
+    href: '/help/UAIL-IT-Dashboard-Project-Timeline-2026-07-19.pdf'
+  },
+  {
+    id: 'executive-summary',
+    title: 'Executive Summary',
+    detail: 'Corporate review pack in landscape PDF format',
+    href: '/help/UAIL-IT-Dashboard-Executive-Summary.pdf'
+  }
+] as const;
+
+type HelpDocumentId = (typeof helpDocuments)[number]['id'];
 
 function cloneSettings(settings: AdminSettingsPayload) {
   return JSON.parse(JSON.stringify(settings)) as AdminSettingsPayload;
@@ -174,6 +210,7 @@ export default function AdminPage() {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
   const [draft, setDraft] = useState<AdminSettingsPayload | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTabKey>('overview');
+  const [selectedHelpDocId, setSelectedHelpDocId] = useState<HelpDocumentId>('system-handbook');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [serviceBusy, setServiceBusy] = useState<string | null>(null);
@@ -450,6 +487,7 @@ export default function AdminPage() {
     : 0;
   const servicesAttention = services.filter((entry) => entry.overallStatus !== 'online').length;
   const sessionsAttention = sessions.filter((entry) => entry.overallStatus !== 'authenticated').length;
+  const selectedHelpDocument = helpDocuments.find((entry) => entry.id === selectedHelpDocId) ?? helpDocuments[0];
 
   const tabs: Array<{
     key: AdminTabKey;
@@ -480,6 +518,12 @@ export default function AdminPage() {
       label: 'Sources',
       detail: 'Collector endpoints and credentials',
       icon: <Settings2 size={16} />
+    },
+    {
+      key: 'help',
+      label: 'Help',
+      detail: 'Embedded PDFs and reference material',
+      icon: <BookOpenText size={16} />
     }
   ];
 
@@ -906,6 +950,63 @@ export default function AdminPage() {
     </section>
   );
 
+  const renderHelpPanel = () => (
+    <section className="glass-panel" style={contentPanelStyle}>
+      <div style={panelHeaderStyle}>
+        <div>
+          <h2 style={panelTitleStyle}>Help</h2>
+          <div style={panelHintStyle}>The maintained documentation PDF set is embedded here for admin-side review and deployment support.</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.open(selectedHelpDocument.href, '_blank', 'noopener,noreferrer')}
+          style={secondaryButtonStyle}
+        >
+          <HardDriveDownload size={16} />
+          Open PDF
+        </button>
+      </div>
+
+      <div style={helpLayoutStyle}>
+        <div style={helpListStyle}>
+          {helpDocuments.map((document) => {
+            const active = document.id === selectedHelpDocument.id;
+            return (
+              <button
+                key={document.id}
+                type="button"
+                onClick={() => setSelectedHelpDocId(document.id)}
+                style={helpDocButtonStyle(active)}
+              >
+                <div style={{ display: 'grid', gap: '4px' }}>
+                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{document.title}</div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{document.detail}</div>
+                </div>
+                <span style={helpDocPillStyle(active)}>{active ? 'OPEN' : 'PDF'}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={helpViewerShellStyle}>
+          <div style={helpViewerMetaStyle}>
+            <div style={{ display: 'grid', gap: '4px' }}>
+              <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{selectedHelpDocument.title}</div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{selectedHelpDocument.detail}</div>
+            </div>
+            <span style={metaPillStyle}>Embedded PDF viewer</span>
+          </div>
+          <iframe
+            key={selectedHelpDocument.href}
+            title={selectedHelpDocument.title}
+            src={selectedHelpDocument.href}
+            style={helpViewerFrameStyle}
+          />
+        </div>
+      </div>
+    </section>
+  );
+
   return (
     <main
       style={pageShellStyle}
@@ -1000,6 +1101,7 @@ export default function AdminPage() {
           {activeTab === 'services' ? renderServicesPanel() : null}
           {activeTab === 'sessions' ? renderSessionsPanel() : null}
           {activeTab === 'sources' ? renderSourcesPanel() : null}
+          {activeTab === 'help' ? renderHelpPanel() : null}
         </div>
       </div>
     </main>
@@ -1384,6 +1486,80 @@ const itemCardStyle: React.CSSProperties = {
   padding: '12px',
   display: 'grid',
   gap: '10px'
+};
+
+const helpLayoutStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  gridTemplateColumns: 'minmax(280px, 360px) minmax(0, 1fr)',
+  alignItems: 'stretch',
+  minHeight: 0,
+  flex: '1 1 auto'
+};
+
+const helpListStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '8px',
+  alignContent: 'start',
+  minHeight: 0,
+  overflow: 'auto',
+  paddingRight: '4px'
+};
+
+const helpDocButtonStyle = (active: boolean): React.CSSProperties => ({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '10px',
+  textAlign: 'left',
+  padding: '10px 12px',
+  borderRadius: '14px',
+  border: active ? '1px solid rgba(21,101,192,0.22)' : '1px solid rgba(141,110,99,0.12)',
+  background: active ? 'rgba(21,101,192,0.08)' : 'rgba(255,255,255,0.62)',
+  color: 'var(--text-primary)',
+  cursor: 'pointer'
+});
+
+const helpDocPillStyle = (active: boolean): React.CSSProperties => ({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  minWidth: '54px',
+  padding: '6px 10px',
+  borderRadius: '999px',
+  fontSize: '0.72rem',
+  letterSpacing: '0.08em',
+  fontWeight: 800,
+  color: active ? '#1565c0' : 'var(--text-secondary)',
+  background: active ? 'rgba(21,101,192,0.12)' : 'rgba(93,64,55,0.08)',
+  border: active ? '1px solid rgba(21,101,192,0.18)' : '1px solid rgba(141,110,99,0.12)'
+});
+
+const helpViewerShellStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px',
+  minHeight: 0,
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.16)',
+  background: 'rgba(255,255,255,0.68)',
+  padding: '12px'
+};
+
+const helpViewerMetaStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '10px',
+  alignItems: 'center',
+  flexWrap: 'wrap'
+};
+
+const helpViewerFrameStyle: React.CSSProperties = {
+  width: '100%',
+  minHeight: '72vh',
+  height: '100%',
+  border: '1px solid rgba(141,110,99,0.16)',
+  borderRadius: '14px',
+  background: '#ffffff'
 };
 
 const sourceGridStyle: React.CSSProperties = {

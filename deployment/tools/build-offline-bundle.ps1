@@ -87,14 +87,14 @@ Invoke-RobocopyMirror -Source (Join-Path $deploymentRoot 'staging\current') -Des
 Invoke-RobocopyMirror -Source (Join-Path $deploymentRoot 'postgres\support') -Destination (Join-Path $bundleRoot 'postgres\support')
 
 [System.IO.Directory]::CreateDirectory((Join-Path $bundleRoot 'docs')) | Out-Null
-foreach ($docName in @(
-  'offline_server_bundle_2026-07-17.md',
-  'windows_deployment_instructions_2026-07-15.md',
-  'windows_staged_copy_set_2026-07-15.md'
+foreach ($docPath in @(
+  (Join-Path $deploymentRoot 'README.md'),
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\README.md'),
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\system-handbook.md'),
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\operations-guide.md')
 )) {
-  $docPath = Join-Path $deploymentRoot "docs\$docName"
   if (Test-Path -LiteralPath $docPath) {
-    Copy-Item -LiteralPath $docPath -Destination (Join-Path $bundleRoot "docs\$docName") -Force
+    Copy-Item -LiteralPath $docPath -Destination (Join-Path $bundleRoot ("docs\" + (Split-Path $docPath -Leaf))) -Force
   }
 }
 

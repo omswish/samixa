@@ -1,6 +1,6 @@
 # Documentation Index
 
-This directory replaces the earlier ad hoc planning notes with a maintainable documentation set aligned to the current implementation.
+This is the lean maintained documentation set for the current project baseline.
 
 | Attribute | Value |
 | --- | --- |
@@ -8,18 +8,23 @@ This directory replaces the earlier ad hoc planning notes with a maintainable do
 | Status | Internal review |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Effective Date | 2026-07-17 |
-| Review Cycle | On major release or architecture/security change |
+| Effective Date | 2026-07-19 |
+| Review Cycle | On major release or architecture, deployment, or security change |
 
-## Document Set
-- [Document Register](document-register.md)
-- [Product Requirements Specification](product-requirements-specification.md)
-- [Architecture and Design](architecture-and-design.md)
-- [Information Security](information-security.md)
-- [Operator User Manual](operator-manual.md)
-- [Admin User Manual](admin-manual.md)
-- [Deployment Guide](deployment-guide.md)
+## Canonical Documents
+- [System Handbook](system-handbook.md)
+- [Operations Guide](operations-guide.md)
+- [Project Timeline](project-timeline-2026-07-19.md)
 - [Executive Summary Pack](executive-summary-pack.md)
+
+## PDF Set
+Generated PDFs are placed under `docs/pdf/` and copied into `dashboard/public/help/` for the admin Help tab.
+
+Regenerate them with:
+
+```powershell
+node docs/tools/export-markdown-pdfs.mjs
+```
 
 ## Visual Assets
 - [Operator login](assets/screenshots/operator-login.png)
@@ -27,21 +32,14 @@ This directory replaces the earlier ad hoc planning notes with a maintainable do
 - [Admin overview](assets/screenshots/admin-overview.png)
 - [Admin sessions](assets/screenshots/admin-sessions.png)
 
-## PDF Exports
-- Generated PDFs are placed under `docs/pdf/`
-- Regenerate them with:
-
-```powershell
-node docs/tools/export-markdown-pdfs.mjs
-```
-
 ## Current Scope
 - Primary wallboard target: `1920x1200`
 - Secondary desktop target: `1920x1080`
 - Alternate responsive layout for tablet and mobile browsers
 - Single deployed Next.js application with separate operator and admin front doors
 - SQLite remains the active runtime store
-- PostgreSQL remains an optional mirror and control-plane store
+- PostgreSQL remains optional, not mandatory
 
-## Superseded Notes
-The old `guide_next/` working notes were useful during iterative delivery but are no longer the canonical project documentation. This folder should be treated as the maintained source of truth for design, usage, deployment, and security guidance.
+## Supporting Runtime Notes
+- Deployment folder notes remain under [deployment/README.md](../deployment/README.md)
+- The admin surface exposes the retained PDF set directly in its Help area
