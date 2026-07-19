@@ -1,5 +1,5 @@
 param(
-  [string]$BundleName = 'utkal-it-dashboard-offline-server-bundle-2026-07-17',
+  [string]$BundleName = "utkal-it-dashboard-offline-server-bundle-$(Get-Date -Format 'yyyy-MM-dd')",
   [string]$PostgresSourceRoot = 'C:\Program Files\PostgreSQL\18',
   [string]$ReleaseRoot = (Join-Path $PSScriptRoot '..\release')
 )

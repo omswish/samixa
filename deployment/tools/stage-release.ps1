@@ -168,6 +168,7 @@ $workspaceCopyMap = @(
   @{ Source = 'collectors\symphony\dist'; Destination = 'collectors\symphony\dist' },
   @{ Source = 'collectors\symphony\package.json'; Destination = 'collectors\symphony\package.json' },
   @{ Source = 'dashboard\.next'; Destination = 'dashboard\.next' },
+  @{ Source = 'dashboard\public'; Destination = 'dashboard\public' },
   @{ Source = 'dashboard\package.json'; Destination = 'dashboard\package.json' },
   @{ Source = 'dashboard\next.config.js'; Destination = 'dashboard\next.config.js' },
   @{ Source = 'frontdoor-proxy\dist'; Destination = 'frontdoor-proxy\dist' },
@@ -257,6 +258,7 @@ Assert-StagedPath -Path (Join-Path $appStage 'ecosystem.config.js') -Description
 Assert-StagedPath -Path (Join-Path $appStage 'api-gateway\dist\index.js') -Description 'API gateway build'
 Assert-StagedPath -Path (Join-Path $appStage 'frontdoor-proxy\dist\index.js') -Description 'frontdoor proxy build'
 Assert-StagedPath -Path (Join-Path $appStage 'dashboard\.next\BUILD_ID') -Description 'Next.js production build'
+Assert-StagedPath -Path (Join-Path $appStage 'dashboard\public\help\UAIL-IT-Dashboard-User-Manual.pdf') -Description 'dashboard help PDF asset'
 Assert-StagedPath -Path (Join-Path $appStage 'node_modules\next\dist\bin\next') -Description 'Next.js runtime'
 Assert-StagedPath -Path (Join-Path $runtimeNodeStage 'node.exe') -Description 'bundled Node runtime'
 Assert-StagedPath -Path (Join-Path $runtimeToolsStage 'node_modules\pm2\bin\pm2') -Description 'bundled PM2 runtime'
