@@ -33,10 +33,11 @@ Operational wallboard for Utkal Alumina IT operations. The application aggregate
 ## Documentation
 The maintained document set is under [docs/README.md](docs/README.md).
 The primary reference documents are:
-- [System Handbook](docs/system-handbook.md)
-- [Operations Guide](docs/operations-guide.md)
-- [Project Timeline](docs/project-timeline-2026-07-19.md)
-- [Executive Summary Pack](docs/executive-summary-pack.md)
+- [Product Requirements Document](docs/product-requirements-document.md)
+- [Project Documentation and Timeline](docs/project-documentation-and-timeline.md)
+- [System Design](docs/system-design.md)
+- [User Manual](docs/user-manual.md)
+- [Developer Handbook](docs/developer-handbook.md)
 
 ## Basic Operations
 Build the workspaces:

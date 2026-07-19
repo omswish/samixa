@@ -101,34 +101,34 @@ const OPERATOR_PORT = '21060';
 
 const helpDocuments = [
   {
-    id: 'docs-index',
-    title: 'Documentation Index',
-    detail: 'Lean document set and document map',
-    href: '/help/UAIL-IT-Dashboard-Documentation-Index.pdf'
+    id: 'prd',
+    title: 'PRD',
+    detail: 'Product vision, scope, requirements, and acceptance criteria',
+    href: '/help/UAIL-IT-Dashboard-PRD.pdf'
   },
   {
-    id: 'system-handbook',
-    title: 'System Handbook',
-    detail: 'Architecture, deployment, trust model, and security baseline',
-    href: '/help/UAIL-IT-Dashboard-System-Handbook.pdf'
+    id: 'project-documentation',
+    title: 'Project Documentation',
+    detail: 'Project baseline, workstreams, and git-history timeline',
+    href: '/help/UAIL-IT-Dashboard-Project-Documentation-and-Timeline.pdf'
   },
   {
-    id: 'operations-guide',
-    title: 'Operations Guide',
-    detail: 'Operator and admin runtime workflows',
-    href: '/help/UAIL-IT-Dashboard-Operations-Guide.pdf'
+    id: 'system-design',
+    title: 'System Design',
+    detail: 'Architecture, runtime topology, and source-of-truth flows',
+    href: '/help/UAIL-IT-Dashboard-System-Design.pdf'
   },
   {
-    id: 'timeline',
-    title: 'Project Timeline',
-    detail: 'Git-history-based delivery progression',
-    href: '/help/UAIL-IT-Dashboard-Project-Timeline-2026-07-19.pdf'
+    id: 'user-manual',
+    title: 'User Manual',
+    detail: 'Operator and admin usage guidance',
+    href: '/help/UAIL-IT-Dashboard-User-Manual.pdf'
   },
   {
-    id: 'executive-summary',
-    title: 'Executive Summary',
-    detail: 'Corporate review pack in landscape PDF format',
-    href: '/help/UAIL-IT-Dashboard-Executive-Summary.pdf'
+    id: 'developer-handbook',
+    title: 'Developer Handbook',
+    detail: 'Repository structure, workflows, and maintenance rules',
+    href: '/help/UAIL-IT-Dashboard-Developer-Handbook.pdf'
   }
 ] as const;
 
@@ -210,7 +210,7 @@ export default function AdminPage() {
   const [sessions, setSessions] = useState<SessionSnapshot[]>([]);
   const [draft, setDraft] = useState<AdminSettingsPayload | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTabKey>('overview');
-  const [selectedHelpDocId, setSelectedHelpDocId] = useState<HelpDocumentId>('system-handbook');
+  const [selectedHelpDocId, setSelectedHelpDocId] = useState<HelpDocumentId>('prd');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [serviceBusy, setServiceBusy] = useState<string | null>(null);

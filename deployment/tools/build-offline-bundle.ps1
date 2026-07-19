@@ -90,8 +90,11 @@ Invoke-RobocopyMirror -Source (Join-Path $deploymentRoot 'postgres\support') -De
 foreach ($docPath in @(
   (Join-Path $deploymentRoot 'README.md'),
   (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\README.md'),
-  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\system-handbook.md'),
-  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\operations-guide.md')
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\product-requirements-document.md'),
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\project-documentation-and-timeline.md'),
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\system-design.md'),
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\user-manual.md'),
+  (Join-Path (Split-Path $deploymentRoot -Parent) 'docs\developer-handbook.md')
 )) {
   if (Test-Path -LiteralPath $docPath) {
     Copy-Item -LiteralPath $docPath -Destination (Join-Path $bundleRoot ("docs\" + (Split-Path $docPath -Leaf))) -Force

@@ -38,6 +38,8 @@ Operational note:
 - HSD also exposes an explicit legacy-profile import helper for recovery cases where an older authenticated Edge profile must be migrated into storage-state JSON
 
 Maintained references:
-- [docs/system-handbook.md](../docs/system-handbook.md)
-- [docs/operations-guide.md](../docs/operations-guide.md)
-- [docs/project-timeline-2026-07-19.md](../docs/project-timeline-2026-07-19.md)
+- [docs/product-requirements-document.md](../docs/product-requirements-document.md)
+- [docs/project-documentation-and-timeline.md](../docs/project-documentation-and-timeline.md)
+- [docs/system-design.md](../docs/system-design.md)
+- [docs/user-manual.md](../docs/user-manual.md)
+- [docs/developer-handbook.md](../docs/developer-handbook.md)
