@@ -53,6 +53,22 @@ function Get-RequiredEnvValue {
   return $value
 }
 
+function Get-RequiredEnvValueFromAny {
+  param(
+    [Parameter(Mandatory = $true)][hashtable]$EnvMap,
+    [Parameter(Mandatory = $true)][string[]]$Names
+  )
+
+  foreach ($name in $Names) {
+    $value = $EnvMap[$name]
+    if (-not [string]::IsNullOrWhiteSpace($value)) {
+      return $value
+    }
+  }
+
+  throw "Required setting missing in env file. Checked: $($Names -join ', ')"
+}
+
 function New-RandomHex {
   param(
     [int]$ByteCount = 32
@@ -217,8 +233,10 @@ try {
     -NutanixPassword (Get-RequiredEnvValue -EnvMap $envMap -Name 'NUTANIX_PASS') `
     -SolarWindsServersHost (Get-RequiredEnvValue -EnvMap $envMap -Name 'SW_HOST_SERVERS') `
     -SolarWindsNetworksHost (Get-RequiredEnvValue -EnvMap $envMap -Name 'SW_HOST_NETWORKS') `
-    -SolarWindsUser (Get-RequiredEnvValue -EnvMap $envMap -Name 'SW_USER') `
-    -SolarWindsPassword (Get-RequiredEnvValue -EnvMap $envMap -Name 'SW_PASS') `
+    -SolarWindsServersUser (Get-RequiredEnvValueFromAny -EnvMap $envMap -Names @('SW_SERVERS_USER', 'SW_USER')) `
+    -SolarWindsServersPassword (Get-RequiredEnvValueFromAny -EnvMap $envMap -Names @('SW_SERVERS_PASS', 'SW_PASS')) `
+    -SolarWindsNetworksUser (Get-RequiredEnvValueFromAny -EnvMap $envMap -Names @('SW_NETWORKS_USER', 'SW_USER')) `
+    -SolarWindsNetworksPassword (Get-RequiredEnvValueFromAny -EnvMap $envMap -Names @('SW_NETWORKS_PASS', 'SW_PASS')) `
     -SymphonyUrl (Get-RequiredEnvValue -EnvMap $envMap -Name 'SYM_URL') `
     -SymphonyUser (Get-RequiredEnvValue -EnvMap $envMap -Name 'SYM_USER') `
     -SymphonyPassword (Get-RequiredEnvValue -EnvMap $envMap -Name 'SYM_PASS') `

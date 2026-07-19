@@ -1,6 +1,12 @@
-export interface SolarWindsRuntimeSecrets {
+import type { SolarWindsTargetName } from './runtimeConfig';
+
+export interface SolarWindsTargetRuntimeSecrets {
   username: string | null;
   password: string | null;
+}
+
+export interface SolarWindsRuntimeSecrets {
+  targets: Record<SolarWindsTargetName, SolarWindsTargetRuntimeSecrets>;
 }
 
 function buildRuntimeSecretsUrl(apiUrl: string): string {
@@ -12,8 +18,16 @@ function buildRuntimeSecretsUrl(apiUrl: string): string {
 
 export async function loadSolarWindsRuntimeSecrets(apiUrl: string): Promise<SolarWindsRuntimeSecrets> {
   const fallback: SolarWindsRuntimeSecrets = {
-    username: process.env.SW_USER ?? null,
-    password: process.env.SW_PASS ?? null
+    targets: {
+      servers: {
+        username: process.env.SW_SERVERS_USER ?? process.env.SW_USER ?? null,
+        password: process.env.SW_SERVERS_PASS ?? process.env.SW_PASS ?? null
+      },
+      networks: {
+        username: process.env.SW_NETWORKS_USER ?? process.env.SW_USER ?? null,
+        password: process.env.SW_NETWORKS_PASS ?? process.env.SW_PASS ?? null
+      }
+    }
   };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
@@ -35,18 +49,18 @@ export async function loadSolarWindsRuntimeSecrets(apiUrl: string): Promise<Sola
       }>;
     };
 
-    const preferredTargets = ['servers', 'networks'];
-    for (const targetName of preferredTargets) {
-      const target = payload.targets?.[targetName];
-      if (target?.username || target?.password) {
-        return {
-          username: target.username ?? fallback.username,
-          password: target.password ?? fallback.password
-        };
+    return {
+      targets: {
+        servers: {
+          username: payload.targets?.servers?.username ?? fallback.targets.servers.username,
+          password: payload.targets?.servers?.password ?? fallback.targets.servers.password
+        },
+        networks: {
+          username: payload.targets?.networks?.username ?? fallback.targets.networks.username,
+          password: payload.targets?.networks?.password ?? fallback.targets.networks.password
+        }
       }
-    }
-
-    return fallback;
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[runtime-secrets] SolarWinds secrets fetch failed. Falling back to env/defaults: ${message}`);

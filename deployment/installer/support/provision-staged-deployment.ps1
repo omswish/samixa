@@ -23,6 +23,10 @@ param(
   [string]$SolarWindsNetworksHost = '',
   [string]$SolarWindsUser = '',
   [string]$SolarWindsPassword = '',
+  [string]$SolarWindsServersUser = '',
+  [string]$SolarWindsServersPassword = '',
+  [string]$SolarWindsNetworksUser = '',
+  [string]$SolarWindsNetworksPassword = '',
   [string]$SymphonyUrl = '',
   [string]$SymphonyUser = '',
   [string]$SymphonyPassword = '',
@@ -376,18 +380,40 @@ if ([string]::IsNullOrWhiteSpace($SolarWindsNetworksHost)) {
     $SolarWindsNetworksHost = Read-RequiredText -Prompt 'SolarWinds networks host' -Default '10.36.91.46'
   }
 }
-if ([string]::IsNullOrWhiteSpace($SolarWindsUser)) {
-  if ($NonInteractive) {
-    Assert-RequiredValue -Name 'SolarWindsUser' -Value $SolarWindsUser
+if ([string]::IsNullOrWhiteSpace($SolarWindsServersUser)) {
+  if (-not [string]::IsNullOrWhiteSpace($SolarWindsUser)) {
+    $SolarWindsServersUser = $SolarWindsUser
+  } elseif ($NonInteractive) {
+    Assert-RequiredValue -Name 'SolarWindsServersUser' -Value $SolarWindsServersUser
   } else {
-    $SolarWindsUser = Read-RequiredText -Prompt 'SolarWinds/HSD username'
+    $SolarWindsServersUser = Read-RequiredText -Prompt 'SolarWinds servers username'
   }
 }
-if ([string]::IsNullOrWhiteSpace($SolarWindsPassword)) {
-  if ($NonInteractive) {
-    Assert-RequiredValue -Name 'SolarWindsPassword' -Value $SolarWindsPassword
+if ([string]::IsNullOrWhiteSpace($SolarWindsServersPassword)) {
+  if (-not [string]::IsNullOrWhiteSpace($SolarWindsPassword)) {
+    $SolarWindsServersPassword = $SolarWindsPassword
+  } elseif ($NonInteractive) {
+    Assert-RequiredValue -Name 'SolarWindsServersPassword' -Value $SolarWindsServersPassword
   } else {
-    $SolarWindsPassword = Read-RequiredSecret -Prompt 'SolarWinds/HSD password'
+    $SolarWindsServersPassword = Read-RequiredSecret -Prompt 'SolarWinds servers password'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($SolarWindsNetworksUser)) {
+  if (-not [string]::IsNullOrWhiteSpace($SolarWindsUser)) {
+    $SolarWindsNetworksUser = $SolarWindsUser
+  } elseif ($NonInteractive) {
+    Assert-RequiredValue -Name 'SolarWindsNetworksUser' -Value $SolarWindsNetworksUser
+  } else {
+    $SolarWindsNetworksUser = Read-RequiredText -Prompt 'SolarWinds networks username'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($SolarWindsNetworksPassword)) {
+  if (-not [string]::IsNullOrWhiteSpace($SolarWindsPassword)) {
+    $SolarWindsNetworksPassword = $SolarWindsPassword
+  } elseif ($NonInteractive) {
+    Assert-RequiredValue -Name 'SolarWindsNetworksPassword' -Value $SolarWindsNetworksPassword
+  } else {
+    $SolarWindsNetworksPassword = Read-RequiredSecret -Prompt 'SolarWinds networks password'
   }
 }
 
@@ -398,15 +424,20 @@ if ([string]::IsNullOrWhiteSpace($SymphonyUrl)) {
     $SymphonyUrl = Read-RequiredText -Prompt 'HSD dashboard URL' -Default 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx'
   }
 }
-$SymphonyUser = Get-TrimmedOrDefault -Value $SymphonyUser -Default $SolarWindsUser
-$SymphonyPassword = Get-TrimmedOrDefault -Value $SymphonyPassword -Default $SolarWindsPassword
-
 if ([string]::IsNullOrWhiteSpace($SymphonyUser)) {
-  throw 'SymphonyUser could not be resolved. Provide SolarWinds/HSD credentials.'
+  if ($NonInteractive) {
+    Assert-RequiredValue -Name 'SymphonyUser' -Value $SymphonyUser
+  } else {
+    $SymphonyUser = Read-RequiredText -Prompt 'HSD username'
+  }
 }
 
 if ([string]::IsNullOrWhiteSpace($SymphonyPassword)) {
-  throw 'SymphonyPassword could not be resolved. Provide SolarWinds/HSD credentials.'
+  if ($NonInteractive) {
+    Assert-RequiredValue -Name 'SymphonyPassword' -Value $SymphonyPassword
+  } else {
+    $SymphonyPassword = Read-RequiredSecret -Prompt 'HSD password'
+  }
 }
 
 if (-not $PSBoundParameters.ContainsKey('SkipFirewallRule')) {
@@ -463,10 +494,12 @@ $envLines = @(
   "NUTANIX_PASS=$NutanixPassword",
   "NUTANIX_HOST=$NutanixHost",
   "NUTANIX_PORT=$NutanixPort",
-  "SW_USER=$SolarWindsUser",
-  "SW_PASS=$SolarWindsPassword",
   "SW_HOST_SERVERS=$SolarWindsServersHost",
+  "SW_SERVERS_USER=$SolarWindsServersUser",
+  "SW_SERVERS_PASS=$SolarWindsServersPassword",
   "SW_HOST_NETWORKS=$SolarWindsNetworksHost",
+  "SW_NETWORKS_USER=$SolarWindsNetworksUser",
+  "SW_NETWORKS_PASS=$SolarWindsNetworksPassword",
   "SYM_USER=$SymphonyUser",
   "SYM_PASS=$SymphonyPassword",
   "SYM_URL=$SymphonyUrl",
@@ -502,7 +535,10 @@ Write-Host 'Secret store enabled:' (-not [string]::IsNullOrWhiteSpace($SecretSto
 Write-Host 'Nutanix host:' $NutanixHost
 Write-Host 'SolarWinds servers host:' $SolarWindsServersHost
 Write-Host 'SolarWinds networks host:' $SolarWindsNetworksHost
+Write-Host 'SolarWinds servers username set:' (-not [string]::IsNullOrWhiteSpace($SolarWindsServersUser))
+Write-Host 'SolarWinds networks username set:' (-not [string]::IsNullOrWhiteSpace($SolarWindsNetworksUser))
 Write-Host 'HSD URL:' $SymphonyUrl
+Write-Host 'HSD username set:' (-not [string]::IsNullOrWhiteSpace($SymphonyUser))
 Write-Host 'Configure firewall rule:' (-not $SkipFirewallRule)
 Write-Host 'Start stack:' (-not $SkipStartStack)
 Write-Host 'Register autostart:' (-not $SkipAutostart)

@@ -39,8 +39,10 @@ function buildEnvSecretMap(): Array<{
 }> {
   const nutanixUser = process.env.NUTANIX_USER ?? null;
   const nutanixPass = process.env.NUTANIX_PASS ?? null;
-  const solarwindsUser = process.env.SW_USER ?? null;
-  const solarwindsPass = process.env.SW_PASS ?? null;
+  const solarwindsServersUser = process.env.SW_SERVERS_USER ?? process.env.SW_USER ?? null;
+  const solarwindsServersPass = process.env.SW_SERVERS_PASS ?? process.env.SW_PASS ?? null;
+  const solarwindsNetworksUser = process.env.SW_NETWORKS_USER ?? process.env.SW_USER ?? null;
+  const solarwindsNetworksPass = process.env.SW_NETWORKS_PASS ?? process.env.SW_PASS ?? null;
   const symphonyUser = process.env.SYM_USER ?? null;
   const symphonyPass = process.env.SYM_PASS ?? null;
 
@@ -56,15 +58,15 @@ function buildEnvSecretMap(): Array<{
       configKey: 'solarwinds:servers',
       sourceName: 'solarwinds',
       targetName: 'servers',
-      username: solarwindsUser,
-      password: solarwindsPass
+      username: solarwindsServersUser,
+      password: solarwindsServersPass
     },
     {
       configKey: 'solarwinds:networks',
       sourceName: 'solarwinds',
       targetName: 'networks',
-      username: solarwindsUser,
-      password: solarwindsPass
+      username: solarwindsNetworksUser,
+      password: solarwindsNetworksPass
     },
     {
       configKey: 'symphony:primary',

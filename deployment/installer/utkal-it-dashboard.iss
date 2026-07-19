@@ -51,7 +51,9 @@ var
   PostgresSecretPage: TInputQueryWizardPage;
   PostgresSslPage: TInputOptionWizardPage;
   NutanixPage: TInputQueryWizardPage;
-  SolarWindsPage: TInputQueryWizardPage;
+  SolarWindsServersPage: TInputQueryWizardPage;
+  SolarWindsNetworksPage: TInputQueryWizardPage;
+  SymphonyPage: TInputQueryWizardPage;
   DashboardPortsPage: TInputQueryWizardPage;
   GeneratedAppAuthSecret: string;
 
@@ -123,25 +125,45 @@ begin
   NutanixPage.Values[0] := '10.23.50.27';
   NutanixPage.Values[1] := '9440';
 
-  SolarWindsPage :=
+  SolarWindsServersPage :=
     CreateInputQueryPage(
       NutanixPage.ID,
-      'SolarWinds and HSD Sources',
-      'Enter the SolarWinds and HSD connection details',
-      'The same portal credentials are used for SolarWinds and HSD by default.'
+      'SolarWinds Servers Source',
+      'Enter the SolarWinds servers portal connection details',
+      'These values seed the deployed .env file for the SolarWinds 45 collector.'
     );
-  SolarWindsPage.Add('SolarWinds servers host', False);
-  SolarWindsPage.Add('SolarWinds networks host', False);
-  SolarWindsPage.Add('SolarWinds/HSD username', False);
-  SolarWindsPage.Add('SolarWinds/HSD password', True);
-  SolarWindsPage.Add('HSD dashboard URL', False);
-  SolarWindsPage.Values[0] := '10.36.91.45';
-  SolarWindsPage.Values[1] := '10.36.91.46';
-  SolarWindsPage.Values[4] := 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
+  SolarWindsServersPage.Add('SolarWinds servers host', False);
+  SolarWindsServersPage.Add('SolarWinds servers username', False);
+  SolarWindsServersPage.Add('SolarWinds servers password', True);
+  SolarWindsServersPage.Values[0] := '10.36.91.45';
+
+  SolarWindsNetworksPage :=
+    CreateInputQueryPage(
+      SolarWindsServersPage.ID,
+      'SolarWinds Networks Source',
+      'Enter the SolarWinds networks portal connection details',
+      'These values seed the deployed .env file for the SolarWinds 46 collector.'
+    );
+  SolarWindsNetworksPage.Add('SolarWinds networks host', False);
+  SolarWindsNetworksPage.Add('SolarWinds networks username', False);
+  SolarWindsNetworksPage.Add('SolarWinds networks password', True);
+  SolarWindsNetworksPage.Values[0] := '10.36.91.46';
+
+  SymphonyPage :=
+    CreateInputQueryPage(
+      SolarWindsNetworksPage.ID,
+      'HSD Source',
+      'Enter the HSD portal connection details',
+      'Use the dedicated HSD dashboard URL and HSD credentials for the Symphony collector.'
+    );
+  SymphonyPage.Add('HSD dashboard URL', False);
+  SymphonyPage.Add('HSD username', False);
+  SymphonyPage.Add('HSD password', True);
+  SymphonyPage.Values[0] := 'https://hsd.adityabirla.com/MDLIncidentMgmt/SDE_Dashboard.aspx';
 
   DashboardPortsPage :=
     CreateInputQueryPage(
-      SolarWindsPage.ID,
+      SymphonyPage.ID,
       'Dashboard Ports',
       'Choose the operator and admin web ports',
       'Expose only these two web ports to approved internal users. Internal service ports remain loopback-only.'
@@ -311,13 +333,15 @@ begin
     'NUTANIX_PASS=' + TrimmedPageValue(NutanixPage, 3) + #13#10 +
     'NUTANIX_HOST=' + TrimmedPageValue(NutanixPage, 0) + #13#10 +
     'NUTANIX_PORT=' + TrimmedPageValue(NutanixPage, 1) + #13#10 +
-    'SW_USER=' + TrimmedPageValue(SolarWindsPage, 2) + #13#10 +
-    'SW_PASS=' + TrimmedPageValue(SolarWindsPage, 3) + #13#10 +
-    'SW_HOST_SERVERS=' + TrimmedPageValue(SolarWindsPage, 0) + #13#10 +
-    'SW_HOST_NETWORKS=' + TrimmedPageValue(SolarWindsPage, 1) + #13#10 +
-    'SYM_USER=' + TrimmedPageValue(SolarWindsPage, 2) + #13#10 +
-    'SYM_PASS=' + TrimmedPageValue(SolarWindsPage, 3) + #13#10 +
-    'SYM_URL=' + TrimmedPageValue(SolarWindsPage, 4) + #13#10 +
+    'SW_HOST_SERVERS=' + TrimmedPageValue(SolarWindsServersPage, 0) + #13#10 +
+    'SW_SERVERS_USER=' + TrimmedPageValue(SolarWindsServersPage, 1) + #13#10 +
+    'SW_SERVERS_PASS=' + TrimmedPageValue(SolarWindsServersPage, 2) + #13#10 +
+    'SW_HOST_NETWORKS=' + TrimmedPageValue(SolarWindsNetworksPage, 0) + #13#10 +
+    'SW_NETWORKS_USER=' + TrimmedPageValue(SolarWindsNetworksPage, 1) + #13#10 +
+    'SW_NETWORKS_PASS=' + TrimmedPageValue(SolarWindsNetworksPage, 2) + #13#10 +
+    'SYM_URL=' + TrimmedPageValue(SymphonyPage, 0) + #13#10 +
+    'SYM_USER=' + TrimmedPageValue(SymphonyPage, 1) + #13#10 +
+    'SYM_PASS=' + TrimmedPageValue(SymphonyPage, 2) + #13#10 +
     'ITDASH_RUNTIME_ROOT=' + GetRuntimeRoot() + #13#10 +
     'SECRET_STORE_PASSPHRASE=' + TrimmedPageValue(PostgresSecretPage, 1) + #13#10 +
     PostgresUrlLine +
@@ -528,31 +552,59 @@ begin
     end;
   end;
 
-  if CurPageID = SolarWindsPage.ID then
+  if CurPageID = SolarWindsServersPage.ID then
   begin
-    if TrimmedPageValue(SolarWindsPage, 0) = '' then
+    if TrimmedPageValue(SolarWindsServersPage, 0) = '' then
     begin
       MsgBox('SolarWinds servers host is required.', mbError, MB_OK);
       Result := False;
     end;
-    if Result and (TrimmedPageValue(SolarWindsPage, 1) = '') then
+    if Result and (TrimmedPageValue(SolarWindsServersPage, 1) = '') then
+    begin
+      MsgBox('SolarWinds servers username is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(SolarWindsServersPage, 2) = '') then
+    begin
+      MsgBox('SolarWinds servers password is required.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+
+  if CurPageID = SolarWindsNetworksPage.ID then
+  begin
+    if TrimmedPageValue(SolarWindsNetworksPage, 0) = '' then
     begin
       MsgBox('SolarWinds networks host is required.', mbError, MB_OK);
       Result := False;
     end;
-    if Result and (TrimmedPageValue(SolarWindsPage, 2) = '') then
+    if Result and (TrimmedPageValue(SolarWindsNetworksPage, 1) = '') then
     begin
-      MsgBox('SolarWinds/HSD username is required.', mbError, MB_OK);
+      MsgBox('SolarWinds networks username is required.', mbError, MB_OK);
       Result := False;
     end;
-    if Result and (TrimmedPageValue(SolarWindsPage, 3) = '') then
+    if Result and (TrimmedPageValue(SolarWindsNetworksPage, 2) = '') then
     begin
-      MsgBox('SolarWinds/HSD password is required.', mbError, MB_OK);
+      MsgBox('SolarWinds networks password is required.', mbError, MB_OK);
       Result := False;
     end;
-    if Result and (TrimmedPageValue(SolarWindsPage, 4) = '') then
+  end;
+
+  if CurPageID = SymphonyPage.ID then
+  begin
+    if TrimmedPageValue(SymphonyPage, 0) = '' then
     begin
       MsgBox('HSD dashboard URL is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(SymphonyPage, 1) = '') then
+    begin
+      MsgBox('HSD username is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(SymphonyPage, 2) = '') then
+    begin
+      MsgBox('HSD password is required.', mbError, MB_OK);
       Result := False;
     end;
   end;

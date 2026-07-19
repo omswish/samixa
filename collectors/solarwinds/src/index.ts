@@ -1059,16 +1059,32 @@ async function collectSolarWindsData() {
   const networkResult: SectionResult<NetworkMetric[]> = { attemptedAt: cycleAttemptedAt };
 
   try {
-    const credentials = {
-      username: requireEnv('SW_USER', runtimeSecrets.username ?? undefined),
-      password: requireEnv('SW_PASS', runtimeSecrets.password ?? undefined)
+    const serverCredentials = {
+      username: requireEnv(
+        'SW_SERVERS_USER',
+        runtimeSecrets.targets.servers.username ?? process.env.SW_USER ?? undefined
+      ),
+      password: requireEnv(
+        'SW_SERVERS_PASS',
+        runtimeSecrets.targets.servers.password ?? process.env.SW_PASS ?? undefined
+      )
+    };
+    const networkCredentials = {
+      username: requireEnv(
+        'SW_NETWORKS_USER',
+        runtimeSecrets.targets.networks.username ?? process.env.SW_USER ?? undefined
+      ),
+      password: requireEnv(
+        'SW_NETWORKS_PASS',
+        runtimeSecrets.targets.networks.password ?? process.env.SW_PASS ?? undefined
+      )
     };
 
     let serverContext: BrowserContext | undefined;
     try {
       const { context, page } = await ensureAuthenticatedPage(
         hostConfigs.servers,
-        credentials,
+        serverCredentials,
         'table.NeedsZebraStripes, table.sw-custom-query-table'
       );
       serverContext = context;
@@ -1089,7 +1105,7 @@ async function collectSolarWindsData() {
     try {
       const { context, page } = await ensureAuthenticatedPage(
         hostConfigs.networks,
-        credentials,
+        networkCredentials,
         'table.NeedsZebraStripes'
       );
       networkContext = context;
