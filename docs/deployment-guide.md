@@ -27,7 +27,7 @@ Internal-only services remain on loopback:
 
 ## 3. Packaging Options
 - Installer: `deployment/installer/output/utkal-it-dashboard-setup.exe`
-- Offline bundle: `deployment/release/utkal-it-dashboard-offline-server-bundle-2026-07-17.zip`
+- Offline bundle: `deployment/release/utkal-it-dashboard-offline-server-bundle-2026-07-19.zip`
 - Staged fallback payload: `deployment/staging/current`
 
 For detailed packaging mechanics, keep the deployment-specific runbooks under `deployment/`.
@@ -117,6 +117,14 @@ Do not expose:
 - All expected PM2 services are online
 - Dashboard sections show expected freshness status
 - HSD and SolarWinds session validation shows real portal state
+
+Use the packaged smoke test before release handoff or after rebuilding the staged payload:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File deployment\tools\validate-offline-deployment.ps1
+```
+
+The smoke test provisions the staged package into a temporary runtime root, starts an isolated PM2 stack on `22160` and `22161`, verifies the operator and admin login prompts, authenticates to the admin surface, validates the `/api/admin/services` response, then tears the temporary install back down.
 
 ## 13. Operational Security Notes
 - Deploy behind LAN restrictions only

@@ -57,7 +57,6 @@ var
 
 procedure InitializeWizard;
 begin
-  Randomize;
   GeneratedAppAuthSecret := '';
 
   PostgresModePage :=
@@ -235,13 +234,23 @@ begin
     Result := 'false';
 end;
 
+function NormalizeGuidToken(const Value: string): string;
+begin
+  Result := Lowercase(Value);
+  StringChangeEx(Result, '{', '', True);
+  StringChangeEx(Result, '}', '', True);
+  StringChangeEx(Result, '-', '', True);
+end;
+
 function GenerateSecret(PartCount: Integer): string;
 var
   I: Integer;
+  TypeLib: Variant;
 begin
   Result := '';
-  for I := 1 to (PartCount * 8) do
-    Result := Result + HexDigit(Random(16));
+  TypeLib := CreateOleObject('Scriptlet.TypeLib');
+  for I := 1 to PartCount do
+    Result := Result + NormalizeGuidToken(TypeLib.Guid);
 end;
 
 function GetOrCreateAppAuthSecret(): string;
