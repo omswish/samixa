@@ -412,6 +412,7 @@ if ($DryRun) {
 
 Invoke-InstalledPowerShellScript -Name 'update-service-manifest.ps1' -Arguments @(
   '-InstallRoot', $InstallRoot,
+  '-RuntimeRoot', $RuntimeRoot,
   '-OperatorPort', $OperatorPort.ToString(),
   '-AdminPort', $AdminPort.ToString()
 )
