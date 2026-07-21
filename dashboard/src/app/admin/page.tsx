@@ -57,6 +57,28 @@ type AdminSettingsPayload = {
   };
 };
 
+type AppAuthStatus = {
+  mode: 'runtime' | 'env';
+  updatedAt: string | null;
+  users: {
+    admin: {
+      custom: boolean;
+      source: 'runtime' | 'env';
+    };
+    operator: {
+      custom: boolean;
+      source: 'runtime' | 'env';
+    };
+  };
+};
+
+type PasswordDraft = {
+  adminPassword: string;
+  adminConfirm: string;
+  operatorPassword: string;
+  operatorConfirm: string;
+};
+
 type ServiceSnapshot = {
   id: string;
   displayName: string;
@@ -203,6 +225,15 @@ function joinDetails(parts: Array<string | null | undefined>) {
   return parts.filter((part): part is string => Boolean(part && part.trim())).join(' | ');
 }
 
+function createEmptyPasswordDraft(): PasswordDraft {
+  return {
+    adminPassword: '',
+    adminConfirm: '',
+    operatorPassword: '',
+    operatorConfirm: ''
+  };
+}
+
 export default function AdminPage() {
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -215,6 +246,9 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false);
   const [serviceBusy, setServiceBusy] = useState<string | null>(null);
   const [sessionBusy, setSessionBusy] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AppAuthStatus | null>(null);
+  const [passwordDraft, setPasswordDraft] = useState<PasswordDraft>(() => createEmptyPasswordDraft());
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hsdImportRef = useRef<HTMLInputElement | null>(null);
@@ -224,16 +258,18 @@ export default function AdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const [servicesResponse, sessionsResponse, settingsResponse] = await Promise.all([
+      const [servicesResponse, sessionsResponse, settingsResponse, authStatusResponse] = await Promise.all([
         fetch('/api/admin/services', { cache: 'no-store' }),
         fetch('/api/admin/sessions', { cache: 'no-store' }),
-        fetch('/api/admin/settings', { cache: 'no-store' })
+        fetch('/api/admin/settings', { cache: 'no-store' }),
+        fetch('/api/admin/app-auth', { cache: 'no-store' })
       ]);
 
-      const [servicesPayload, sessionsPayload, settingsPayload] = await Promise.all([
+      const [servicesPayload, sessionsPayload, settingsPayload, authStatusPayload] = await Promise.all([
         servicesResponse.json().catch(() => ({})),
         sessionsResponse.json().catch(() => ({})),
-        settingsResponse.json().catch(() => ({}))
+        settingsResponse.json().catch(() => ({})),
+        authStatusResponse.json().catch(() => ({}))
       ]);
 
       if (!servicesResponse.ok) {
@@ -245,10 +281,14 @@ export default function AdminPage() {
       if (!settingsResponse.ok) {
         throw new Error(settingsPayload.error || 'Failed to load settings.');
       }
+      if (!authStatusResponse.ok) {
+        throw new Error(authStatusPayload.error || 'Failed to load portal password status.');
+      }
 
       setServices(servicesPayload.services || []);
       setSessions(sessionsPayload.sessions || []);
       setDraft(cloneSettings(settingsPayload));
+      setAuthStatus(authStatusPayload);
     } catch (nextError: any) {
       setError(nextError?.message || 'Failed to load admin console.');
     } finally {
@@ -463,6 +503,59 @@ export default function AdminPage() {
         : 'Failed to launch reauthentication.'));
     } finally {
       setSessionBusy(null);
+    }
+  };
+
+  const handleSavePortalPasswords = async () => {
+    const adminPassword = passwordDraft.adminPassword.trim();
+    const adminConfirm = passwordDraft.adminConfirm.trim();
+    const operatorPassword = passwordDraft.operatorPassword.trim();
+    const operatorConfirm = passwordDraft.operatorConfirm.trim();
+
+    if (!adminPassword && !operatorPassword) {
+      setError('Enter at least one password to update.');
+      setMessage(null);
+      return;
+    }
+
+    if (adminPassword && adminPassword !== adminConfirm) {
+      setError('Admin password confirmation does not match.');
+      setMessage(null);
+      return;
+    }
+
+    if (operatorPassword && operatorPassword !== operatorConfirm) {
+      setError('Operator password confirmation does not match.');
+      setMessage(null);
+      return;
+    }
+
+    setAuthBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch('/api/admin/app-auth', {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          adminPassword: adminPassword || undefined,
+          operatorPassword: operatorPassword || undefined
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to update portal passwords.');
+      }
+
+      setAuthStatus(payload.status || null);
+      setPasswordDraft(createEmptyPasswordDraft());
+      setMessage(payload.message || 'Portal password updated.');
+    } catch (nextError: any) {
+      setError(nextError?.message || 'Failed to update portal passwords.');
+    } finally {
+      setAuthBusy(false);
     }
   };
 
@@ -879,72 +972,139 @@ export default function AdminPage() {
             Loading source settings...
           </div>
         ) : (
-        <div style={sourceGridStyle}>
-          {renderTargetCard(
-            'HSD / Symphony',
-            draft.collectors.symphony.primary,
-            (patch) => updateTarget('symphony', patch),
-            <label style={fieldBlockStyle}>
-              Exact workgroup
-              <textarea
-                value={String(draft.collectors.symphony.primary.metadata.exactWorkgroup || '')}
-                onChange={(event) => updateTarget('symphony', {
-                  metadata: {
-                    ...draft.collectors.symphony.primary.metadata,
-                    exactWorkgroup: event.target.value
-                  }
-                })}
-                rows={2}
-                style={textAreaStyle}
-              />
-            </label>
-          )}
+        <div style={{ display: 'grid', gap: '14px' }}>
+          <div style={itemCardStyle}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ display: 'grid', gap: '4px' }}>
+                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Portal Passwords</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  Change admin and operator login passwords from the admin UI. Operator does not get this control.
+                </div>
+              </div>
+              <button type="button" onClick={() => void handleSavePortalPasswords()} disabled={authBusy} style={primaryButtonStyle(authBusy)}>
+                <Save size={16} />
+                {authBusy ? 'Saving...' : 'Save Passwords'}
+              </button>
+            </div>
 
-          {renderTargetCard(
-            'Nutanix',
-            draft.collectors.nutanix.primary,
-            (patch) => updateTarget('nutanix', patch)
-          )}
+            <div style={metaRowStyle}>
+              <span style={metaPillStyle}>Mode {authStatus?.mode === 'runtime' ? 'Runtime override' : 'Environment default'}</span>
+              <span style={metaPillStyle}>Admin {authStatus?.users.admin.custom ? 'Custom' : 'Default'}</span>
+              <span style={metaPillStyle}>Operator {authStatus?.users.operator.custom ? 'Custom' : 'Default'}</span>
+              {authStatus?.updatedAt ? <span style={metaPillStyle}>Updated {new Date(authStatus.updatedAt).toLocaleString()}</span> : null}
+            </div>
 
-          {renderTargetCard(
-            'SolarWinds Servers (45)',
-            draft.collectors.solarwinds.servers,
-            (patch) => updateSolarwindsTarget('servers', patch),
-            <label style={fieldBlockStyle}>
-              Monitored servers
-              <textarea
-                value={(draft.collectors.solarwinds.servers.metadata.monitoredServers || []).join('\n')}
-                onChange={(event) => updateSolarwindsTarget('servers', {
-                  metadata: {
-                    ...draft.collectors.solarwinds.servers.metadata,
-                    monitoredServers: parseLines(event.target.value)
-                  }
-                })}
-                rows={4}
-                style={textAreaStyle}
-              />
-            </label>
-          )}
+            <div style={sourceFieldGridStyle}>
+              <label style={fieldBlockStyle}>
+                Admin password
+                <input
+                  type="password"
+                  value={passwordDraft.adminPassword}
+                  onChange={(event) => setPasswordDraft((current) => ({ ...current, adminPassword: event.target.value }))}
+                  placeholder="Leave blank to keep unchanged"
+                  style={fieldStyle}
+                />
+              </label>
+              <label style={fieldBlockStyle}>
+                Confirm admin password
+                <input
+                  type="password"
+                  value={passwordDraft.adminConfirm}
+                  onChange={(event) => setPasswordDraft((current) => ({ ...current, adminConfirm: event.target.value }))}
+                  placeholder="Repeat admin password"
+                  style={fieldStyle}
+                />
+              </label>
+              <label style={fieldBlockStyle}>
+                Operator password
+                <input
+                  type="password"
+                  value={passwordDraft.operatorPassword}
+                  onChange={(event) => setPasswordDraft((current) => ({ ...current, operatorPassword: event.target.value }))}
+                  placeholder="Leave blank to keep unchanged"
+                  style={fieldStyle}
+                />
+              </label>
+              <label style={fieldBlockStyle}>
+                Confirm operator password
+                <input
+                  type="password"
+                  value={passwordDraft.operatorConfirm}
+                  onChange={(event) => setPasswordDraft((current) => ({ ...current, operatorConfirm: event.target.value }))}
+                  placeholder="Repeat operator password"
+                  style={fieldStyle}
+                />
+              </label>
+            </div>
+          </div>
 
-          {renderTargetCard(
-            'SolarWinds Networks (46)',
-            draft.collectors.solarwinds.networks,
-            (patch) => updateSolarwindsTarget('networks', patch),
-            <label style={fieldBlockStyle}>
-              Network object IDs
-              <textarea
-                value={(draft.collectors.solarwinds.networks.metadata.networkObjectIds || []).join('\n')}
-                onChange={(event) => updateSolarwindsTarget('networks', {
-                  metadata: {
-                    ...draft.collectors.solarwinds.networks.metadata,
-                    networkObjectIds: parseLines(event.target.value).slice(0, 5)
-                  }
-                })}
-                rows={4}
-                style={textAreaStyle}
-              />
-            </label>
-          )}
+          <div style={sourceGridStyle}>
+            {renderTargetCard(
+              'HSD / Symphony',
+              draft.collectors.symphony.primary,
+              (patch) => updateTarget('symphony', patch),
+              <label style={fieldBlockStyle}>
+                Exact workgroup
+                <textarea
+                  value={String(draft.collectors.symphony.primary.metadata.exactWorkgroup || '')}
+                  onChange={(event) => updateTarget('symphony', {
+                    metadata: {
+                      ...draft.collectors.symphony.primary.metadata,
+                      exactWorkgroup: event.target.value
+                    }
+                  })}
+                  rows={2}
+                  style={textAreaStyle}
+                />
+              </label>
+            )}
+
+            {renderTargetCard(
+              'Nutanix',
+              draft.collectors.nutanix.primary,
+              (patch) => updateTarget('nutanix', patch)
+            )}
+
+            {renderTargetCard(
+              'SolarWinds Servers (45)',
+              draft.collectors.solarwinds.servers,
+              (patch) => updateSolarwindsTarget('servers', patch),
+              <label style={fieldBlockStyle}>
+                Monitored servers
+                <textarea
+                  value={(draft.collectors.solarwinds.servers.metadata.monitoredServers || []).join('\n')}
+                  onChange={(event) => updateSolarwindsTarget('servers', {
+                    metadata: {
+                      ...draft.collectors.solarwinds.servers.metadata,
+                      monitoredServers: parseLines(event.target.value)
+                    }
+                  })}
+                  rows={4}
+                  style={textAreaStyle}
+                />
+              </label>
+            )}
+
+            {renderTargetCard(
+              'SolarWinds Networks (46)',
+              draft.collectors.solarwinds.networks,
+              (patch) => updateSolarwindsTarget('networks', patch),
+              <label style={fieldBlockStyle}>
+                Network object IDs
+                <textarea
+                  value={(draft.collectors.solarwinds.networks.metadata.networkObjectIds || []).join('\n')}
+                  onChange={(event) => updateSolarwindsTarget('networks', {
+                    metadata: {
+                      ...draft.collectors.solarwinds.networks.metadata,
+                      networkObjectIds: parseLines(event.target.value).slice(0, 5)
+                    }
+                  })}
+                  rows={4}
+                  style={textAreaStyle}
+                />
+              </label>
+            )}
+          </div>
         </div>
       )}
     </section>

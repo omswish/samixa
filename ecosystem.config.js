@@ -54,6 +54,8 @@ module.exports = {
         INTERNAL_GATEWAY_STATUS_URL: 'http://127.0.0.1:4000/api/status',
         INTERNAL_GATEWAY_BASE_URL: 'http://127.0.0.1:4000',
         APP_AUTH_SECRET: process.env.APP_AUTH_SECRET,
+        APP_ADMIN_PASSWORD: process.env.APP_ADMIN_PASSWORD || process.env.APP_LOGIN_PASSWORD || '17172737',
+        APP_OPERATOR_PASSWORD: process.env.APP_OPERATOR_PASSWORD || process.env.APP_LOGIN_PASSWORD || '17172737',
         APP_LOGIN_PASSWORD: process.env.APP_LOGIN_PASSWORD || '17172737',
         VIEWER_SESSION_DAYS: process.env.VIEWER_SESSION_DAYS || '365',
         ADMIN_SESSION_HOURS: process.env.ADMIN_SESSION_HOURS || '12',

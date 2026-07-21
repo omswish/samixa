@@ -1,7 +1,7 @@
 ; Inno Setup blueprint for the Utkal IT Dashboard deployment package.
 
 #define AppName "Utkal IT Dashboard"
-#define AppVersion "0.1.0"
+#define AppVersion "1.0.0"
 #define AppPublisher "UAIL IT"
 #ifndef StageRoot
 #define StageRoot "..\staging\current"
@@ -257,6 +257,8 @@ begin
     'ITDASH_RUNTIME_ROOT=' + GetRuntimeRoot() + #13#10 +
     'SECRET_STORE_PASSPHRASE=' + TrimmedPageValue(SecretStorePage, 0) + #13#10 +
     'APP_AUTH_SECRET=' + GetOrCreateAppAuthSecret() + #13#10 +
+    'APP_ADMIN_PASSWORD=17172737' + #13#10 +
+    'APP_OPERATOR_PASSWORD=17172737' + #13#10 +
     'APP_LOGIN_PASSWORD=17172737' + #13#10 +
     'VIEWER_SESSION_DAYS=365' + #13#10 +
     'ADMIN_SESSION_HOURS=12' + #13#10 +

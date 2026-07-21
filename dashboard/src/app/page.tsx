@@ -101,7 +101,7 @@ const HSD_STATUS_COLORS = {
   pending: '#7b8794'
 } as const;
 
-const SERVER_TABLE_COLUMNS = 'minmax(0, 1.95fr) minmax(72px, 0.8fr) minmax(72px, 0.8fr) minmax(72px, 0.8fr) 76px 90px';
+const SERVER_TABLE_COLUMNS = 'minmax(0, 1.82fr) minmax(72px, 0.72fr) minmax(72px, 0.72fr) minmax(72px, 0.72fr) minmax(72px, 0.72fr) 76px 90px';
 
 interface SectionHealth {
   key: 'nutanix' | 'servers' | 'networks' | 'symphony';
@@ -1251,7 +1251,7 @@ function ServerTableMetricBar({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
       <div style={{ fontSize: '0.66rem', fontWeight: 800, color: palette.text, lineHeight: 1, textAlign: 'center' }}>
-        {value === null ? 'N/A' : `${formatSmallNumber(value)}%`}
+        {value === null ? 'NA' : `${formatSmallNumber(value)}%`}
       </div>
       <div style={{ width: '100%', height: '5px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
         <div style={{ width: `${fill}%`, height: '100%', borderRadius: '999px', background: palette.fill }} />
@@ -1267,9 +1267,6 @@ function ServerFleetTableRow({ server }: { server: ServerNode }) {
   const categoryPalette = getServerCategoryPalette(server);
   const protectionChip = getServerProtectionChip(server);
   const bootLabel = formatServerBootLabel(server.lastBoot)?.replace('BOOT ', '');
-  const tertiaryMetric = server.disk !== null
-    ? { value: visual.diskPct, tone: getMetricTone(visual.diskPct), label: 'DSK' }
-    : { value: server.availabilityToday ?? null, tone: getAvailabilityTone(server.availabilityToday), label: 'AVL' };
 
   return (
     <div
@@ -1302,12 +1299,8 @@ function ServerFleetTableRow({ server }: { server: ServerNode }) {
 
       <ServerTableMetricBar value={visual.cpuPct} tone={getMetricTone(visual.cpuPct)} />
       <ServerTableMetricBar value={visual.memoryPct} tone={getMetricTone(visual.memoryPct)} />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-        <div style={{ fontSize: '0.44rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.56, textAlign: 'center' }}>
-          {tertiaryMetric.label}
-        </div>
-        <ServerTableMetricBar value={tertiaryMetric.value} tone={tertiaryMetric.tone} />
-      </div>
+      <ServerTableMetricBar value={visual.diskPct} tone={getMetricTone(visual.diskPct)} />
+      <ServerTableMetricBar value={server.availabilityToday ?? null} tone={getAvailabilityTone(server.availabilityToday)} />
 
       <div style={{ width: '100%', height: '18px' }}>
         <UptimeChart history={server.history || []} color={palette.fill} hideNoDataText />
@@ -3313,7 +3306,8 @@ export default function Dashboard() {
             <ServerTableHeaderCell label="SERVER / TAGS" />
             <ServerTableHeaderCell label="CPU" align="center" />
             <ServerTableHeaderCell label="RAM" align="center" />
-            <ServerTableHeaderCell label="DSK / AVL" align="center" />
+            <ServerTableHeaderCell label="DSK" align="center" />
+            <ServerTableHeaderCell label="AVL" align="center" />
             <ServerTableHeaderCell label="TREND" align="center" />
             <ServerTableHeaderCell label="STATE" align="center" />
           </div>

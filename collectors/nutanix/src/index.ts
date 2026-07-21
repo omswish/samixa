@@ -22,6 +22,101 @@ type NutanixNodeStatus = 'normal' | 'warning' | 'critical' | 'offline';
 let cycleInProgress = false;
 let nextCycleTimer: NodeJS.Timeout | null = null;
 
+type NutanixVirtualDiskEntity = {
+  attached_vm_uuid?: string | null;
+  attached_vmname?: string | null;
+  disk_capacity_in_bytes?: number | string | null;
+  stats?: Record<string, number | string | null | undefined> | null;
+};
+
+type VmDiskAggregate = {
+  usedBytes: number;
+  capacityBytes: number;
+};
+
+function normalizeVmNameKey(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return value
+    .toLowerCase()
+    .replace('.abgplanet.abg.com', '')
+    .trim();
+}
+
+function parsePositiveNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function resolveVirtualDiskUsedBytes(virtualDisk: NutanixVirtualDiskEntity): number | null {
+  const stats = virtualDisk.stats || {};
+  const candidateKeys = [
+    'controller_user_bytes',
+    'user_bytes',
+    'controller.user_bytes'
+  ];
+
+  for (const key of candidateKeys) {
+    const parsed = parsePositiveNumber(stats[key]);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function addVmDiskAggregate(target: Map<string, VmDiskAggregate>, key: string | null, usedBytes: number, capacityBytes: number) {
+  if (!key) {
+    return;
+  }
+
+  const current = target.get(key) || { usedBytes: 0, capacityBytes: 0 };
+  current.usedBytes += usedBytes;
+  current.capacityBytes += capacityBytes;
+  target.set(key, current);
+}
+
+async function fetchVmDiskUsageIndex(baseUrl: string, headers: Record<string, string>) {
+  const result = {
+    byVmUuid: new Map<string, VmDiskAggregate>(),
+    byVmName: new Map<string, VmDiskAggregate>()
+  };
+
+  try {
+    const response = await fetch(`${baseUrl}/PrismGateway/services/rest/v2.0/virtual_disks/`, { headers });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch virtual disks: ${response.statusText} (${response.status})`);
+    }
+
+    const payload = (await response.json()) as { entities?: NutanixVirtualDiskEntity[] };
+    for (const virtualDisk of payload.entities || []) {
+      const capacityBytes = parsePositiveNumber(virtualDisk.disk_capacity_in_bytes);
+      const usedBytes = resolveVirtualDiskUsedBytes(virtualDisk);
+      if (capacityBytes === null || capacityBytes <= 0 || usedBytes === null) {
+        continue;
+      }
+
+      addVmDiskAggregate(result.byVmUuid, virtualDisk.attached_vm_uuid?.trim().toLowerCase() || null, usedBytes, capacityBytes);
+      addVmDiskAggregate(result.byVmName, normalizeVmNameKey(virtualDisk.attached_vmname), usedBytes, capacityBytes);
+    }
+  } catch (error: any) {
+    console.warn(`[${new Date().toISOString()}] Could not retrieve Nutanix virtual disk usage fallback: ${error.message}`);
+  }
+
+  return result;
+}
+
 function deriveNutanixNodeStatus(host: any): NutanixNodeStatus {
   const state = String(host?.state ?? '').toUpperCase();
   const hypervisorState = String(host?.hypervisor_state ?? '').toLowerCase();
@@ -159,8 +254,11 @@ async function collectNutanixData() {
     let totalLogicalAllocatedBytes = 0;
     let activeLogicalUsedBytes = 0;
     try {
-      const vmsUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}/PrismGateway/services/rest/v1/vms`;
-      const vmsRes = await fetch(vmsUrl, { headers });
+      const baseUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}`;
+      const [vmsRes, vmDiskUsageIndex] = await Promise.all([
+        fetch(`${baseUrl}/PrismGateway/services/rest/v1/vms`, { headers }),
+        fetchVmDiskUsageIndex(baseUrl, headers)
+      ]);
       if (vmsRes.ok) {
         const vmsData = (await vmsRes.json()) as any;
         const entities = vmsData.entities || [];
@@ -181,10 +279,13 @@ async function collectNutanixData() {
           }
 
           // Calculate Disk usage
-          const hasDiskUsage = entity.usageStats?.['storage.usage_bytes'] !== undefined && entity.diskCapacityInBytes;
-          const diskUsed = hasDiskUsage ? entity.usageStats['storage.usage_bytes'] : 0;
-          const diskCap = hasDiskUsage ? entity.diskCapacityInBytes : 0;
-          const diskPercent = hasDiskUsage && diskCap > 0
+          const directDiskCapacity = parsePositiveNumber(entity.diskCapacityInBytes);
+          const directDiskUsed = parsePositiveNumber(entity.usageStats?.['storage.usage_bytes']);
+          const fallbackDiskAggregate = vmDiskUsageIndex.byVmUuid.get(String(entity.uuid || '').trim().toLowerCase())
+            || vmDiskUsageIndex.byVmName.get(normalizeVmNameKey(entity.vmName || entity.name) || '');
+          const diskCap = directDiskCapacity ?? fallbackDiskAggregate?.capacityBytes ?? 0;
+          const diskUsed = directDiskUsed ?? fallbackDiskAggregate?.usedBytes ?? null;
+          const diskPercent = diskUsed !== null && diskCap > 0
             ? Number(((diskUsed / diskCap) * 100).toFixed(2))
             : undefined;
 
