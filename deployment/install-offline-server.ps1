@@ -1,14 +1,6 @@
 param(
   [string]$BundleRoot = $PSScriptRoot,
-  [string]$PostgresInstallRoot = 'C:\Program Files\UAIL\PostgreSQL\18',
-  [string]$PostgresDataRoot = 'C:\ProgramData\UAIL\postgresql-18\data',
-  [string]$PostgresServiceName = 'UAILPostgreSQL18',
-  [int]$PostgresPort = 5432,
-  [string]$PostgresSuperuser = 'postgres',
-  [string]$PostgresPassword = '',
   [string]$SecretStorePassphrase = '',
-  [string]$PostgresDatabase = 'hil-dor-itdash',
-  [string]$PostgresSecretPassphrase = '',
   [string]$InstallRoot = 'C:\ProgramData\UAIL\ITDashboard',
   [string]$RuntimeRoot = '',
   [string]$NutanixHost = '',
@@ -19,13 +11,15 @@ param(
   [string]$SolarWindsNetworksHost = '',
   [string]$SolarWindsUser = '',
   [string]$SolarWindsPassword = '',
+  [string]$SolarWindsServersUser = '',
+  [string]$SolarWindsServersPassword = '',
+  [string]$SolarWindsNetworksUser = '',
+  [string]$SolarWindsNetworksPassword = '',
   [string]$SymphonyUrl = '',
   [string]$SymphonyUser = '',
   [string]$SymphonyPassword = '',
   [int]$OperatorPort = 21060,
   [int]$AdminPort = 21061,
-  [switch]$SkipPostgresInstall,
-  [switch]$SkipVcRedist,
   [switch]$SkipFirewallRule,
   [switch]$SkipStartStack,
   [switch]$SkipAutostart,
@@ -51,6 +45,9 @@ if ($OperatorPort -eq $AdminPort) {
 if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
   $RuntimeRoot = $InstallRoot
 }
+
+$InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
+$RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
 
 function ConvertTo-PlainText {
   param(
@@ -90,18 +87,6 @@ function Assert-RequiredValue {
   }
 }
 
-if (-not $SkipPostgresInstall -and [string]::IsNullOrWhiteSpace($PostgresPassword)) {
-  if ($NonInteractive) {
-    Assert-RequiredValue -Name 'PostgresPassword' -Value $PostgresPassword
-  } else {
-    $PostgresPassword = Read-RequiredSecret -Prompt 'PostgreSQL superuser password'
-  }
-}
-
-if ([string]::IsNullOrWhiteSpace($SecretStorePassphrase) -and -not [string]::IsNullOrWhiteSpace($PostgresSecretPassphrase)) {
-  $SecretStorePassphrase = $PostgresSecretPassphrase
-}
-
 if ([string]::IsNullOrWhiteSpace($SecretStorePassphrase)) {
   if ($NonInteractive) {
     Assert-RequiredValue -Name 'SecretStorePassphrase' -Value $SecretStorePassphrase
@@ -111,13 +96,10 @@ if ([string]::IsNullOrWhiteSpace($SecretStorePassphrase)) {
 }
 
 $resolvedBundleRoot = [System.IO.Path]::GetFullPath($BundleRoot)
-$postgresInstaller = Join-Path $resolvedBundleRoot 'postgres\support\install-postgres-offline.ps1'
 $appProvisioner = Join-Path $resolvedBundleRoot 'installer\support\provision-staged-deployment.ps1'
 
-foreach ($requiredScript in @($postgresInstaller, $appProvisioner)) {
-  if (-not (Test-Path -LiteralPath $requiredScript)) {
-    throw "Required bundle script not found: $requiredScript"
-  }
+if (-not (Test-Path -LiteralPath $appProvisioner)) {
+  throw "Required bundle script not found: $appProvisioner"
 }
 
 Write-Host 'Offline bundle root:' $resolvedBundleRoot
@@ -125,36 +107,13 @@ Write-Host 'Dashboard install root:' $InstallRoot
 Write-Host 'Dashboard runtime root:' $RuntimeRoot
 Write-Host 'Operator port:' $OperatorPort
 Write-Host 'Admin port:' $AdminPort
-Write-Host 'Skip PostgreSQL install:' $SkipPostgresInstall
 Write-Host 'Non-interactive mode:' $NonInteractive
-
-if (-not $SkipPostgresInstall) {
-  & $postgresInstaller `
-    -BundleRoot $resolvedBundleRoot `
-    -PostgresInstallRoot $PostgresInstallRoot `
-    -PostgresDataRoot $PostgresDataRoot `
-    -PostgresServiceName $PostgresServiceName `
-    -PostgresPort $PostgresPort `
-    -PostgresSuperuser $PostgresSuperuser `
-    -PostgresPassword $PostgresPassword `
-    -DatabaseName $PostgresDatabase `
-    -SkipVcRedist:$SkipVcRedist `
-    -NonInteractive:$NonInteractive `
-    -DryRun:$DryRun
-}
 
 & $appProvisioner `
   -PackageRoot $resolvedBundleRoot `
   -InstallRoot $InstallRoot `
   -RuntimeRoot $RuntimeRoot `
-  -InstallBundledPostgres:$false `
-  -PostgresHost $(if ($SkipPostgresInstall) { '' } else { 'localhost' }) `
-  -PostgresPort $PostgresPort `
-  -PostgresDatabase $(if ($SkipPostgresInstall) { '' } else { $PostgresDatabase }) `
-  -PostgresUser $(if ($SkipPostgresInstall) { '' } else { $PostgresSuperuser }) `
-  -PostgresPassword $(if ($SkipPostgresInstall) { '' } else { $PostgresPassword }) `
   -SecretStorePassphrase $SecretStorePassphrase `
-  -PostgresSsl $(if ($SkipPostgresInstall) { 'false' } else { 'false' }) `
   -NutanixHost $NutanixHost `
   -NutanixPort $NutanixPort `
   -NutanixUser $NutanixUser `
@@ -163,6 +122,10 @@ if (-not $SkipPostgresInstall) {
   -SolarWindsNetworksHost $SolarWindsNetworksHost `
   -SolarWindsUser $SolarWindsUser `
   -SolarWindsPassword $SolarWindsPassword `
+  -SolarWindsServersUser $SolarWindsServersUser `
+  -SolarWindsServersPassword $SolarWindsServersPassword `
+  -SolarWindsNetworksUser $SolarWindsNetworksUser `
+  -SolarWindsNetworksPassword $SolarWindsNetworksPassword `
   -SymphonyUrl $SymphonyUrl `
   -SymphonyUser $SymphonyUser `
   -SymphonyPassword $SymphonyPassword `

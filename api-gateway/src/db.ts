@@ -117,6 +117,8 @@ interface SymphonyState {
   serviceRequestsBreakdown: TicketBreakdown;
   workOrders: number;
   workOrdersBreakdown: TicketBreakdown;
+  changeRecordsAvailable: boolean;
+  changeRecordsBreakdownAvailable: boolean;
   changeRecords: number;
   changeRecordsBreakdown: TicketBreakdown;
   priority1Incidents: number;
@@ -405,6 +407,8 @@ function createDefaultState(): StoredDbSchema {
       serviceRequestsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
       workOrders: 0,
       workOrdersBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
+      changeRecordsAvailable: false,
+      changeRecordsBreakdownAvailable: false,
       changeRecords: 0,
       changeRecordsBreakdown: { new: 0, assigned: 0, inProgress: 0, pending: 0 },
       priority1Incidents: 0,
@@ -1444,6 +1448,8 @@ export function updateSymphony(data: {
   serviceRequestsBreakdown?: TicketBreakdown;
   workOrders?: number;
   workOrdersBreakdown?: TicketBreakdown;
+  changeRecordsAvailable?: boolean;
+  changeRecordsBreakdownAvailable?: boolean;
   changeRecords?: number;
   changeRecordsBreakdown?: TicketBreakdown;
   priority1Incidents?: number;
@@ -1493,6 +1499,8 @@ export function updateSymphony(data: {
   if (data.serviceRequestsBreakdown) state.symphony.serviceRequestsBreakdown = data.serviceRequestsBreakdown;
   if (data.workOrders !== undefined) state.symphony.workOrders = data.workOrders;
   if (data.workOrdersBreakdown) state.symphony.workOrdersBreakdown = data.workOrdersBreakdown;
+  if (data.changeRecordsAvailable !== undefined) state.symphony.changeRecordsAvailable = data.changeRecordsAvailable;
+  if (data.changeRecordsBreakdownAvailable !== undefined) state.symphony.changeRecordsBreakdownAvailable = data.changeRecordsBreakdownAvailable;
   if (data.changeRecords !== undefined) state.symphony.changeRecords = data.changeRecords;
   if (data.changeRecordsBreakdown) state.symphony.changeRecordsBreakdown = data.changeRecordsBreakdown;
   if (data.priority1Incidents !== undefined) state.symphony.priority1Incidents = data.priority1Incidents;

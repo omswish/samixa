@@ -5,7 +5,7 @@ This folder now supports a web-only Windows deployment model.
 Purpose:
 - stage the production dashboard payload
 - build installer and offline server bundles
-- provision PM2, Node, optional Postgres connectivity, and runtime configuration
+- provision PM2, Node, and runtime configuration
 - expose two web surfaces from the same Next.js app:
   - operator on `21060`
   - admin on `21061`
@@ -13,7 +13,6 @@ Purpose:
 Current contents:
 - `config/` deployment-time manifests and shared metadata
 - `installer/` Inno Setup files and support scripts
-- `postgres/` offline PostgreSQL support
 - `runtime-tools/` bundled PM2 tooling
 - `tools/` staging and bundle builders
 
@@ -32,10 +31,16 @@ Primary deployment model:
 
 Operational note:
 - the default deployment model is SQLite-first under `C:\ProgramData\UAIL\ITDashboard`
-- PM2 bootstrap plus `pm2 save` and scheduled-task `pm2 resurrect` provide the deployed auto-heal path
+- installer and offline bundle packages do not ship PostgreSQL anymore; the deployed stack runs without a bundled database server
+- PM2 bootstrap plus `pm2 save` and a runtime-user logon task for `pm2 resurrect` provide the deployed auto-heal path
+- the install and repair scripts now normalize runtime write permissions for PM2 state, session files, config, logs, and app data before bootstrapping
 - the admin surface now validates saved HSD and SolarWinds browser sessions against the live portals
-- HSD reauthentication is a server-local action that opens an interactive Edge/PowerShell helper on the Windows host
+- HSD reauthentication is a server-local action that stops `symphony-collector`, opens an interactive Edge/PowerShell helper on the Windows host, and then expects the admin to restart the collector after login
 - HSD also exposes an explicit legacy-profile import helper for recovery cases where an older authenticated Edge profile must be migrated into storage-state JSON
+
+Repair note:
+- if an older install has a running dashboard but admin remediation fails with PM2 permission errors, run `deployment\tools\repair-installed-runtime.ps1` from an elevated PowerShell session
+- or run `deployment\repair-installed-runtime.bat` to self-elevate and invoke the same repair workflow
 
 Maintained references:
 - [docs/product-requirements-document.md](../docs/product-requirements-document.md)

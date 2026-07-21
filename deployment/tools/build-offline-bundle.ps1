@@ -1,7 +1,7 @@
 param(
   [string]$BundleName = "utkal-it-dashboard-offline-server-bundle-$(Get-Date -Format 'yyyy-MM-dd')",
-  [string]$PostgresSourceRoot = 'C:\Program Files\PostgreSQL\18',
-  [string]$ReleaseRoot = (Join-Path $PSScriptRoot '..\release')
+  [string]$ReleaseRoot = (Join-Path $PSScriptRoot '..\release'),
+  [string]$StageRoot = (Join-Path $PSScriptRoot '..\staging\current')
 )
 
 Set-StrictMode -Version Latest
@@ -45,26 +45,14 @@ function Remove-DirectoryRobustly {
 
 $deploymentRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $resolvedReleaseRoot = [System.IO.Path]::GetFullPath($ReleaseRoot)
+$resolvedStageRoot = [System.IO.Path]::GetFullPath($StageRoot)
 $bundleRoot = Join-Path $resolvedReleaseRoot $BundleName
 $zipPath = Join-Path $resolvedReleaseRoot ($BundleName + '.zip')
 $sevenZipCommand = Get-Command 7z -ErrorAction SilentlyContinue
 $tarCommand = Get-Command tar.exe -ErrorAction SilentlyContinue
 
-if (-not (Test-Path -LiteralPath (Join-Path $deploymentRoot 'staging\current\app'))) {
-  throw 'Staged deployment payload not found. Build staging/current first.'
-}
-
-$bundledPostgresAvailable = @(
-  (Join-Path $PostgresSourceRoot 'bin'),
-  (Join-Path $PostgresSourceRoot 'lib'),
-  (Join-Path $PostgresSourceRoot 'share'),
-  (Join-Path $PostgresSourceRoot 'installer')
-) | ForEach-Object {
-  Test-Path -LiteralPath $_
-} | Where-Object { $_ -eq $false } | Measure-Object | Select-Object -ExpandProperty Count
-
-if ($bundledPostgresAvailable -gt 0) {
-  Write-Warning "Bundled PostgreSQL source is incomplete under $PostgresSourceRoot. The offline bundle will be created without local PostgreSQL payload."
+if (-not (Test-Path -LiteralPath (Join-Path $resolvedStageRoot 'app'))) {
+  throw "Staged deployment payload not found at $resolvedStageRoot. Build the requested stage first."
 }
 
 [System.IO.Directory]::CreateDirectory($resolvedReleaseRoot) | Out-Null
@@ -83,8 +71,7 @@ foreach ($fileName in @(
 }
 
 Invoke-RobocopyMirror -Source (Join-Path $deploymentRoot 'installer\support') -Destination (Join-Path $bundleRoot 'installer\support')
-Invoke-RobocopyMirror -Source (Join-Path $deploymentRoot 'staging\current') -Destination (Join-Path $bundleRoot 'staging\current')
-Invoke-RobocopyMirror -Source (Join-Path $deploymentRoot 'postgres\support') -Destination (Join-Path $bundleRoot 'postgres\support')
+Invoke-RobocopyMirror -Source $resolvedStageRoot -Destination (Join-Path $bundleRoot 'staging\current')
 
 [System.IO.Directory]::CreateDirectory((Join-Path $bundleRoot 'docs')) | Out-Null
 foreach ($docPath in @(
@@ -101,29 +88,6 @@ foreach ($docPath in @(
   }
 }
 
-if ($bundledPostgresAvailable -eq 0) {
-  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'bin') -Destination (Join-Path $bundleRoot 'postgres\runtime\bin')
-  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'lib') -Destination (Join-Path $bundleRoot 'postgres\runtime\lib')
-  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'share') -Destination (Join-Path $bundleRoot 'postgres\runtime\share')
-  Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'installer') -Destination (Join-Path $bundleRoot 'postgres\runtime\installer')
-
-  if (Test-Path -LiteralPath (Join-Path $PostgresSourceRoot 'scripts')) {
-    Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'scripts') -Destination (Join-Path $bundleRoot 'postgres\runtime\scripts')
-  }
-
-  foreach ($fileName in @(
-    'pg_env.bat',
-    'server_license.txt',
-    'commandlinetools_3rd_party_licenses.txt',
-    'StackBuilder_3rd_party_licenses.txt'
-  )) {
-    $sourceFile = Join-Path $PostgresSourceRoot $fileName
-    if (Test-Path -LiteralPath $sourceFile) {
-      Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $bundleRoot "postgres\runtime\$fileName") -Force
-    }
-  }
-}
-
 $manifestPath = Join-Path $bundleRoot 'BUNDLE_CONTENTS.txt'
 $manifestLines = @(
   'UAIL IT Dashboard Offline Server Bundle',
@@ -135,11 +99,7 @@ $manifestLines = @(
   'Included major payloads:',
   '  staging\current',
   '  installer\support',
-  '  postgres\support',
   '  docs',
-  '',
-  'Optional payloads when available:',
-  '  postgres\runtime',
   '',
   'Exposed web surfaces after install:',
   '  operator: http://<server>:21060/login',

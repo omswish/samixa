@@ -126,6 +126,10 @@ Use `Services` to:
 - restart the full stack when needed
 - confirm health summaries and recent sync posture
 
+Operational note:
+- the deployed stack is intended to restore when the configured runtime user signs in on the host
+- service controls and server-local reauthentication should be performed from that same host user context
+
 Use this tab first when:
 - a card is stale
 - a collector appears down
@@ -152,9 +156,10 @@ Important:
 When HSD is expired:
 1. Open the admin console on the server if possible.
 2. Go to `Sessions`.
-3. Launch HSD reauthentication.
-4. Complete the interactive login in Edge.
-5. Return to the admin console and refresh session state.
+3. Use `Stop Collector + Reauth`.
+4. This stops `symphony-collector` first and opens the HSD login helper on the server.
+5. Complete the interactive login in Edge.
+6. Return to the admin console, refresh session state, and restart `HSD Collector` from `Services`.
 
 Use legacy profile import only when an older authenticated profile must be recovered deliberately.
 

@@ -205,22 +205,55 @@ function getProjectRoot() {
   return findProjectRoot();
 }
 
-function getBundledNodeCandidates() {
+function getInstallRootCandidates() {
   const projectRoot = getProjectRoot();
+  const candidates = [projectRoot];
+  const parent = path.dirname(projectRoot);
+
+  if (parent !== projectRoot) {
+    candidates.push(parent);
+  }
+
+  return [...new Set(candidates)];
+}
+
+function getAppRoot() {
+  return getProjectRoot();
+}
+
+function getPm2Environment(nodeCandidate: string) {
+  const pathEntries = [process.env.PATH || process.env.Path || ''];
+  if (nodeCandidate !== 'node') {
+    pathEntries.unshift(path.dirname(nodeCandidate));
+  }
+
+  return {
+    ...process.env,
+    ITDASH_RUNTIME_ROOT: DEFAULT_RUNTIME_ROOT,
+    PM2_HOME: path.join(DEFAULT_RUNTIME_ROOT, 'pm2'),
+    PM2_PIPE_NAMESPACE: 'uail-itdash',
+    PATH: pathEntries.filter(Boolean).join(';')
+  };
+}
+
+function getBundledNodeCandidates() {
+  const installRoots = getInstallRootCandidates();
   return [
-    path.join(projectRoot, 'runtime', 'node', 'node.exe'),
+    ...installRoots.map((candidate) => path.join(candidate, 'runtime', 'node', 'node.exe')),
     'node'
   ];
 }
 
 function getPm2ExecutableCandidates() {
-  const projectRoot = getProjectRoot();
+  const installRoots = getInstallRootCandidates();
   const appData = process.env.APPDATA;
 
   return [
-    path.join(projectRoot, 'node_modules', 'pm2', 'bin', 'pm2'),
-    path.join(projectRoot, 'runtime-tools', 'node_modules', 'pm2', 'bin', 'pm2'),
-    path.join(projectRoot, 'runtime', 'node', 'node_modules', 'pm2', 'bin', 'pm2'),
+    ...installRoots.flatMap((candidate) => [
+      path.join(candidate, 'node_modules', 'pm2', 'bin', 'pm2'),
+      path.join(candidate, 'runtime-tools', 'node_modules', 'pm2', 'bin', 'pm2'),
+      path.join(candidate, 'runtime', 'node', 'node_modules', 'pm2', 'bin', 'pm2')
+    ]),
     appData ? path.join(appData, 'npm', 'node_modules', 'pm2', 'bin', 'pm2') : null
   ].filter((candidate): candidate is string => Boolean(candidate));
 }
@@ -242,7 +275,8 @@ async function runPm2(args: string[]) {
     for (const nodeCandidate of nodeCandidates) {
       try {
         return await execFileAsync(nodeCandidate, [scriptCandidate, ...args], {
-          cwd: getProjectRoot(),
+          cwd: getAppRoot(),
+          env: getPm2Environment(nodeCandidate),
           windowsHide: true,
           maxBuffer: 5 * 1024 * 1024
         });
@@ -947,7 +981,7 @@ function escapePowerShellSingleQuoted(value: string) {
 }
 
 function resolveCollectorLoginScript(workflowId: SessionWorkflowDefinition['id']) {
-  const projectRoot = getProjectRoot();
+  const projectRoot = getAppRoot();
   if (workflowId === 'symphony') {
     return path.join(projectRoot, 'collectors', 'symphony', 'dist', 'login.js');
   }
@@ -964,6 +998,28 @@ function findNodeExecutable() {
   return candidates[0];
 }
 
+async function stopServiceIfRunning(serviceId: string) {
+  const processMap = await loadPm2Processes();
+  const service = processMap.get(serviceId);
+
+  if (!service) {
+    throw new Error(`Service ${serviceId} is not registered in PM2.`);
+  }
+
+  if (service.processStatus === 'stopped') {
+    return {
+      serviceId,
+      alreadyStopped: true
+    };
+  }
+
+  await runPm2(['stop', serviceId]);
+  return {
+    serviceId,
+    alreadyStopped: false
+  };
+}
+
 export async function launchSessionHelper(
   workflowId: SessionWorkflowDefinition['id'],
   mode: 'interactive' | 'legacy-profile' = 'interactive'
@@ -975,10 +1031,18 @@ export async function launchSessionHelper(
   const settings = await loadAdminSettings().catch(() => null);
   const nodeExe = findNodeExecutable();
   const scriptPath = resolveCollectorLoginScript(workflowId);
-  const projectRoot = getProjectRoot();
+  const projectRoot = getAppRoot();
+  let preLaunchMessage: string | null = null;
 
   if (!fs.existsSync(scriptPath) && nodeExe !== 'node') {
     throw new Error(`Login helper script not found for ${workflowId}.`);
+  }
+
+  if (workflowId === 'symphony') {
+    const stopResult = await stopServiceIfRunning('symphony-collector');
+    preLaunchMessage = stopResult.alreadyStopped
+      ? 'HSD Collector was already stopped.'
+      : 'Stopped HSD Collector before launching reauthentication.';
   }
 
   const scriptLines = [
@@ -1042,11 +1106,11 @@ export async function launchSessionHelper(
 
   return {
     ok: true,
-    message: mode === 'legacy-profile'
-      ? 'Launched HSD legacy-profile import helper.'
-      : workflowId === 'symphony'
-        ? 'Launched HSD interactive reauthentication helper.'
-        : 'Launched SolarWinds interactive reauthentication helper.'
+    message: workflowId === 'symphony'
+      ? `${preLaunchMessage} ${mode === 'legacy-profile'
+        ? 'Launched HSD legacy-profile import helper. Complete the import on the server, then restart HSD Collector from Services.'
+        : 'Launched HSD interactive reauthentication helper. Complete the HSD login on the server, then restart HSD Collector from Services.'}`
+      : 'Launched SolarWinds interactive reauthentication helper.'
   };
 }
 

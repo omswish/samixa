@@ -1,6 +1,5 @@
 param(
   [string]$StageRoot = (Join-Path $PSScriptRoot '..\staging\current'),
-  [string]$PostgresSourceRoot = 'C:\Program Files\PostgreSQL\18',
   [switch]$SkipBuild
 )
 
@@ -134,14 +133,11 @@ $runtimeStage = Join-Path $stageRootResolved 'runtime'
 $runtimeNodeStage = Join-Path $runtimeStage 'node'
 $runtimeToolsStage = Join-Path $stageRootResolved 'runtime-tools'
 $metadataStage = Join-Path $stageRootResolved 'metadata'
-$postgresStage = Join-Path $stageRootResolved 'postgres'
-$postgresRuntimeStage = Join-Path $postgresStage 'runtime'
 
 [System.IO.Directory]::CreateDirectory($appStage) | Out-Null
 [System.IO.Directory]::CreateDirectory($runtimeNodeStage) | Out-Null
 [System.IO.Directory]::CreateDirectory($runtimeToolsStage) | Out-Null
 [System.IO.Directory]::CreateDirectory($metadataStage) | Out-Null
-[System.IO.Directory]::CreateDirectory($postgresRuntimeStage) | Out-Null
 
 $rootFiles = @(
   'package.json',
@@ -223,37 +219,6 @@ Invoke-RobocopyMirror -Source $runtimeToolsRoot -Destination $runtimeToolsStage 
 
 Copy-Item -LiteralPath (Join-Path $deploymentRoot 'config\service-manifest.json') -Destination (Join-Path $metadataStage 'service-manifest.json') -Force
 
-$postgresRequiredDirs = @('bin', 'lib', 'share', 'installer')
-$missingPostgresDirs = @(
-  $postgresRequiredDirs | Where-Object {
-    -not (Test-Path -LiteralPath (Join-Path $PostgresSourceRoot $_))
-  }
-)
-
-if ($missingPostgresDirs.Count -eq 0) {
-  foreach ($dirName in $postgresRequiredDirs) {
-    Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot $dirName) -Destination (Join-Path $postgresRuntimeStage $dirName)
-  }
-
-  if (Test-Path -LiteralPath (Join-Path $PostgresSourceRoot 'scripts')) {
-    Invoke-RobocopyMirror -Source (Join-Path $PostgresSourceRoot 'scripts') -Destination (Join-Path $postgresRuntimeStage 'scripts')
-  }
-
-  foreach ($fileName in @(
-    'pg_env.bat',
-    'server_license.txt',
-    'commandlinetools_3rd_party_licenses.txt',
-    'StackBuilder_3rd_party_licenses.txt'
-  )) {
-    $sourceFile = Join-Path $PostgresSourceRoot $fileName
-    if (Test-Path -LiteralPath $sourceFile) {
-      Copy-Item -LiteralPath $sourceFile -Destination (Join-Path $postgresRuntimeStage $fileName) -Force
-    }
-  }
-} else {
-  Write-Warning "PostgreSQL runtime source not found under $PostgresSourceRoot. The staged installer will not be able to install PostgreSQL locally."
-}
-
 Assert-StagedPath -Path (Join-Path $appStage 'ecosystem.config.js') -Description 'ecosystem manifest'
 Assert-StagedPath -Path (Join-Path $appStage 'api-gateway\dist\index.js') -Description 'API gateway build'
 Assert-StagedPath -Path (Join-Path $appStage 'frontdoor-proxy\dist\index.js') -Description 'frontdoor proxy build'
@@ -263,12 +228,5 @@ Assert-StagedPath -Path (Join-Path $appStage 'node_modules\next\dist\bin\next') 
 Assert-StagedPath -Path (Join-Path $runtimeNodeStage 'node.exe') -Description 'bundled Node runtime'
 Assert-StagedPath -Path (Join-Path $runtimeToolsStage 'node_modules\pm2\bin\pm2') -Description 'bundled PM2 runtime'
 Assert-StagedPath -Path (Join-Path $metadataStage 'service-manifest.json') -Description 'service manifest'
-
-if (Test-Path -LiteralPath $postgresRuntimeStage) {
-  $pgCtlCandidate = Join-Path $postgresRuntimeStage 'bin\pg_ctl.exe'
-  if (Test-Path -LiteralPath $pgCtlCandidate) {
-    Assert-StagedPath -Path $pgCtlCandidate -Description 'bundled PostgreSQL runtime'
-  }
-}
 
 Write-Output "Staged deployment payload at $stageRootResolved"

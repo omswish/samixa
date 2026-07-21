@@ -301,9 +301,41 @@ async function waitForQueueGrid(page: Page, tableId: string) {
   await assertSessionIsAuthenticated(page, 'queue page');
 }
 
-async function parseChartBuckets(page: Page, selector: string, labels: string[]): Promise<Record<string, number>> {
+function buildZeroBuckets(labels: string[]): Record<string, number> {
+  const normalized = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
+  return Object.fromEntries(labels.map((label) => [normalized(label), 0]));
+}
+
+async function parseChartBuckets(
+  page: Page,
+  selector: string,
+  labels: string[],
+  options?: {
+    totalCount?: number | null;
+    chartLabel?: string;
+  }
+): Promise<Record<string, number>> {
   const locator = page.locator(selector).first();
-  await locator.waitFor({ state: 'visible', timeout: 30000 });
+  const normalized = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
+  const totalCount = options?.totalCount ?? null;
+  const chartLabel = options?.chartLabel || selector;
+
+  if (await locator.count() === 0) {
+    if (totalCount === 0) {
+      return buildZeroBuckets(labels);
+    }
+
+    throw new Error(`${chartLabel} chart was not found on the Symphony dashboard${typeof totalCount === 'number' ? ` while the total count was ${totalCount}` : ''}`);
+  }
+
+  const isVisible = await locator.isVisible().catch(() => false);
+  if (!isVisible) {
+    if (totalCount === 0) {
+      return buildZeroBuckets(labels);
+    }
+
+    throw new Error(`${chartLabel} chart was hidden on the Symphony dashboard${typeof totalCount === 'number' ? ` while the total count was ${totalCount}` : ''}`);
+  }
 
   const counts = await locator.evaluate((element, expectedLabels) => {
     const normalize = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -339,7 +371,6 @@ async function parseChartBuckets(page: Page, selector: string, labels: string[])
     return result;
   }, labels);
 
-  const normalized = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
   return Object.fromEntries(labels.map((label) => [normalized(label), counts[normalized(label)] ?? 0]));
 }
 
@@ -446,6 +477,7 @@ async function openQueuePage(page: Page, queueUrl: string, tableId: string, queu
     } catch (error) {
       const message = getErrorMessage(error);
       const isLastAttempt = attempt === MAX_QUEUE_ATTEMPTS;
+      await captureDebugArtifacts(page, `symphony_${queueLabel.replace(/\s+/g, '_')}_queue_attempt_${attempt}`);
       if (isLastAttempt || !isRetryableSymphonyError(error)) {
         throw new Error(`Symphony ${queueLabel} queue scrape failed: ${message}`);
       }
@@ -457,15 +489,9 @@ async function openQueuePage(page: Page, queueUrl: string, tableId: string, queu
 }
 
 async function scrapeQueueRows(page: Page, queueUrl: string, tableId: string, queueLabel: string): Promise<GridRow[]> {
-  const queuePage = await page.context().newPage();
-
-  try {
-    await openQueuePage(queuePage, queueUrl, tableId, queueLabel);
-    const grid = await readGridRows(queuePage, tableId);
-    return grid.rows;
-  } finally {
-    await queuePage.close().catch(() => undefined);
-  }
+  await openQueuePage(page, queueUrl, tableId, queueLabel);
+  const grid = await readGridRows(page, tableId);
+  return grid.rows;
 }
 
 async function scrapeSpecialQueues(page: Page): Promise<SpecialQueueCounts> {
@@ -532,31 +558,64 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string, targetHost: s
   const workOrdersAssigned = await getCount(page, 'span[ng-bind="WORKORDER.AssignedCount"]');
   const changeRecords = await getCount(page, 'span[ng-bind="CR.MyWorkgroupCount"]');
   const changeRecordsAssigned = await getCount(page, 'span[ng-bind="CR.AssignedCount"]');
+  const changeRecordsAvailable = changeRecords !== null && changeRecordsAssigned !== null;
 
-  const topLevelCounts = [
+  const requiredTopLevelCounts = [
     openIncidents,
     openIncidentsAssigned,
     serviceRequests,
     serviceRequestsAssigned,
     workOrders,
-    workOrdersAssigned,
-    changeRecords,
-    changeRecordsAssigned
+    workOrdersAssigned
   ];
-  if (topLevelCounts.some((value) => value === null)) {
+  if (requiredTopLevelCounts.some((value) => value === null)) {
     throw new Error('One or more Symphony ticket counters could not be read reliably');
+  }
+  if ((changeRecords === null) !== (changeRecordsAssigned === null)) {
+    throw new Error('Change Record counters rendered partially and could not be read reliably');
   }
 
   console.log('Extracting HSD chart buckets from rendered dashboard charts...');
-  const incidentBuckets = await parseChartBuckets(page, '#myWorkgroupIncidents', ['New', 'Assigned', 'In-Progress', 'Pending']);
-  const requestBuckets = await parseChartBuckets(page, '#myWorkgroupRequests', ['New', 'Assigned', 'In-Progress', 'Pending']);
-  const workOrderBuckets = await parseChartBuckets(page, '#myWorkgroupWorkorders', ['New', 'Assigned', 'In-Progress', 'Pending']);
-  const changeBuckets = await parseChartBuckets(page, '#myWorkgroupCRs', ['Initiated', 'Implemented', 'Approved Stage']);
+  const incidentBuckets = await parseChartBuckets(page, '#myWorkgroupIncidents', ['New', 'Assigned', 'In-Progress', 'Pending'], {
+    totalCount: openIncidents,
+    chartLabel: 'Incident'
+  });
+  const requestBuckets = await parseChartBuckets(page, '#myWorkgroupRequests', ['New', 'Assigned', 'In-Progress', 'Pending'], {
+    totalCount: serviceRequests,
+    chartLabel: 'Service Request'
+  });
+  const workOrderBuckets = await parseChartBuckets(page, '#myWorkgroupWorkorders', ['New', 'Assigned', 'In-Progress', 'Pending'], {
+    totalCount: workOrders,
+    chartLabel: 'Work Order'
+  });
 
   const openIncidentsBreakdown = chartBucketsToBreakdown(incidentBuckets);
   const serviceRequestsBreakdown = chartBucketsToBreakdown(requestBuckets);
   const workOrdersBreakdown = chartBucketsToBreakdown(workOrderBuckets);
-  const changeRecordsBreakdown = changeBucketsToBreakdown(changeBuckets);
+  let changeRecordsBreakdownAvailable = false;
+  let changeRecordsBreakdown: TicketBreakdown = { new: 0, assigned: 0, inProgress: 0, pending: 0 };
+  let resolvedChangeRecords = 0;
+
+  if (changeRecordsAvailable) {
+    resolvedChangeRecords = changeRecords ?? 0;
+    try {
+      const changeBuckets = await parseChartBuckets(page, '#myWorkgroupCRs', ['Initiated', 'Implemented', 'Approved Stage'], {
+        totalCount: changeRecords,
+        chartLabel: 'Change Record'
+      });
+      changeRecordsBreakdown = changeBucketsToBreakdown(changeBuckets);
+      changeRecordsBreakdownAvailable = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/Change Record chart was (?:not found|hidden) on the Symphony dashboard/i.test(message)) {
+        console.warn(`Change Record chart is unavailable for this HSD account. Continuing with count-only Change Request metrics. ${message}`);
+      } else {
+        throw error;
+      }
+    }
+  } else {
+    console.warn('Change Record widgets are not available for this HSD account. Continuing without Change Request metrics.');
+  }
 
   if (openIncidents !== openIncidentsBreakdown.new + openIncidentsBreakdown.assigned + openIncidentsBreakdown.inProgress + openIncidentsBreakdown.pending) {
     throw new Error('Incident chart breakdown does not match the Incident total');
@@ -567,7 +626,11 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string, targetHost: s
   if (workOrders !== workOrdersBreakdown.new + workOrdersBreakdown.assigned + workOrdersBreakdown.inProgress + workOrdersBreakdown.pending) {
     throw new Error('Work Order chart breakdown does not match the Work Order total');
   }
-  if (changeRecords !== changeRecordsBreakdown.new + changeRecordsBreakdown.assigned + changeRecordsBreakdown.inProgress) {
+  if (
+    changeRecordsAvailable
+    && changeRecordsBreakdownAvailable
+    && resolvedChangeRecords !== changeRecordsBreakdown.new + changeRecordsBreakdown.assigned + changeRecordsBreakdown.inProgress
+  ) {
     throw new Error('Change Record chart breakdown does not match the Change Record total');
   }
 
@@ -597,7 +660,9 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string, targetHost: s
     serviceRequestsBreakdown,
     workOrders,
     workOrdersBreakdown,
-    changeRecords,
+    changeRecordsAvailable,
+    changeRecordsBreakdownAvailable,
+    changeRecords: resolvedChangeRecords,
     changeRecordsBreakdown,
     ...specialQueues,
     serviceRequestsSla: requestsResponseSla,

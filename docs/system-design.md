@@ -200,7 +200,8 @@ flowchart TD
 Auto-heal mechanisms:
 - PM2 process supervision
 - saved process list via `pm2 save`
-- startup recovery via scheduled task and `pm2 resurrect`
+- runtime-user logon recovery via scheduled task and `pm2 resurrect`
+- runtime permission repair for PM2 state, session files, logs, config, and app data before bootstrap
 - admin-triggered restart actions
 
 ## 12. Security Boundaries

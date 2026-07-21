@@ -770,7 +770,7 @@ export default function AdminPage() {
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Sessions</h2>
-          <div style={panelHintStyle}>Import refreshed storage-state JSON. Server-local reauth opens an interactive browser on the host.</div>
+          <div style={panelHintStyle}>Import refreshed storage-state JSON. HSD server-local reauth stops the HSD Collector first, opens the interactive browser on the host, and requires a manual restart after login.</div>
         </div>
         <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
           <RefreshCw size={14} />
@@ -837,7 +837,7 @@ export default function AdminPage() {
                       style={secondaryButtonStyle}
                     >
                       <KeyRound size={14} />
-                      Launch Reauth on Server
+                      {workflow.id === 'symphony' ? 'Stop Collector + Reauth' : 'Launch Reauth on Server'}
                     </button>
                     {workflow.id === 'symphony' ? (
                       <button

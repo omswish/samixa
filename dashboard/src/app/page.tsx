@@ -148,6 +148,8 @@ interface DashboardState {
     serviceRequestsBreakdown: TicketBreakdown;
     workOrders: number;
     workOrdersBreakdown: TicketBreakdown;
+    changeRecordsAvailable: boolean;
+    changeRecordsBreakdownAvailable: boolean;
     changeRecords: number;
     changeRecordsBreakdown: TicketBreakdown;
     priority1Incidents: number;
@@ -216,7 +218,7 @@ const ALL_NETWORK_STATES: NetworkStateFilter[] = ['up', 'warning', 'down'];
 const ALL_HSD_WORK_TYPES: HsdWorkFilter[] = ['INCIDENTS', 'SERVICE REQUESTS', 'WORK ORDERS', 'CHANGES'];
 const ALL_HSD_QUEUE_TYPES: HsdQueueFilter[] = ['P1', 'P2', 'ONBOARD', 'SECURITY'];
 
-function createDefaultFilters(): DashboardFilters {
+function createDefaultFilters(availableHsdWorkTypes: readonly HsdWorkFilter[] = ALL_HSD_WORK_TYPES): DashboardFilters {
   return {
     sections: {
       hci: true,
@@ -231,12 +233,13 @@ function createDefaultFilters(): DashboardFilters {
     networkCarriers: [...ALL_NETWORK_CARRIERS],
     networkPaths: [...ALL_NETWORK_PATHS],
     networkStates: [...ALL_NETWORK_STATES],
-    hsdWorkTypes: [...ALL_HSD_WORK_TYPES],
+    hsdWorkTypes: [...availableHsdWorkTypes],
     hsdQueueTypes: [...ALL_HSD_QUEUE_TYPES]
   };
 }
 
-function createIssuesOnlyFilters(): DashboardFilters {
+function createIssuesOnlyFilters(availableHsdWorkTypes: readonly HsdWorkFilter[] = ALL_HSD_WORK_TYPES): DashboardFilters {
+  const preferredHsdWorkTypes = (['INCIDENTS', 'SERVICE REQUESTS'] as const).filter((value) => availableHsdWorkTypes.includes(value));
   return {
     sections: {
       hci: true,
@@ -251,7 +254,7 @@ function createIssuesOnlyFilters(): DashboardFilters {
     networkCarriers: [...ALL_NETWORK_CARRIERS],
     networkPaths: [...ALL_NETWORK_PATHS],
     networkStates: ['warning', 'down'],
-    hsdWorkTypes: ['INCIDENTS', 'SERVICE REQUESTS'],
+    hsdWorkTypes: preferredHsdWorkTypes,
     hsdQueueTypes: ['P1', 'P2', 'ONBOARD', 'SECURITY']
   };
 }
@@ -672,8 +675,9 @@ function getNetworkStateFilter(link: NetworkLink): NetworkStateFilter {
   return 'up';
 }
 
-function countActiveFilters(filters: DashboardFilters) {
+function countActiveFilters(filters: DashboardFilters, availableHsdWorkTypes: readonly HsdWorkFilter[] = ALL_HSD_WORK_TYPES) {
   let count = 0;
+  const effectiveHsdWorkTypes = filters.hsdWorkTypes.filter((value) => availableHsdWorkTypes.includes(value));
 
   count += Object.values(filters.sections).filter((visible) => !visible).length;
   if (filters.serverStatuses.length !== ALL_SERVER_STATUSES.length) count += 1;
@@ -683,7 +687,7 @@ function countActiveFilters(filters: DashboardFilters) {
   if (filters.networkCarriers.length !== ALL_NETWORK_CARRIERS.length) count += 1;
   if (filters.networkPaths.length !== ALL_NETWORK_PATHS.length) count += 1;
   if (filters.networkStates.length !== ALL_NETWORK_STATES.length) count += 1;
-  if (filters.hsdWorkTypes.length !== ALL_HSD_WORK_TYPES.length) count += 1;
+  if (effectiveHsdWorkTypes.length !== availableHsdWorkTypes.length) count += 1;
   if (filters.hsdQueueTypes.length !== ALL_HSD_QUEUE_TYPES.length) count += 1;
 
   return count;
@@ -798,19 +802,21 @@ function HsdOverviewCard({
   title,
   total,
   breakdown,
-  labels
+  labels,
+  note
 }: {
   title: string;
   total: number;
-  breakdown: TicketBreakdown;
+  breakdown?: TicketBreakdown | null;
   labels?: Partial<Record<keyof TicketBreakdown, string>>;
+  note?: string;
 }) {
   const totalSafe = Math.max(0, total);
   const categories = [
-    { label: labels?.new ?? 'NEW', value: breakdown.new, color: HSD_STATUS_COLORS.new },
-    { label: labels?.assigned ?? 'ASG', value: breakdown.assigned, color: HSD_STATUS_COLORS.assigned },
-    { label: labels?.inProgress ?? 'IP', value: breakdown.inProgress, color: HSD_STATUS_COLORS.inProgress },
-    { label: labels?.pending ?? 'PND', value: breakdown.pending, color: HSD_STATUS_COLORS.pending }
+    { label: labels?.new ?? 'NEW', value: breakdown?.new ?? 0, color: HSD_STATUS_COLORS.new },
+    { label: labels?.assigned ?? 'ASG', value: breakdown?.assigned ?? 0, color: HSD_STATUS_COLORS.assigned },
+    { label: labels?.inProgress ?? 'IP', value: breakdown?.inProgress ?? 0, color: HSD_STATUS_COLORS.inProgress },
+    { label: labels?.pending ?? 'PND', value: breakdown?.pending ?? 0, color: HSD_STATUS_COLORS.pending }
   ].filter((category) => category.label);
   const peakCategory = Math.max(1, ...categories.map((category) => category.value));
 
@@ -859,38 +865,62 @@ function HsdOverviewCard({
         </div>
       </div>
 
-      <div style={{ width: '100%', height: '8px', display: 'flex', overflow: 'hidden', borderRadius: '999px', background: 'rgba(62,39,35,0.08)' }}>
-        {categories.map((category) => (
-          <div
-            key={category.label}
-            style={{
-              width: totalSafe > 0 ? `${(category.value / totalSafe) * 100}%` : '0%',
-              minWidth: category.value > 0 ? '8px' : 0,
-              background: category.color
-            }}
-          />
-        ))}
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px', alignItems: 'end', minHeight: 'var(--wall-hsd-bars-min-height)' }}>
-        {categories.map((category) => (
-          <div key={category.label} style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.92rem', fontWeight: 800, color: category.color }}>{category.value}</span>
-            <div style={{ width: '100%', height: 'var(--wall-hsd-bar-height)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      {breakdown ? (
+        <>
+          <div style={{ width: '100%', height: '8px', display: 'flex', overflow: 'hidden', borderRadius: '999px', background: 'rgba(62,39,35,0.08)' }}>
+            {categories.map((category) => (
               <div
+                key={category.label}
                 style={{
-                  width: '30px',
-                  height: category.value > 0 ? `${Math.max(8, (category.value / peakCategory) * 48)}px` : '4px',
-                  borderRadius: '10px 10px 4px 4px',
-                  background: category.value > 0 ? `linear-gradient(180deg, ${category.color}, ${category.color}cc)` : 'rgba(62,39,35,0.12)',
-                  boxShadow: category.value > 0 ? `0 6px 12px ${category.color}26` : 'none'
+                  width: totalSafe > 0 ? `${(category.value / totalSafe) * 100}%` : '0%',
+                  minWidth: category.value > 0 ? '8px' : 0,
+                  background: category.color
                 }}
               />
-            </div>
-            <span style={{ fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>{category.label}</span>
+            ))}
           </div>
-        ))}
-      </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px', alignItems: 'end', minHeight: 'var(--wall-hsd-bars-min-height)' }}>
+            {categories.map((category) => (
+              <div key={category.label} style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.92rem', fontWeight: 800, color: category.color }}>{category.value}</span>
+                <div style={{ width: '100%', height: 'var(--wall-hsd-bar-height)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                  <div
+                    style={{
+                      width: '30px',
+                      height: category.value > 0 ? `${Math.max(8, (category.value / peakCategory) * 48)}px` : '4px',
+                      borderRadius: '10px 10px 4px 4px',
+                      background: category.value > 0 ? `linear-gradient(180deg, ${category.color}, ${category.color}cc)` : 'rgba(62,39,35,0.12)',
+                      boxShadow: category.value > 0 ? `0 6px 12px ${category.color}26` : 'none'
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>{category.label}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div
+          style={{
+            minHeight: 'var(--wall-hsd-bars-min-height)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '14px',
+            background: 'rgba(79,107,237,0.06)',
+            border: '1px dashed rgba(79,107,237,0.18)',
+            color: 'rgba(62,39,35,0.68)',
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            textAlign: 'center',
+            padding: '10px 12px'
+          }}
+        >
+          {note || 'STATUS BREAKDOWN UNAVAILABLE'}
+        </div>
+      )}
     </div>
   );
 }
@@ -1790,6 +1820,7 @@ function FilterPanel({
   open,
   activeCount,
   filters,
+  availableHsdWorkTypes,
   onClose,
   onReset,
   onIssuesOnly,
@@ -1807,6 +1838,7 @@ function FilterPanel({
   open: boolean;
   activeCount: number;
   filters: DashboardFilters;
+  availableHsdWorkTypes: readonly HsdWorkFilter[];
   onClose: () => void;
   onReset: () => void;
   onIssuesOnly: () => void;
@@ -1940,7 +1972,7 @@ function FilterPanel({
         </FilterGroup>
 
         <FilterGroup title="HSD WORK TYPE">
-          {ALL_HSD_WORK_TYPES.map((value) => (
+          {availableHsdWorkTypes.map((value) => (
             <FilterChip
               key={value}
               label={value}
@@ -2795,6 +2827,10 @@ export default function Dashboard() {
   const showHsdSessionImport = session.role === 'admin'
     && !!data.sections.symphony.lastError
     && /session expired|authentication|login|unauthorized|forbidden|authenticated session/i.test(data.sections.symphony.lastError);
+  const availableHsdWorkTypes = data.symphony.changeRecordsAvailable
+    ? ALL_HSD_WORK_TYPES
+    : ALL_HSD_WORK_TYPES.filter((value) => value !== 'CHANGES');
+  const effectiveHsdWorkTypes = filters.hsdWorkTypes.filter((value) => availableHsdWorkTypes.includes(value));
   const filteredServers = data.servers.filter((server) => {
     const visual = getServerVisualState(server);
     return (
@@ -2812,20 +2848,22 @@ export default function Dashboard() {
   const rawTicketCards: Array<{
     label: HsdWorkFilter;
     total: number;
-    breakdown: TicketBreakdown;
+    breakdown: TicketBreakdown | null;
     labels?: Partial<Record<keyof TicketBreakdown, string>>;
+    note?: string;
   }> = [
     { label: 'INCIDENTS', total: data.symphony.openIncidents, breakdown: data.symphony.openIncidentsBreakdown },
     { label: 'SERVICE REQUESTS', total: data.symphony.serviceRequests, breakdown: data.symphony.serviceRequestsBreakdown },
     { label: 'WORK ORDERS', total: data.symphony.workOrders, breakdown: data.symphony.workOrdersBreakdown },
-    {
-      label: 'CHANGES',
+    ...(data.symphony.changeRecordsAvailable ? [{
+      label: 'CHANGES' as HsdWorkFilter,
       total: data.symphony.changeRecords,
-      breakdown: data.symphony.changeRecordsBreakdown,
-      labels: { new: 'INT', assigned: 'IMP', inProgress: 'APR', pending: '' }
-    }
+      breakdown: data.symphony.changeRecordsBreakdownAvailable ? data.symphony.changeRecordsBreakdown : null,
+      labels: { new: 'INT', assigned: 'IMP', inProgress: 'APR', pending: '' },
+      note: 'COUNT ONLY'
+    }] : [])
   ];
-  const ticketCards = rawTicketCards.filter((card) => filters.hsdWorkTypes.includes(card.label));
+  const ticketCards = rawTicketCards.filter((card) => effectiveHsdWorkTypes.includes(card.label));
   const specialQueues = [
     {
       label: 'P1' as HsdQueueFilter,
@@ -2931,7 +2969,7 @@ export default function Dashboard() {
     ticketCards.reduce((sum, card) => sum + card.total, 0)
   );
   const specialQueueTotal = Math.max(1, specialQueues.reduce((sum, queue) => sum + queue.value, 0));
-  const activeFilterCount = countActiveFilters(filters);
+  const activeFilterCount = countActiveFilters(filters, availableHsdWorkTypes);
   const visibleSections = filters.sections;
   const anySectionVisible = Object.values(visibleSections).some(Boolean);
   const hasLeftColumnContent = visibleSections.hci || visibleSections.hsd || visibleSections.network;
@@ -2947,8 +2985,8 @@ export default function Dashboard() {
     }));
   };
 
-  const resetFilters = () => setFilters(createDefaultFilters());
-  const applyIssuesOnly = () => setFilters(createIssuesOnlyFilters());
+  const resetFilters = () => setFilters(createDefaultFilters(availableHsdWorkTypes));
+  const applyIssuesOnly = () => setFilters(createIssuesOnlyFilters(availableHsdWorkTypes));
   const handleOpenAdminSurface = () => {
     const nextUrl = new URL(window.location.href);
     nextUrl.port = '21061';
@@ -2959,13 +2997,14 @@ export default function Dashboard() {
 
   return (
     <>
-    <FilterPanel
-      open={filtersOpen}
-      activeCount={activeFilterCount}
-      filters={filters}
-      onClose={() => setFiltersOpen(false)}
-      onReset={resetFilters}
-      onIssuesOnly={applyIssuesOnly}
+      <FilterPanel
+        open={filtersOpen}
+        activeCount={activeFilterCount}
+        filters={filters}
+        availableHsdWorkTypes={availableHsdWorkTypes}
+        onClose={() => setFiltersOpen(false)}
+        onReset={resetFilters}
+        onIssuesOnly={applyIssuesOnly}
       onSectionToggle={toggleSectionVisibility}
       onToggleServerStatus={(value) => setFilters((current) => ({ ...current, serverStatuses: toggleArraySelection(current.serverStatuses, value, ALL_SERVER_STATUSES) }))}
       onToggleServerPlatform={(value) => setFilters((current) => ({ ...current, serverPlatforms: toggleArraySelection(current.serverPlatforms, value, ALL_SERVER_PLATFORMS) }))}
@@ -2974,9 +3013,9 @@ export default function Dashboard() {
       onToggleNetworkCarrier={(value) => setFilters((current) => ({ ...current, networkCarriers: toggleArraySelection(current.networkCarriers, value, ALL_NETWORK_CARRIERS) }))}
       onToggleNetworkPath={(value) => setFilters((current) => ({ ...current, networkPaths: toggleArraySelection(current.networkPaths, value, ALL_NETWORK_PATHS) }))}
       onToggleNetworkState={(value) => setFilters((current) => ({ ...current, networkStates: toggleArraySelection(current.networkStates, value, ALL_NETWORK_STATES) }))}
-      onToggleHsdWorkType={(value) => setFilters((current) => ({ ...current, hsdWorkTypes: toggleArraySelection(current.hsdWorkTypes, value, ALL_HSD_WORK_TYPES) }))}
-      onToggleHsdQueueType={(value) => setFilters((current) => ({ ...current, hsdQueueTypes: toggleArraySelection(current.hsdQueueTypes, value, ALL_HSD_QUEUE_TYPES) }))}
-    />
+        onToggleHsdWorkType={(value) => setFilters((current) => ({ ...current, hsdWorkTypes: toggleArraySelection(current.hsdWorkTypes.filter((entry) => availableHsdWorkTypes.includes(entry)), value, availableHsdWorkTypes) }))}
+        onToggleHsdQueueType={(value) => setFilters((current) => ({ ...current, hsdQueueTypes: toggleArraySelection(current.hsdQueueTypes, value, ALL_HSD_QUEUE_TYPES) }))}
+      />
     <div className="dashboard-shell dashboard-shell--desktop" style={{ padding: 'var(--wall-shell-padding)', display: 'flex', flexDirection: 'column', gap: 'var(--wall-shell-gap)', minHeight: '100vh' }}>
       <header className="glass-panel dashboard-header dashboard-header--wall" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--wall-header-gap)', padding: 'var(--wall-header-padding)' }}>
         <div style={{ minWidth: 0 }}>
@@ -3176,6 +3215,7 @@ export default function Dashboard() {
                   total={card.total}
                   breakdown={card.breakdown}
                   labels={card.labels}
+                  note={card.note}
                 />
               )) : <EmptyFilterState label="No HSD work cards match the selected filters." />}
             </div>
@@ -3404,10 +3444,10 @@ export default function Dashboard() {
         <section className="glass-panel dashboard-mobile-card">
           <MobileSectionHeader icon={<Ticket size={18} style={{ color: '#1565c0' }} />} title="Hindalco Service Desk" subtitle="hsd.adityabirla.com" health={data.sections.symphony} />
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
-            {filters.hsdWorkTypes.includes('INCIDENTS') ? <HsdWorkCard label="INCIDENTS" total={data.symphony.openIncidents} breakdown={data.symphony.openIncidentsBreakdown} accent="#c62828" /> : null}
-            {filters.hsdWorkTypes.includes('SERVICE REQUESTS') ? <HsdWorkCard label="SERVICE REQUESTS" total={data.symphony.serviceRequests} breakdown={data.symphony.serviceRequestsBreakdown} accent="#1565c0" /> : null}
-            {filters.hsdWorkTypes.includes('WORK ORDERS') ? <HsdStatusTile label="WORK ORDERS" count={data.symphony.workOrders} total={ticketBacklogTotal} color="#6d4c41" /> : null}
-            {filters.hsdWorkTypes.includes('CHANGES') ? <HsdStatusTile label="CHANGES" count={data.symphony.changeRecords} total={ticketBacklogTotal} color="#4f6bed" /> : null}
+            {effectiveHsdWorkTypes.includes('INCIDENTS') ? <HsdWorkCard label="INCIDENTS" total={data.symphony.openIncidents} breakdown={data.symphony.openIncidentsBreakdown} accent="#c62828" /> : null}
+            {effectiveHsdWorkTypes.includes('SERVICE REQUESTS') ? <HsdWorkCard label="SERVICE REQUESTS" total={data.symphony.serviceRequests} breakdown={data.symphony.serviceRequestsBreakdown} accent="#1565c0" /> : null}
+            {effectiveHsdWorkTypes.includes('WORK ORDERS') ? <HsdStatusTile label="WORK ORDERS" count={data.symphony.workOrders} total={ticketBacklogTotal} color="#6d4c41" /> : null}
+            {effectiveHsdWorkTypes.includes('CHANGES') ? <HsdStatusTile label="CHANGES" count={data.symphony.changeRecords} total={ticketBacklogTotal} color="#4f6bed" /> : null}
           </div>
           {ticketCards.length === 0 ? <div style={{ marginTop: '12px' }}><EmptyFilterState label="No HSD work cards match the selected filters." /></div> : null}
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
