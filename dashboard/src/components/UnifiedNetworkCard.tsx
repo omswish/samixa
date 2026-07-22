@@ -40,6 +40,8 @@ interface NetworkLink {
   dailyTransmitUtilization?: number | null;
   dailyReceiveUtilization?: number | null;
   history: number[];
+  txHistory?: number[];
+  rxHistory?: number[];
 }
 
 interface SectionHealth {
@@ -698,8 +700,8 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <CombinedUtilizationSparklineRow
-                  txHistory={link.history || []}
-                  rxHistory={link.history || []}
+                  txHistory={link.txHistory || link.history || []}
+                  rxHistory={link.rxHistory || link.history || []}
                   txRealtimeValue={link.realtimeTransmitUtilization ?? link.transmitUtilization}
                   rxRealtimeValue={link.realtimeReceiveUtilization ?? link.receiveUtilization}
                   txDailyValue={link.dailyTransmitUtilization}

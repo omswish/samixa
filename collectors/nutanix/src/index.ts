@@ -298,6 +298,7 @@ async function collectNutanixData() {
             memory,
             diskUsage: diskPercent !== undefined ? `${diskPercent}%` : undefined,
             status,
+            statusText: entity.powerState || entity.status || (isPoweredOn ? 'poweredOn' : 'poweredOff'),
             backupStatus: entity.protectionDomainName ? 'successful' : 'N/A'
           };
         });

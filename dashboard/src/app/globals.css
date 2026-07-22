@@ -49,9 +49,9 @@ html {
   --wall-hci-node-label-size: 0.44rem;
   --wall-hsd-card-gap: 12px;
   --wall-hsd-card-padding: 14px 14px 12px;
-  --wall-hsd-total-size: 2.2rem;
-  --wall-hsd-bars-min-height: 88px;
-  --wall-hsd-bar-height: 58px;
+  --wall-hsd-total-size: 2.28rem;
+  --wall-hsd-bars-min-height: 132px;
+  --wall-hsd-bar-height: 84px;
   --wall-sla-card-padding: 10px 12px;
   --wall-special-queue-padding: 10px 12px;
   --wall-network-card-gap: 8px;
@@ -348,14 +348,14 @@ h1, h2, h3, h4, h5, h6 {
 .server-fleet-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
   min-height: 0;
 }
 
 .server-table-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -391,9 +391,9 @@ h1, h2, h3, h4, h5, h6 {
     --wall-hci-node-label-size: 0.4rem;
     --wall-hsd-card-gap: 9px;
     --wall-hsd-card-padding: 11px 12px 10px;
-    --wall-hsd-total-size: 1.92rem;
-    --wall-hsd-bars-min-height: 74px;
-    --wall-hsd-bar-height: 48px;
+    --wall-hsd-total-size: 1.98rem;
+    --wall-hsd-bars-min-height: 108px;
+    --wall-hsd-bar-height: 68px;
     --wall-sla-card-padding: 8px 10px;
     --wall-special-queue-padding: 8px 10px;
     --wall-network-card-gap: 6px;

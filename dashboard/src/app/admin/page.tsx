@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   BookOpenText,
   HardDriveDownload,
+  History,
   KeyRound,
   LogOut,
   Play,
@@ -58,18 +59,48 @@ type AdminSettingsPayload = {
 };
 
 type AppAuthStatus = {
-  mode: 'runtime' | 'env';
+  mode: 'postgres' | 'runtime' | 'env';
   updatedAt: string | null;
   users: {
     admin: {
       custom: boolean;
-      source: 'runtime' | 'env';
+      source: 'postgres' | 'runtime' | 'env';
+      lastLoginAt: string | null;
     };
     operator: {
       custom: boolean;
-      source: 'runtime' | 'env';
+      source: 'postgres' | 'runtime' | 'env';
+      lastLoginAt: string | null;
     };
   };
+};
+
+type AppActionAuditRow = {
+  auditId: number;
+  occurredAt: string;
+  actionType: string;
+  actionResult: 'success' | 'failed' | 'denied';
+  severity: 'info' | 'warning' | 'critical';
+  actorUsername: string | null;
+  actorRole: 'viewer' | 'admin' | null;
+  surface: 'admin' | 'operator' | null;
+  sourceIp: string | null;
+  userAgent: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  message: string | null;
+  errorMessage: string | null;
+  requestSummaryJson: unknown;
+  resultSummaryJson: unknown;
+  correlationId: string | null;
+};
+
+type AuditFilterState = {
+  actionType: string;
+  actionResult: 'all' | 'success' | 'failed' | 'denied';
+  actorUsername: string;
+  surface: 'all' | 'admin' | 'operator';
+  limit: 50 | 100 | 250;
 };
 
 type PasswordDraft = {
@@ -117,7 +148,7 @@ type SessionSnapshot = {
   }>;
 };
 
-type AdminTabKey = 'overview' | 'services' | 'sessions' | 'sources' | 'help';
+type AdminTabKey = 'overview' | 'services' | 'sessions' | 'sources' | 'audit' | 'help';
 
 const OPERATOR_PORT = '21060';
 
@@ -234,6 +265,49 @@ function createEmptyPasswordDraft(): PasswordDraft {
   };
 }
 
+function createDefaultAuditFilters(): AuditFilterState {
+  return {
+    actionType: '',
+    actionResult: 'all',
+    actorUsername: '',
+    surface: 'all',
+    limit: 50
+  };
+}
+
+function formatAuditTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString('en-IN', {
+    hour12: false,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
+
+function stringifyAuditJson(value: unknown) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 export default function AdminPage() {
   const [session, setSession] = useState<DashboardSession | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
@@ -249,6 +323,10 @@ export default function AdminPage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authStatus, setAuthStatus] = useState<AppAuthStatus | null>(null);
   const [passwordDraft, setPasswordDraft] = useState<PasswordDraft>(() => createEmptyPasswordDraft());
+  const [auditRows, setAuditRows] = useState<AppActionAuditRow[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLoadedAt, setAuditLoadedAt] = useState<string | null>(null);
+  const [auditFilters, setAuditFilters] = useState<AuditFilterState>(() => createDefaultAuditFilters());
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hsdImportRef = useRef<HTMLInputElement | null>(null);
@@ -296,6 +374,40 @@ export default function AdminPage() {
     }
   };
 
+  const loadAudit = async (filters: AuditFilterState = auditFilters) => {
+    setAuditLoading(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams();
+      if (filters.actionType.trim()) {
+        query.set('actionType', filters.actionType.trim());
+      }
+      if (filters.actionResult !== 'all') {
+        query.set('actionResult', filters.actionResult);
+      }
+      if (filters.actorUsername.trim()) {
+        query.set('actorUsername', filters.actorUsername.trim());
+      }
+      if (filters.surface !== 'all') {
+        query.set('surface', filters.surface);
+      }
+      query.set('limit', String(filters.limit));
+
+      const response = await fetch(`/api/admin/audit?${query.toString()}`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to load audit records.');
+      }
+
+      setAuditRows(Array.isArray(payload.rows) ? payload.rows : []);
+      setAuditLoadedAt(new Date().toISOString());
+    } catch (nextError: any) {
+      setError(nextError?.message || 'Failed to load audit records.');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -339,12 +451,39 @@ export default function AdminPage() {
     void loadAll();
   }, [session]);
 
+  useEffect(() => {
+    if (!session || session.role !== 'admin' || activeTab !== 'audit') {
+      return;
+    }
+
+    void loadAudit(auditFilters);
+  }, [session, activeTab]);
+
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
     } finally {
       window.location.replace('/login');
     }
+  };
+
+  const handleExportAuditCsv = () => {
+    const query = new URLSearchParams();
+    if (auditFilters.actionType.trim()) {
+      query.set('actionType', auditFilters.actionType.trim());
+    }
+    if (auditFilters.actionResult !== 'all') {
+      query.set('actionResult', auditFilters.actionResult);
+    }
+    if (auditFilters.actorUsername.trim()) {
+      query.set('actorUsername', auditFilters.actorUsername.trim());
+    }
+    if (auditFilters.surface !== 'all') {
+      query.set('surface', auditFilters.surface);
+    }
+    query.set('limit', String(auditFilters.limit));
+    query.set('format', 'csv');
+    window.location.assign(`/api/admin/audit?${query.toString()}`);
   };
 
   const updateTarget = (
@@ -611,6 +750,12 @@ export default function AdminPage() {
       label: 'Sources',
       detail: 'Collector endpoints and credentials',
       icon: <Settings2 size={16} />
+    },
+    {
+      key: 'audit',
+      label: 'Audit',
+      detail: 'Admin actions and login trail',
+      icon: <History size={16} />
     },
     {
       key: 'help',
@@ -978,7 +1123,7 @@ export default function AdminPage() {
               <div style={{ display: 'grid', gap: '4px' }}>
                 <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Portal Passwords</div>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                  Change admin and operator login passwords from the admin UI. Operator does not get this control.
+                  Change admin and operator login passwords from the admin UI. Postgres is primary when configured; runtime and env remain fallback-only.
                 </div>
               </div>
               <button type="button" onClick={() => void handleSavePortalPasswords()} disabled={authBusy} style={primaryButtonStyle(authBusy)}>
@@ -988,10 +1133,20 @@ export default function AdminPage() {
             </div>
 
             <div style={metaRowStyle}>
-              <span style={metaPillStyle}>Mode {authStatus?.mode === 'runtime' ? 'Runtime override' : 'Environment default'}</span>
-              <span style={metaPillStyle}>Admin {authStatus?.users.admin.custom ? 'Custom' : 'Default'}</span>
-              <span style={metaPillStyle}>Operator {authStatus?.users.operator.custom ? 'Custom' : 'Default'}</span>
+              <span style={metaPillStyle}>
+                Mode {
+                  authStatus?.mode === 'postgres'
+                    ? 'Postgres primary'
+                    : authStatus?.mode === 'runtime'
+                      ? 'Runtime override'
+                      : 'Environment default'
+                }
+              </span>
+              <span style={metaPillStyle}>Admin {authStatus?.users.admin.source || 'env'}</span>
+              <span style={metaPillStyle}>Operator {authStatus?.users.operator.source || 'env'}</span>
               {authStatus?.updatedAt ? <span style={metaPillStyle}>Updated {new Date(authStatus.updatedAt).toLocaleString()}</span> : null}
+              {authStatus?.users.admin.lastLoginAt ? <span style={metaPillStyle}>Admin login {new Date(authStatus.users.admin.lastLoginAt).toLocaleString()}</span> : null}
+              {authStatus?.users.operator.lastLoginAt ? <span style={metaPillStyle}>Operator login {new Date(authStatus.users.operator.lastLoginAt).toLocaleString()}</span> : null}
             </div>
 
             <div style={sourceFieldGridStyle}>
@@ -1107,6 +1262,179 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+    </section>
+  );
+
+  const renderAuditPanel = () => (
+    <section className="glass-panel" style={contentPanelStyle}>
+      <div style={panelHeaderStyle}>
+        <div>
+          <h2 style={panelTitleStyle}>Audit Trail</h2>
+          <div style={panelHintStyle}>Focused application audit for admin actions, login outcomes, service control, settings changes, and session workflows.</div>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button type="button" onClick={() => void loadAudit()} style={secondaryButtonStyle}>
+            <RefreshCw size={14} />
+            Refresh audit
+          </button>
+          <button type="button" onClick={handleExportAuditCsv} style={secondaryButtonStyle}>
+            <HardDriveDownload size={14} />
+            Export CSV
+          </button>
+        </div>
+      </div>
+
+      <div style={itemCardStyle}>
+        <div style={sourceFieldGridStyle}>
+          <label style={fieldBlockStyle}>
+            Action type
+            <input
+              value={auditFilters.actionType}
+              onChange={(event) => setAuditFilters((current) => ({ ...current, actionType: event.target.value }))}
+              placeholder="admin.settings.update"
+              style={fieldStyle}
+            />
+          </label>
+          <label style={fieldBlockStyle}>
+            Result
+            <select
+              value={auditFilters.actionResult}
+              onChange={(event) => setAuditFilters((current) => ({ ...current, actionResult: event.target.value as AuditFilterState['actionResult'] }))}
+              style={fieldStyle}
+            >
+              <option value="all">All</option>
+              <option value="success">Success</option>
+              <option value="failed">Failed</option>
+              <option value="denied">Denied</option>
+            </select>
+          </label>
+          <label style={fieldBlockStyle}>
+            Actor
+            <input
+              value={auditFilters.actorUsername}
+              onChange={(event) => setAuditFilters((current) => ({ ...current, actorUsername: event.target.value }))}
+              placeholder="admin"
+              style={fieldStyle}
+            />
+          </label>
+          <label style={fieldBlockStyle}>
+            Surface
+            <select
+              value={auditFilters.surface}
+              onChange={(event) => setAuditFilters((current) => ({ ...current, surface: event.target.value as AuditFilterState['surface'] }))}
+              style={fieldStyle}
+            >
+              <option value="all">All</option>
+              <option value="admin">Admin</option>
+              <option value="operator">Operator</option>
+            </select>
+          </label>
+          <label style={fieldBlockStyle}>
+            Row limit
+            <select
+              value={String(auditFilters.limit)}
+              onChange={(event) => setAuditFilters((current) => ({ ...current, limit: Number(event.target.value) as AuditFilterState['limit'] }))}
+              style={fieldStyle}
+            >
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="250">250</option>
+            </select>
+          </label>
+        </div>
+
+        <div style={compactActionRowStyle}>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+            {auditLoadedAt ? `Last loaded ${new Date(auditLoadedAt).toLocaleString()}` : 'Audit data not loaded yet in this session.'}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => {
+                const next = createDefaultAuditFilters();
+                setAuditFilters(next);
+                void loadAudit(next);
+              }}
+              style={secondaryButtonStyle}
+            >
+              <RotateCcw size={14} />
+              Reset filters
+            </button>
+            <button type="button" onClick={() => void loadAudit()} style={primaryButtonStyle(auditLoading)}>
+              <History size={14} />
+              {auditLoading ? 'Loading...' : 'Apply filters'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: '10px' }}>
+        {auditLoading ? (
+          <div style={loadingRowStyle}>
+            <RefreshCw size={18} className="animate-spin" />
+            Loading audit records...
+          </div>
+        ) : auditRows.length === 0 ? (
+          <div style={{ ...itemCardStyle, color: 'var(--text-secondary)' }}>
+            No audit records matched the current filter.
+          </div>
+        ) : auditRows.map((row) => {
+          const tone = toneStyles(
+            row.actionResult === 'success'
+              ? 'online'
+              : row.actionResult === 'denied'
+                ? 'warning'
+                : 'error'
+          );
+
+          return (
+            <div key={row.auditId} style={itemCardStyle}>
+              <div style={compactCardHeaderStyle}>
+                <div style={{ display: 'grid', gap: '4px' }}>
+                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{row.actionType}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    {formatAuditTimestamp(row.occurredAt)}
+                  </div>
+                </div>
+                <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                  {row.actionResult.toUpperCase()}
+                </span>
+              </div>
+
+              <div style={metaRowStyle}>
+                <span style={metaPillStyle}>{row.surface || 'unknown surface'}</span>
+                <span style={metaPillStyle}>{row.actorUsername || 'unknown actor'}</span>
+                {row.actorRole ? <span style={metaPillStyle}>{row.actorRole}</span> : null}
+                {row.targetType ? <span style={metaPillStyle}>{row.targetType}</span> : null}
+                {row.targetId ? <span style={metaPillStyle}>{row.targetId}</span> : null}
+                {row.sourceIp ? <span style={metaPillStyle}>{row.sourceIp}</span> : null}
+              </div>
+
+              <div style={{ display: 'grid', gap: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                {row.message ? <div><strong style={{ color: 'var(--text-primary)' }}>Message:</strong> {row.message}</div> : null}
+                {row.errorMessage ? <div><strong style={{ color: '#b3261e' }}>Error:</strong> {row.errorMessage}</div> : null}
+              </div>
+
+              {(row.requestSummaryJson || row.resultSummaryJson) ? (
+                <div style={sourceFieldGridStyle}>
+                  {row.requestSummaryJson ? (
+                    <label style={fieldBlockStyle}>
+                      Request Summary
+                      <textarea readOnly value={stringifyAuditJson(row.requestSummaryJson)} rows={4} style={textAreaStyle} />
+                    </label>
+                  ) : null}
+                  {row.resultSummaryJson ? (
+                    <label style={fieldBlockStyle}>
+                      Result Summary
+                      <textarea readOnly value={stringifyAuditJson(row.resultSummaryJson)} rows={4} style={textAreaStyle} />
+                    </label>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 
@@ -1261,6 +1589,7 @@ export default function AdminPage() {
           {activeTab === 'services' ? renderServicesPanel() : null}
           {activeTab === 'sessions' ? renderSessionsPanel() : null}
           {activeTab === 'sources' ? renderSourcesPanel() : null}
+          {activeTab === 'audit' ? renderAuditPanel() : null}
           {activeTab === 'help' ? renderHelpPanel() : null}
         </div>
       </div>

@@ -7,8 +7,10 @@ import {
   Activity,
   AlertOctagon,
   AlertTriangle,
+  ChevronDown,
   CheckCircle2,
   Clock,
+  Info,
   Layers,
   LogOut,
   Power,
@@ -39,6 +41,8 @@ interface ServerNode {
   history: number[];
   effectiveTelemetrySource?: 'nutanix' | 'solarwinds' | null;
   usingFallback?: boolean;
+  nutanixStatusText?: string | null;
+  solarwindsStatusText?: string | null;
 }
 
 interface NetworkLink {
@@ -77,6 +81,8 @@ interface NetworkLink {
   dailyTransmitUtilization?: number | null;
   dailyReceiveUtilization?: number | null;
   history: number[];
+  txHistory?: number[];
+  rxHistory?: number[];
 }
 
 type SectionStatus = 'ok' | 'stale' | 'error' | 'never';
@@ -95,13 +101,13 @@ interface TicketBreakdown {
 }
 
 const HSD_STATUS_COLORS = {
-  new: '#4f6bed',
+  new: '#ff1744',
   assigned: '#f0b429',
   inProgress: '#2e7d32',
   pending: '#7b8794'
 } as const;
 
-const SERVER_TABLE_COLUMNS = 'minmax(0, 1.82fr) minmax(72px, 0.72fr) minmax(72px, 0.72fr) minmax(72px, 0.72fr) minmax(72px, 0.72fr) 76px 90px';
+const SERVER_TABLE_COLUMNS = 'minmax(0, 1.94fr) minmax(68px, 0.66fr) minmax(68px, 0.66fr) minmax(68px, 0.66fr) minmax(68px, 0.66fr) 70px 78px';
 
 interface SectionHealth {
   key: 'nutanix' | 'servers' | 'networks' | 'symphony';
@@ -184,6 +190,32 @@ interface DashboardSession {
   expiresAt: string;
 }
 
+interface TelemetryHistoryQuery {
+  assetId: string;
+  metricName?: string | null;
+  since?: string | null;
+  until?: string | null;
+  limit?: number | null;
+}
+
+interface TelemetryHistoryPoint {
+  assetId: string;
+  assetType: string;
+  metricName: string;
+  metricValueNumeric: number | null;
+  metricValueText: string | null;
+  unit: string | null;
+  collectedAt: string;
+  truthSource: string;
+  quality: 'observed' | 'last_synced' | 'derived';
+}
+
+interface TelemetryHistorySeries {
+  assetId: string;
+  metricName: string | null;
+  points: TelemetryHistoryPoint[];
+}
+
 type SectionFilterKey = 'hci' | 'hsd' | 'network' | 'servers';
 type ServerStatusFilter = VisualTone;
 type ServerPlatformFilter = 'HCI VM' | 'On Prem';
@@ -217,6 +249,94 @@ const ALL_NETWORK_PATHS: NetworkPathFilter[] = ['ISP', 'SDWAN'];
 const ALL_NETWORK_STATES: NetworkStateFilter[] = ['up', 'warning', 'down'];
 const ALL_HSD_WORK_TYPES: HsdWorkFilter[] = ['INCIDENTS', 'SERVICE REQUESTS', 'WORK ORDERS', 'CHANGES'];
 const ALL_HSD_QUEUE_TYPES: HsdQueueFilter[] = ['P1', 'P2', 'ONBOARD', 'SECURITY'];
+
+function buildTelemetrySeriesKey(assetId: string, metricName: string | null | undefined) {
+  return `${assetId}::${metricName || ''}`;
+}
+
+function extractNumericHistory(points: TelemetryHistoryPoint[] | undefined) {
+  if (!points?.length) {
+    return [];
+  }
+
+  return points
+    .map((point) => point.metricValueNumeric)
+    .filter((value): value is number => value !== null && value !== undefined && !Number.isNaN(value));
+}
+
+function buildTelemetryHistoryQueries(state: DashboardState): TelemetryHistoryQuery[] {
+  const queries: TelemetryHistoryQuery[] = [];
+
+  for (const server of state.servers) {
+    queries.push({
+      assetId: server.id,
+      metricName: 'cpu_usage',
+      limit: 20
+    });
+  }
+
+  for (const link of state.networks) {
+    queries.push({
+      assetId: link.id,
+      metricName: 'utilization',
+      limit: 20
+    });
+    queries.push({
+      assetId: link.id,
+      metricName: 'realtime_tx_utilization',
+      limit: 20
+    });
+    queries.push({
+      assetId: link.id,
+      metricName: 'realtime_rx_utilization',
+      limit: 20
+    });
+  }
+
+  const deduped = new Map<string, TelemetryHistoryQuery>();
+  for (const query of queries) {
+    deduped.set(buildTelemetrySeriesKey(query.assetId, query.metricName), query);
+  }
+
+  return [...deduped.values()];
+}
+
+function applyTelemetryHistoryToState(state: DashboardState, series: TelemetryHistorySeries[]) {
+  if (!series.length) {
+    return state;
+  }
+
+  const historyMap = new Map(series.map((entry) => [buildTelemetrySeriesKey(entry.assetId, entry.metricName), entry.points]));
+
+  return {
+    ...state,
+    servers: state.servers.map((server) => {
+      const cpuHistory = extractNumericHistory(historyMap.get(buildTelemetrySeriesKey(server.id, 'cpu_usage')));
+      return cpuHistory.length > 0
+        ? {
+            ...server,
+            history: cpuHistory
+          }
+        : server;
+    }),
+    networks: state.networks.map((link) => {
+      const utilizationHistory = extractNumericHistory(historyMap.get(buildTelemetrySeriesKey(link.id, 'utilization')));
+      const txHistory = extractNumericHistory(historyMap.get(buildTelemetrySeriesKey(link.id, 'realtime_tx_utilization')));
+      const rxHistory = extractNumericHistory(historyMap.get(buildTelemetrySeriesKey(link.id, 'realtime_rx_utilization')));
+
+      if (!utilizationHistory.length && !txHistory.length && !rxHistory.length) {
+        return link;
+      }
+
+      return {
+        ...link,
+        history: utilizationHistory.length > 0 ? utilizationHistory : link.history,
+        txHistory: txHistory.length > 0 ? txHistory : link.txHistory,
+        rxHistory: rxHistory.length > 0 ? rxHistory : link.rxHistory
+      };
+    })
+  };
+}
 
 function createDefaultFilters(availableHsdWorkTypes: readonly HsdWorkFilter[] = ALL_HSD_WORK_TYPES): DashboardFilters {
   return {
@@ -434,6 +554,88 @@ function getServerVisualState(server: ServerNode) {
     memoryPct,
     diskPct
   };
+}
+
+function getServerPrimarySource(server: ServerNode) {
+  return server.effectiveTelemetrySource ?? server.sourceOfTruth ?? null;
+}
+
+function getServerRawStatusText(server: ServerNode) {
+  const primarySource = getServerPrimarySource(server);
+  if (primarySource === 'nutanix' && server.nutanixStatusText) {
+    return {
+      source: 'Nutanix',
+      message: server.nutanixStatusText
+    };
+  }
+
+  if (primarySource === 'solarwinds' && server.solarwindsStatusText) {
+    return {
+      source: 'SolarWinds',
+      message: server.solarwindsStatusText
+    };
+  }
+
+  if (server.nutanixStatusText) {
+    return {
+      source: 'Nutanix',
+      message: server.nutanixStatusText
+    };
+  }
+
+  if (server.solarwindsStatusText) {
+    return {
+      source: 'SolarWinds',
+      message: server.solarwindsStatusText
+    };
+  }
+
+  return null;
+}
+
+function getServerDerivedAlertReasons(server: ServerNode) {
+  const visual = getServerVisualState(server);
+  const reasons: string[] = [];
+
+  if (server.status === 'down') {
+    reasons.push('Source reports the server as down.');
+  } else if (server.status === 'degraded') {
+    reasons.push('Source reports the server as degraded.');
+  }
+
+  if (visual.cpuPct !== null) {
+    if (visual.cpuPct > 90) {
+      reasons.push(`CPU ${formatSmallNumber(visual.cpuPct)}% is above the 90% critical threshold.`);
+    } else if (visual.cpuPct >= 80) {
+      reasons.push(`CPU ${formatSmallNumber(visual.cpuPct)}% is above the 80% warning threshold.`);
+    }
+  }
+
+  if (visual.memoryPct !== null) {
+    if (visual.memoryPct > 90) {
+      reasons.push(`RAM ${formatSmallNumber(visual.memoryPct)}% is above the 90% critical threshold.`);
+    } else if (visual.memoryPct >= 80) {
+      reasons.push(`RAM ${formatSmallNumber(visual.memoryPct)}% is above the 80% warning threshold.`);
+    }
+  }
+
+  if (visual.diskPct !== null) {
+    if (visual.diskPct > 90) {
+      reasons.push(`Disk ${formatSmallNumber(visual.diskPct)}% is above the 90% critical threshold.`);
+    } else if (visual.diskPct >= 80) {
+      reasons.push(`Disk ${formatSmallNumber(visual.diskPct)}% is above the 80% warning threshold.`);
+    }
+  }
+
+  if (server.availabilityToday !== null && server.availabilityToday !== undefined && server.availabilityToday < 100) {
+    reasons.push(`Availability today is ${formatSmallNumber(server.availabilityToday)}%.`);
+  }
+
+  if (server.backupStatus === 'failed') {
+    reasons.push('Protection domain backup status is failed.');
+  }
+
+  return reasons;
 }
 
 function formatServerName(name: string) {
@@ -835,26 +1037,26 @@ function HsdOverviewCard({
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.66 }}>{title}</div>
+          <div style={{ fontSize: '0.82rem', fontWeight: 900, letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>{title}</div>
         </div>
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            minWidth: '112px',
-            minHeight: '58px',
-            padding: '8px 14px',
+            minWidth: '120px',
+            minHeight: '62px',
+            padding: '8px 16px',
             borderRadius: '16px',
-            background: 'linear-gradient(180deg, rgba(141,110,99,0.10), rgba(255,255,255,0.78))',
+            background: 'linear-gradient(180deg, rgba(93,64,55,0.12), rgba(255,255,255,0.82))',
             border: '1px solid rgba(141,110,99,0.14)',
             boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.45)'
           }}
         >
           <span
             style={{
-              fontSize: 'calc(var(--wall-hsd-total-size) + 1.15rem)',
-              fontWeight: 800,
+              fontSize: 'calc(var(--wall-hsd-total-size) + 1.25rem)',
+              fontWeight: 900,
               lineHeight: 0.88,
               color: 'var(--text-primary)',
               letterSpacing: '-0.03em'
@@ -867,7 +1069,7 @@ function HsdOverviewCard({
 
       {breakdown ? (
         <>
-          <div style={{ width: '100%', height: '8px', display: 'flex', overflow: 'hidden', borderRadius: '999px', background: 'rgba(62,39,35,0.08)' }}>
+          <div style={{ width: '100%', height: '9px', display: 'flex', overflow: 'hidden', borderRadius: '999px', background: 'rgba(62,39,35,0.08)' }}>
             {categories.map((category) => (
               <div
                 key={category.label}
@@ -880,22 +1082,88 @@ function HsdOverviewCard({
             ))}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '8px', alignItems: 'end', minHeight: 'var(--wall-hsd-bars-min-height)' }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, minmax(52px, 1fr))',
+              gap: '8px',
+              alignItems: 'stretch',
+              minHeight: 'var(--wall-hsd-bars-min-height)',
+              padding: '10px 8px 8px',
+              borderRadius: '16px',
+              background: 'linear-gradient(180deg, rgba(93,64,55,0.04), rgba(255,255,255,0.74))',
+              border: '1px solid rgba(141,110,99,0.10)'
+            }}
+          >
             {categories.map((category) => (
-              <div key={category.label} style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.92rem', fontWeight: 800, color: category.color }}>{category.value}</span>
-                <div style={{ width: '100%', height: 'var(--wall-hsd-bar-height)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+              <div
+                key={category.label}
+                style={{
+                  display: 'grid',
+                  gridTemplateRows: 'auto 1fr auto',
+                  gap: '7px',
+                  alignItems: 'stretch',
+                  justifyItems: 'center',
+                  minHeight: 0
+                }}
+              >
+                <div
+                  style={{
+                    minWidth: '28px',
+                    padding: '2px 8px',
+                    borderRadius: '999px',
+                    background: `${category.color}12`,
+                    border: `1px solid ${category.color}22`,
+                    fontSize: '1rem',
+                    fontWeight: 900,
+                    color: category.color,
+                    lineHeight: 1.1
+                  }}
+                >
+                  {category.value}
+                </div>
+                <div
+                  style={{
+                    width: '100%',
+                    height: 'var(--wall-hsd-bar-height)',
+                    display: 'flex',
+                    alignItems: 'flex-end',
+                    justifyContent: 'center',
+                    padding: '6px 0 0',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(180deg, rgba(62,39,35,0.02), rgba(62,39,35,0.04))',
+                    overflow: 'hidden'
+                  }}
+                >
                   <div
                     style={{
-                      width: '30px',
-                      height: category.value > 0 ? `${Math.max(8, (category.value / peakCategory) * 48)}px` : '4px',
-                      borderRadius: '10px 10px 4px 4px',
-                      background: category.value > 0 ? `linear-gradient(180deg, ${category.color}, ${category.color}cc)` : 'rgba(62,39,35,0.12)',
-                      boxShadow: category.value > 0 ? `0 6px 12px ${category.color}26` : 'none'
+                      width: '24px',
+                      maxWidth: '100%',
+                      height: category.value > 0 ? `${Math.max(14, Math.round((category.value / peakCategory) * 100))}%` : '5px',
+                      borderRadius: '12px 12px 4px 4px',
+                      background: category.value > 0
+                        ? `linear-gradient(180deg, ${category.color}, ${category.color}d9)`
+                        : 'rgba(62,39,35,0.12)',
+                      boxShadow: category.value > 0 ? `0 3px 10px ${category.color}1f` : 'none'
                     }}
                   />
                 </div>
-                <span style={{ fontSize: '0.56rem', letterSpacing: '0.08em', fontWeight: 800, opacity: 0.58 }}>{category.label}</span>
+                <span
+                  style={{
+                    minWidth: '40px',
+                    padding: '2px 7px',
+                    borderRadius: '999px',
+                    background: 'rgba(255,255,255,0.86)',
+                    border: '1px solid rgba(141,110,99,0.10)',
+                    fontSize: '0.62rem',
+                    letterSpacing: '0.08em',
+                    fontWeight: 900,
+                    color: 'var(--text-secondary)',
+                    textAlign: 'center'
+                  }}
+                >
+                  {category.label}
+                </span>
               </div>
             ))}
           </div>
@@ -1158,15 +1426,18 @@ function CompactMetaPill({
   label,
   color,
   background,
-  border
+  border,
+  title
 }: {
   label: string;
   color: string;
   background: string;
   border: string;
+  title?: string;
 }) {
   return (
     <span
+      title={title || label}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -1204,18 +1475,18 @@ function FleetSummaryChip({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: '8px',
+        gap: '6px',
         minWidth: 0,
-        padding: '5px 8px',
-        borderRadius: '12px',
+        padding: '4px 7px',
+        borderRadius: '10px',
         background,
         border: `1px solid ${border}`
       }}
     >
-      <span style={{ fontSize: '0.5rem', fontWeight: 800, letterSpacing: '0.08em', color: accent, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <span style={{ fontSize: '0.46rem', fontWeight: 800, letterSpacing: '0.08em', color: accent, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
         {label}
       </span>
-      <span style={{ fontSize: '0.92rem', fontWeight: 800, color: accent, lineHeight: 1 }}>
+      <span style={{ fontSize: '0.84rem', fontWeight: 800, color: accent, lineHeight: 1 }}>
         {value}
       </span>
     </div>
@@ -1226,7 +1497,7 @@ function ServerTableHeaderCell({ label, align = 'left' }: { label: string; align
   return (
     <div
       style={{
-        fontSize: '0.56rem',
+        fontSize: '0.52rem',
         fontWeight: 800,
         letterSpacing: '0.1em',
         opacity: 0.56,
@@ -1239,109 +1510,333 @@ function ServerTableHeaderCell({ label, align = 'left' }: { label: string; align
 }
 
 function ServerTableMetricBar({
+  label,
   value,
   tone
 }: {
+  label: string;
   value: number | null;
   tone: VisualTone;
 }) {
   const palette = getTonePalette(tone);
   const fill = value === null ? 0 : Math.max(0, Math.min(100, value));
+  const displayValue = value === null
+    ? 'NA'
+    : label === 'Availability'
+      ? `${value.toFixed(1)}%`
+      : `${formatSmallNumber(value)}%`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
-      <div style={{ fontSize: '0.66rem', fontWeight: 800, color: palette.text, lineHeight: 1, textAlign: 'center' }}>
-        {value === null ? 'NA' : `${formatSmallNumber(value)}%`}
-      </div>
-      <div style={{ width: '100%', height: '5px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
-        <div style={{ width: `${fill}%`, height: '100%', borderRadius: '999px', background: palette.fill }} />
+    <div style={{ minWidth: 0 }}>
+      <div
+        title={`${label}: ${labelValue(label, value)}`}
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '22px',
+          borderRadius: '999px',
+          overflow: 'hidden',
+          background: value === null ? 'rgba(109,76,65,0.06)' : palette.bg,
+          border: `1px solid ${value === null ? 'rgba(109,76,65,0.12)' : palette.border}`,
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.45)'
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: `${fill}%`,
+            borderRadius: '999px',
+            background: value === null
+              ? 'transparent'
+              : `linear-gradient(90deg, ${palette.fill} 0%, ${palette.fill}dd 72%, ${palette.fill}b3 100%)`
+          }}
+        />
+        <div
+          style={{
+            position: 'relative',
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '100%',
+            height: '100%',
+            fontSize: '0.6rem',
+            fontWeight: 900,
+            letterSpacing: '0.03em',
+            color: value === null ? 'rgba(93,64,55,0.72)' : fill >= 48 ? '#ffffff' : palette.text,
+            textShadow: fill >= 48 ? '0 1px 2px rgba(0,0,0,0.18)' : 'none'
+          }}
+        >
+          {displayValue}
+        </div>
       </div>
     </div>
   );
 }
 
-function ServerFleetTableRow({ server }: { server: ServerNode }) {
+function labelValue(label: string, value: number | null) {
+  if (value === null) {
+    return 'NA';
+  }
+
+  return label === 'Availability'
+    ? `${value.toFixed(2)}%`
+    : `${formatSmallNumber(value)}%`;
+}
+
+function DashboardLegendChip({
+  label,
+  color,
+  border,
+  background
+}: {
+  label: string;
+  color: string;
+  border: string;
+  background: string;
+}) {
+  return (
+    <span
+      title={label}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '3px 8px',
+        borderRadius: '999px',
+        border: `1px solid ${border}`,
+        background,
+        fontSize: '0.56rem',
+        fontWeight: 800,
+        letterSpacing: '0.06em',
+        color
+      }}
+    >
+      <span
+        style={{
+          width: '8px',
+          height: '8px',
+          borderRadius: '999px',
+          background: color,
+          flex: '0 0 auto'
+        }}
+      />
+      {label}
+    </span>
+  );
+}
+
+function ServerInfoDrawer({ server }: { server: ServerNode }) {
   const visual = getServerVisualState(server);
   const palette = getTonePalette(visual.tone);
-  const sourceChip = getServerSourceChip(server);
-  const categoryPalette = getServerCategoryPalette(server);
-  const protectionChip = getServerProtectionChip(server);
-  const bootLabel = formatServerBootLabel(server.lastBoot)?.replace('BOOT ', '');
+  const sourceMessage = getServerRawStatusText(server);
+  const derivedReasons = getServerDerivedAlertReasons(server);
+  const primarySource = getServerPrimarySource(server);
+  const sourceOfTruthLabel = server.sourceOfTruth === 'nutanix' ? 'Nutanix' : 'SolarWinds';
+  const liveSourceLabel = primarySource === 'nutanix' ? 'Nutanix' : primarySource === 'solarwinds' ? 'SolarWinds' : 'Unknown';
+  const detailRows = [
+    { label: 'State', value: visual.label },
+    { label: 'Source Of Truth', value: sourceOfTruthLabel },
+    { label: 'Live Feed', value: liveSourceLabel },
+    { label: 'Fallback', value: server.usingFallback ? 'Active from SolarWinds' : 'Not active' },
+    { label: 'Platform', value: getServerPlatform(server) },
+    { label: 'OS', value: getServerOsFamily(server) },
+    { label: 'Backup', value: server.backupStatus === 'N/A' ? 'NA' : server.backupStatus.toUpperCase() },
+    { label: 'Availability', value: server.availabilityToday === null || server.availabilityToday === undefined ? 'NA' : `${formatSmallNumber(server.availabilityToday)}%` },
+    { label: 'Last Boot', value: server.lastBoot || 'NA' },
+    { label: 'Node ID', value: server.solarwindsNodeId ? String(server.solarwindsNodeId) : 'NA' }
+  ];
 
   return (
     <div
       style={{
-        display: 'grid',
-        gridTemplateColumns: SERVER_TABLE_COLUMNS,
-        alignItems: 'center',
-        gap: '10px',
-        padding: '5px 8px',
-        borderRadius: '12px',
-        background: 'rgba(255,255,255,0.52)',
+        marginTop: '4px',
+        padding: '10px 12px',
+        borderRadius: '14px',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.82), rgba(246,243,238,0.96))',
         border: `1px solid ${palette.border}`,
-        boxShadow: `inset 4px 0 0 ${palette.fill}`
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.48)'
       }}
     >
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', minWidth: 0 }}>
-          <span style={{ fontSize: '0.7rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
-            {formatServerName(server.name)}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '8px', marginBottom: '8px' }}>
+        {detailRows.map((item) => (
+          <div key={item.label} style={{ minWidth: 0 }}>
+            <div style={{ fontSize: '0.46rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.56 }}>{item.label}</div>
+            <div style={{ fontSize: '0.66rem', fontWeight: 800, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={`${item.label}: ${item.value}`}>
+              {item.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 0.9fr)', gap: '10px' }}>
+        <div
+          title={sourceMessage ? `${sourceMessage.source}: ${sourceMessage.message}` : 'No exact source warning text is available from the collectors for this server.'}
+          style={{
+            minWidth: 0,
+            padding: '8px 10px',
+            borderRadius: '12px',
+            background: sourceMessage ? `${palette.soft}` : 'rgba(109,76,65,0.05)',
+            border: `1px solid ${sourceMessage ? palette.border : 'rgba(109,76,65,0.10)'}`
+          }}
+        >
+          <div style={{ fontSize: '0.48rem', fontWeight: 900, letterSpacing: '0.08em', color: palette.text, marginBottom: '4px' }}>
+            SOURCE MESSAGE
+          </div>
+          <div style={{ fontSize: '0.68rem', lineHeight: 1.35, color: 'var(--text-primary)' }}>
+            {sourceMessage ? sourceMessage.message : 'No exact status text was provided by Nutanix or SolarWinds for this server.'}
+          </div>
+        </div>
+
+        <div
+          title={derivedReasons.length > 0 ? derivedReasons.join(' ') : 'No warning or critical conditions are currently derived for this server.'}
+          style={{
+            minWidth: 0,
+            padding: '8px 10px',
+            borderRadius: '12px',
+            background: 'rgba(255,255,255,0.82)',
+            border: '1px solid rgba(141,110,99,0.12)'
+          }}
+        >
+          <div style={{ fontSize: '0.48rem', fontWeight: 900, letterSpacing: '0.08em', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+            LIVE REASON
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {derivedReasons.length > 0 ? derivedReasons.map((reason) => (
+              <div key={reason} style={{ fontSize: '0.64rem', lineHeight: 1.3, color: 'var(--text-primary)' }}>
+                {reason}
+              </div>
+            )) : (
+              <div style={{ fontSize: '0.64rem', lineHeight: 1.3, color: 'var(--text-primary)' }}>
+                No active warning condition is currently derived from the live metrics.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ServerFleetTableRow({
+  server,
+  expanded,
+  onToggleInfo
+}: {
+  server: ServerNode;
+  expanded: boolean;
+  onToggleInfo: () => void;
+}) {
+  const visual = getServerVisualState(server);
+  const palette = getTonePalette(visual.tone);
+  const cpuTrendPalette = getTonePalette(getMetricTone(visual.cpuPct));
+  const sourceChip = getServerSourceChip(server);
+  const categoryPalette = getServerCategoryPalette(server);
+  const protectionChip = getServerProtectionChip(server);
+  const infoMessage = getServerRawStatusText(server);
+
+  return (
+    <div data-server-info-root={server.id} style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: SERVER_TABLE_COLUMNS,
+          alignItems: 'center',
+          gap: '8px',
+          padding: '4px 7px',
+          borderRadius: expanded ? '11px 11px 0 0' : '11px',
+          background: 'rgba(255,255,255,0.52)',
+          border: `1px solid ${palette.border}`,
+          boxShadow: `inset 4px 0 0 ${palette.fill}`
+        }}
+      >
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', minWidth: 0 }}>
+            <span style={{ fontSize: '0.68rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
+              {formatServerName(server.name)}
+            </span>
+            <button
+              type="button"
+              onClick={onToggleInfo}
+              aria-expanded={expanded}
+              aria-label={`Toggle details for ${formatServerName(server.name)}`}
+              title={infoMessage ? `Server details. ${infoMessage.source}: ${infoMessage.message}` : `Show more details for ${formatServerName(server.name)}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '3px',
+                padding: '2px 6px',
+                borderRadius: '999px',
+                border: `1px solid ${expanded ? palette.border : 'rgba(141,110,99,0.12)'}`,
+                background: expanded ? palette.bg : 'rgba(255,255,255,0.68)',
+                color: expanded ? palette.text : 'rgba(93,64,55,0.78)',
+                cursor: 'pointer',
+                flex: '0 0 auto'
+              }}
+            >
+              <Info size={11} />
+              <ChevronDown size={11} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.18s ease' }} />
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: '4px', minWidth: 0, flexWrap: 'nowrap', overflow: 'hidden' }}>
+            <CompactMetaPill label={categoryPalette.label} color={categoryPalette.accent} background={categoryPalette.background} border={categoryPalette.border} title={`Server category ${categoryPalette.label}`} />
+            <CompactMetaPill label={sourceChip.label} color={sourceChip.color} background={sourceChip.background} border={sourceChip.border} title={`Telemetry source ${sourceChip.label}`} />
+          </div>
+        </div>
+
+        <ServerTableMetricBar label="CPU" value={visual.cpuPct} tone={getMetricTone(visual.cpuPct)} />
+        <ServerTableMetricBar label="RAM" value={visual.memoryPct} tone={getMetricTone(visual.memoryPct)} />
+        <ServerTableMetricBar label="Disk" value={visual.diskPct} tone={getMetricTone(visual.diskPct)} />
+        <ServerTableMetricBar label="Availability" value={server.availabilityToday ?? null} tone={getAvailabilityTone(server.availabilityToday)} />
+
+        <div style={{ width: '100%', height: '16px' }} title={`CPU trend for ${formatServerName(server.name)}`}>
+          <UptimeChart history={server.history || []} color={cpuTrendPalette.fill} hideNoDataText />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'stretch', minWidth: 0 }}>
+          <span
+            title={`Current state ${visual.label}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '100%',
+              padding: '4px 5px',
+              borderRadius: '999px',
+              background: palette.bg,
+              border: `1px solid ${palette.border}`,
+              fontSize: '0.46rem',
+              fontWeight: 800,
+              letterSpacing: '0.08em',
+              color: palette.text
+            }}
+          >
+            {visual.label.toUpperCase()}
+          </span>
+          <span
+            title={`Protection status ${protectionChip.label}`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '100%',
+              padding: '3px 5px',
+              borderRadius: '999px',
+              background: protectionChip.background,
+              border: `1px solid ${protectionChip.border}`,
+              fontSize: '0.43rem',
+              fontWeight: 800,
+              letterSpacing: '0.08em',
+              color: protectionChip.accent
+            }}
+          >
+            {protectionChip.label}
           </span>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-          <CompactMetaPill label={categoryPalette.label} color={categoryPalette.accent} background={categoryPalette.background} border={categoryPalette.border} />
-          <CompactMetaPill label={sourceChip.label} color={sourceChip.color} background={sourceChip.background} border={sourceChip.border} />
-          {bootLabel ? (
-            <CompactMetaPill label={bootLabel} color="#6d4c41" background="rgba(109,76,65,0.08)" border="rgba(109,76,65,0.14)" />
-          ) : null}
-        </div>
       </div>
 
-      <ServerTableMetricBar value={visual.cpuPct} tone={getMetricTone(visual.cpuPct)} />
-      <ServerTableMetricBar value={visual.memoryPct} tone={getMetricTone(visual.memoryPct)} />
-      <ServerTableMetricBar value={visual.diskPct} tone={getMetricTone(visual.diskPct)} />
-      <ServerTableMetricBar value={server.availabilityToday ?? null} tone={getAvailabilityTone(server.availabilityToday)} />
-
-      <div style={{ width: '100%', height: '18px' }}>
-        <UptimeChart history={server.history || []} color={palette.fill} hideNoDataText />
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', alignItems: 'stretch' }}>
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '3px 5px',
-            borderRadius: '999px',
-            background: palette.bg,
-            border: `1px solid ${palette.border}`,
-            fontSize: '0.46rem',
-            fontWeight: 800,
-            letterSpacing: '0.08em',
-            color: palette.text
-          }}
-        >
-          {visual.label.toUpperCase()}
-        </span>
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '3px 5px',
-            borderRadius: '999px',
-            background: protectionChip.background,
-            border: `1px solid ${protectionChip.border}`,
-            fontSize: '0.46rem',
-            fontWeight: 800,
-            letterSpacing: '0.08em',
-            color: protectionChip.accent
-          }}
-        >
-          {protectionChip.label}
-        </span>
-      </div>
+      {expanded ? <ServerInfoDrawer server={server} /> : null}
     </div>
   );
 }
@@ -2316,7 +2811,7 @@ function HsdWorkCard({
 }) {
   const totalSafe = Math.max(0, total);
   const categories = [
-    { key: 'new', label: 'NEW', value: breakdown.new, color: '#4f6bed' },
+    { key: 'new', label: 'NEW', value: breakdown.new, color: HSD_STATUS_COLORS.new },
     { key: 'assigned', label: 'ASG', value: breakdown.assigned, color: '#f0b429' },
     { key: 'inProgress', label: 'IP', value: breakdown.inProgress, color: accent },
     { key: 'pending', label: 'PND', value: breakdown.pending, color: '#7b8794' }
@@ -2445,7 +2940,7 @@ function HsdQueueRail({
 }) {
   const totalSafe = Math.max(0, total);
   const categories = [
-    { key: 'new', short: 'N', value: breakdown.new, color: '#4f6bed' },
+    { key: 'new', short: 'N', value: breakdown.new, color: HSD_STATUS_COLORS.new },
     { key: 'assigned', short: 'A', value: breakdown.assigned, color: '#f0b429' },
     { key: 'inProgress', short: 'IP', value: breakdown.inProgress, color: accent },
     { key: 'pending', short: 'P', value: breakdown.pending, color: '#7b8794' }
@@ -2615,6 +3110,7 @@ export default function Dashboard() {
   const [time, setTime] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<DashboardFilters>(createDefaultFilters);
+  const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -2640,6 +3136,9 @@ export default function Dashboard() {
         }
 
         const payload = await response.json();
+        if (!payload?.session) {
+          throw new Error('No active session returned.');
+        }
         if (!cancelled) {
           setSession(payload.session);
         }
@@ -2773,6 +3272,96 @@ export default function Dashboard() {
     };
   }, [session]);
 
+  useEffect(() => {
+    if (!expandedServerId) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) {
+        return;
+      }
+
+      const root = target.closest(`[data-server-info-root="${expandedServerId}"]`);
+      if (!root) {
+        setExpandedServerId(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [expandedServerId]);
+
+  useEffect(() => {
+    if (!session || !data) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    const stateTimestamp = data.lastUpdate;
+
+    const loadTelemetryHistory = async () => {
+      try {
+        const queries = buildTelemetryHistoryQueries(data);
+        if (queries.length === 0) {
+          return;
+        }
+
+        const response = await fetch('/api/telemetry-history', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ queries }),
+          cache: 'no-store',
+          signal: controller.signal
+        });
+
+        if (response.status === 401) {
+          window.location.replace('/login');
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Telemetry history fetch failed with ${response.status}`);
+        }
+
+        const payload = await response.json() as { series?: TelemetryHistorySeries[] };
+        if (cancelled) {
+          return;
+        }
+
+        setData((current) => {
+          if (!current || current.lastUpdate !== stateTimestamp) {
+            return current;
+          }
+
+          return applyTelemetryHistoryToState(current, payload.series || []);
+        });
+      } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          return;
+        }
+
+        console.error('Failed to fetch telemetry history:', error);
+      }
+    };
+
+    void loadTelemetryHistory();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [session, data?.lastUpdate]);
+
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', {
@@ -2799,6 +3388,9 @@ export default function Dashboard() {
   }, [filtersOpen]);
 
   if (sessionLoading || !session) {
+    if (!sessionLoading && typeof window !== 'undefined') {
+      window.location.replace('/login');
+    }
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', justifyContent: 'center', alignItems: 'center', gap: '16px' }}>
         <RefreshCw className="animate-spin" size={32} style={{ color: 'var(--primary)' }} />
@@ -3020,6 +3612,8 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={handleOpenAdminSurface}
+              title="Open the admin surface in a separate tab"
+              aria-label="Open admin surface"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -3042,6 +3636,8 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={() => setFiltersOpen(true)}
+            title="Open dashboard filters"
+            aria-label="Open dashboard filters"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -3060,19 +3656,75 @@ export default function Dashboard() {
             <SlidersHorizontal size={15} />
             {`FILTERS${activeFilterCount > 0 ? ` ${activeFilterCount}` : ''}`}
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: 'var(--wall-header-clock-size)', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
+          <div title="Current date and time" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: 'var(--wall-header-clock-size)', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
             <Clock size={16} style={{ color: 'var(--primary)' }} />
             <span>{time}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', color: 'var(--text-primary)' }}>
+          <div title={`Signed in as ${session.role}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', color: 'var(--text-primary)' }}>
             <span style={{ fontSize: '0.74rem', fontWeight: 800, letterSpacing: '0.06em' }}>{session.role === 'admin' ? 'ADMIN' : 'OPERATOR'}</span>
             <span style={{ fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.displayName || session.email}</span>
-            <button type="button" onClick={() => void handleLogout()} style={{ border: 0, background: 'transparent', color: 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
+            <button type="button" onClick={() => void handleLogout()} title="Sign out" aria-label="Sign out" style={{ border: 0, background: 'transparent', color: 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
               <LogOut size={16} />
             </button>
           </div>
         </div>
       </header>
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '0 4px',
+          minHeight: '0'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', minWidth: 0 }}>
+          <DashboardLegendChip label="NORMAL" color={getTonePalette('normal').text} border={getTonePalette('normal').border} background={getTonePalette('normal').bg} />
+          <DashboardLegendChip label="WARNING" color={getTonePalette('warning').text} border={getTonePalette('warning').border} background={getTonePalette('warning').bg} />
+          <DashboardLegendChip label="CRITICAL" color={getTonePalette('critical').text} border={getTonePalette('critical').border} background={getTonePalette('critical').bg} />
+          <DashboardLegendChip label="OFFLINE" color={getTonePalette('offline').text} border={getTonePalette('offline').border} background={getTonePalette('offline').bg} />
+          <span
+            title="Metric thresholds used across HCI and server utilization: below 80 is normal, 80 to 90 is warning, above 90 is critical."
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '3px 8px',
+              borderRadius: '999px',
+              border: '1px solid rgba(141,110,99,0.12)',
+              background: 'rgba(255,255,255,0.42)',
+              fontSize: '0.56rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              color: 'var(--text-secondary)'
+            }}
+          >
+            THRESHOLDS &lt;80 | 80-90 | &gt;90
+          </span>
+          <span
+            title="HSD chart colors: New is bright red, Assigned is amber, In Progress is green, Pending is grey."
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '3px 8px',
+              borderRadius: '999px',
+              border: '1px solid rgba(141,110,99,0.12)',
+              background: 'rgba(255,255,255,0.42)',
+              fontSize: '0.56rem',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              color: 'var(--text-secondary)'
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><span style={{ width: '7px', height: '7px', borderRadius: '999px', background: HSD_STATUS_COLORS.new }} />NEW</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><span style={{ width: '7px', height: '7px', borderRadius: '999px', background: HSD_STATUS_COLORS.assigned }} />ASG</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><span style={{ width: '7px', height: '7px', borderRadius: '999px', background: HSD_STATUS_COLORS.inProgress }} />IP</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><span style={{ width: '7px', height: '7px', borderRadius: '999px', background: HSD_STATUS_COLORS.pending }} />PND</span>
+          </span>
+        </div>
+      </div>
 
       {anySectionVisible ? (
       <main
@@ -3150,7 +3802,7 @@ export default function Dashboard() {
           ) : null}
 
           {visibleSections.hsd ? (
-          <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-grid-gap)', minHeight: 0, flex: '1.06 1 0' }}>
+          <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-grid-gap)', minHeight: 0, flex: '1.18 1 0' }}>
             <div className="hsd-panel-header">
               <div className="hsd-panel-title">
                 <div
@@ -3233,7 +3885,7 @@ export default function Dashboard() {
 
           {visibleSections.network ? (
             filteredNetworks.length > 0 ? (
-              <div style={{ display: 'flex', minHeight: 0, flex: '1.06 1 0', minWidth: 0, width: '100%' }}>
+              <div style={{ display: 'flex', minHeight: 0, flex: '0.94 1 0', minWidth: 0, width: '100%' }}>
                 <UnifiedNetworkCard links={filteredNetworks} sectionHealth={data.sections.networks} />
               </div>
             ) : (
@@ -3258,8 +3910,8 @@ export default function Dashboard() {
 
         {visibleSections.servers ? (
         <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-panel-gap)', minHeight: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 0.72fr) minmax(0, 1.4fr) auto', alignItems: 'center', gap: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 0.68fr) minmax(0, 1.46fr) auto', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', minWidth: 0 }}>
               <div
                 style={{
                   width: 'var(--wall-icon-sm)',
@@ -3273,13 +3925,13 @@ export default function Dashboard() {
                 }}
                 >
                   <Layers size={20} style={{ color: 'var(--primary)' }} />
-                </div>
+              </div>
               <div style={{ minWidth: 0 }}>
                 <h2 style={{ fontSize: 'var(--wall-title-md)' }}>Servers</h2>
-                <div style={{ fontSize: 'var(--wall-subtitle-size)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE MONITORING</div>
+                <div style={{ fontSize: 'calc(var(--wall-subtitle-size) - 0.04rem)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE MONITORING</div>
               </div>
             </div>
-            <div className="server-fleet-summary-grid">
+              <div className="server-fleet-summary-grid">
               {serverSummaryChips.map((chip) => (
                 <FleetSummaryChip
                   key={chip.label}
@@ -3298,8 +3950,8 @@ export default function Dashboard() {
             style={{
               display: 'grid',
               gridTemplateColumns: SERVER_TABLE_COLUMNS,
-              gap: '10px',
-              padding: '0 10px',
+              gap: '8px',
+              padding: '0 8px',
               alignItems: 'center'
             }}
           >
@@ -3308,13 +3960,18 @@ export default function Dashboard() {
             <ServerTableHeaderCell label="RAM" align="center" />
             <ServerTableHeaderCell label="DSK" align="center" />
             <ServerTableHeaderCell label="AVL" align="center" />
-            <ServerTableHeaderCell label="TREND" align="center" />
+            <ServerTableHeaderCell label="CPU TREND" align="center" />
             <ServerTableHeaderCell label="STATE" align="center" />
           </div>
 
           <div className="server-table-list">
             {serverFleetOrdered.length > 0 ? serverFleetOrdered.map((server) => (
-              <ServerFleetTableRow key={server.id} server={server} />
+              <ServerFleetTableRow
+                key={server.id}
+                server={server}
+                expanded={expandedServerId === server.id}
+                onToggleInfo={() => setExpandedServerId((current) => current === server.id ? null : server.id)}
+              />
             )) : <EmptyFilterState label="No servers match the selected filters." />}
           </div>
         </section>

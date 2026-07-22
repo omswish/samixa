@@ -1,8 +1,8 @@
 import { cookies, headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { AppRole, getSessionCookieName, verifySessionToken } from './auth-cookie';
+import { resolveAppAuthUser } from './app-auth-client';
 import { resolveDashboardSurface } from './dashboard-surface';
-import { getLocalAppUser } from './local-auth';
 
 export interface CurrentSession {
   email: string;
@@ -35,17 +35,22 @@ export async function resolveCurrentSession(): Promise<CurrentSession | null> {
     return null;
   }
 
-  const user = getLocalAppUser(session.email);
+  if (session.email !== 'admin' && session.email !== 'operator') {
+    return null;
+  }
+
+  const user = await resolveAppAuthUser(session.email);
   if (!user || user.role !== session.role) {
     return null;
   }
 
   const requestHeaders = await headers();
   const forwardedFor = getForwardedAddress(requestHeaders.get('x-forwarded-for'));
+  const identityLabel = user.loginId?.trim() || user.username;
   return {
-    email: user.username,
+    email: identityLabel,
     role: user.role,
-    displayName: user.displayName,
+    displayName: identityLabel,
     isServerLocal: isServerLocalAddress(forwardedFor),
     expiresAt: new Date(session.exp * 1000).toISOString()
   };

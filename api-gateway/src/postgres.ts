@@ -141,6 +141,110 @@ export interface AppUserRecord {
   lastLoginAt: string | null;
 }
 
+export interface AppLocalAuthCredentialSeed {
+  username: 'admin' | 'operator';
+  displayName: string;
+  role: 'viewer' | 'admin';
+  passwordSalt: string;
+  passwordHash: string;
+  passwordSource: 'env' | 'runtime' | 'postgres';
+}
+
+export interface AppLocalAuthCredentialRecord {
+  username: 'admin' | 'operator';
+  displayName: string;
+  role: 'viewer' | 'admin';
+  passwordSalt: string;
+  passwordHash: string;
+  passwordSource: 'env' | 'runtime' | 'postgres';
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface AppLocalAuthStatusRecord {
+  mode: 'postgres' | 'runtime' | 'env';
+  updatedAt: string | null;
+  users: Record<'admin' | 'operator', {
+    custom: boolean;
+    source: 'postgres' | 'runtime' | 'env';
+    lastLoginAt: string | null;
+  }>;
+}
+
+export interface DashboardStateCurrentRecord {
+  stateKey: string;
+  stateJson: string;
+  capturedAt: string;
+}
+
+export interface AssetTelemetryHistoryQuery {
+  assetId: string;
+  metricName?: string | null;
+  since?: string | null;
+  until?: string | null;
+  limit?: number | null;
+}
+
+export interface AssetTelemetryHistoryPoint {
+  assetId: string;
+  assetType: string;
+  metricName: string;
+  metricValueNumeric: number | null;
+  metricValueText: string | null;
+  unit: string | null;
+  collectedAt: string;
+  truthSource: string;
+  quality: 'observed' | 'last_synced' | 'derived';
+}
+
+export interface AppActionAuditQuery {
+  actionType?: string | null;
+  actionResult?: 'success' | 'failed' | 'denied' | null;
+  actorUsername?: string | null;
+  surface?: string | null;
+  limit?: number | null;
+}
+
+export interface AppActionAuditRecord {
+  auditId: number;
+  occurredAt: string;
+  actionType: string;
+  actionResult: 'success' | 'failed' | 'denied';
+  severity: 'info' | 'warning' | 'critical';
+  actorUsername: string | null;
+  actorRole: string | null;
+  surface: string | null;
+  sourceIp: string | null;
+  userAgent: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  message: string | null;
+  errorMessage: string | null;
+  requestSummaryJson: unknown;
+  resultSummaryJson: unknown;
+  correlationId: string | null;
+}
+
+export interface AppActionAuditPayload {
+  occurredAt?: string;
+  actionType: string;
+  actionResult: 'success' | 'failed' | 'denied';
+  severity?: 'info' | 'warning' | 'critical';
+  actorUsername?: string | null;
+  actorRole?: string | null;
+  surface?: string | null;
+  sourceIp?: string | null;
+  userAgent?: string | null;
+  targetType?: string | null;
+  targetId?: string | null;
+  message?: string | null;
+  errorMessage?: string | null;
+  requestSummaryJson?: unknown;
+  resultSummaryJson?: unknown;
+  correlationId?: string | null;
+}
+
 interface ExistingAssetStateRow {
   asset_id: string;
   status: string | null;
@@ -549,6 +653,67 @@ class PostgresMirror {
     );
   }
 
+  private async writeAppActionAudit(payload: AppActionAuditPayload) {
+    await this.pool.query(
+      `
+        INSERT INTO app_action_audit (
+          occurred_at,
+          action_type,
+          action_result,
+          severity,
+          actor_username,
+          actor_role,
+          surface,
+          source_ip,
+          user_agent,
+          target_type,
+          target_id,
+          message,
+          error_message,
+          request_summary_json,
+          result_summary_json,
+          correlation_id
+        )
+        VALUES (
+          $1::timestamptz,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          $14::jsonb,
+          $15::jsonb,
+          $16
+        )
+      `,
+      [
+        payload.occurredAt ?? new Date().toISOString(),
+        payload.actionType,
+        payload.actionResult,
+        payload.severity ?? 'info',
+        payload.actorUsername ?? null,
+        payload.actorRole ?? null,
+        payload.surface ?? null,
+        payload.sourceIp ?? null,
+        payload.userAgent ?? null,
+        payload.targetType ?? null,
+        payload.targetId ?? null,
+        payload.message ?? null,
+        payload.errorMessage ?? null,
+        JSON.stringify(payload.requestSummaryJson ?? null),
+        JSON.stringify(payload.resultSummaryJson ?? null),
+        payload.correlationId ?? null
+      ]
+    );
+  }
+
   private enqueue(task: () => Promise<void>) {
     this.writeChain = this.writeChain
       .then(() => this.initPromise)
@@ -573,6 +738,108 @@ class PostgresMirror {
   async syncDashboardState(payload: DashboardStateMirrorPayload) {
     await this.initPromise;
     await this.writeDashboardState(payload);
+  }
+
+  async getDashboardStateCurrent(stateKey: string): Promise<DashboardStateCurrentRecord | null> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      state_key: string;
+      state_json: unknown;
+      captured_at: Date | string;
+    }>(
+      `
+        SELECT
+          state_key,
+          state_json,
+          captured_at
+        FROM dashboard_state_current
+        WHERE state_key = $1
+        LIMIT 1
+      `,
+      [stateKey]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return {
+      stateKey: row.state_key,
+      stateJson: typeof row.state_json === 'string' ? row.state_json : JSON.stringify(row.state_json ?? {}),
+      capturedAt: new Date(row.captured_at).toISOString()
+    };
+  }
+
+  async getAssetTelemetryHistory(query: AssetTelemetryHistoryQuery): Promise<AssetTelemetryHistoryPoint[]> {
+    await this.initPromise;
+
+    const values: Array<string | number> = [query.assetId];
+    const conditions = ['asset_id = $1'];
+
+    if (query.metricName) {
+      values.push(query.metricName);
+      conditions.push(`metric_name = $${values.length}`);
+    }
+
+    if (query.since) {
+      values.push(query.since);
+      conditions.push(`collected_at >= $${values.length}::timestamptz`);
+    }
+
+    if (query.until) {
+      values.push(query.until);
+      conditions.push(`collected_at <= $${values.length}::timestamptz`);
+    }
+
+    const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0
+      ? Math.min(Number(query.limit), 1000)
+      : 288;
+    values.push(limit);
+
+    const result = await this.pool.query<{
+      asset_id: string;
+      asset_type: string;
+      metric_name: string;
+      metric_value_numeric: number | null;
+      metric_value_text: string | null;
+      unit: string | null;
+      collected_at: Date | string;
+      truth_source: string;
+      quality: 'observed' | 'last_synced' | 'derived';
+    }>(
+      `
+        SELECT
+          asset_id,
+          asset_type,
+          metric_name,
+          metric_value_numeric,
+          metric_value_text,
+          unit,
+          collected_at,
+          truth_source,
+          quality
+        FROM asset_telemetry_history
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY collected_at DESC
+        LIMIT $${values.length}
+      `,
+      values
+    );
+
+    return result.rows
+      .map((row) => ({
+        assetId: row.asset_id,
+        assetType: row.asset_type,
+        metricName: row.metric_name,
+        metricValueNumeric: row.metric_value_numeric,
+        metricValueText: row.metric_value_text,
+        unit: row.unit,
+        collectedAt: new Date(row.collected_at).toISOString(),
+        truthSource: row.truth_source,
+        quality: row.quality
+      }))
+      .reverse();
   }
 
   async bootstrapCollectorTargetConfig(seeds: CollectorTargetConfigSeed[]) {
@@ -1038,6 +1305,317 @@ class PostgresMirror {
     );
   }
 
+  async bootstrapLocalAuthCredentials(seeds: AppLocalAuthCredentialSeed[]) {
+    await this.initPromise;
+    if (seeds.length === 0) {
+      return;
+    }
+
+    const values: any[] = [];
+    const placeholders = seeds.map((seed, index) => {
+      const base = index * 6;
+      values.push(
+        seed.username,
+        seed.displayName,
+        seed.role,
+        seed.passwordSalt,
+        seed.passwordHash,
+        seed.passwordSource
+      );
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+    });
+
+    await this.pool.query(
+      `
+        INSERT INTO app_local_auth_credential (
+          username,
+          display_name,
+          role,
+          password_salt,
+          password_hash,
+          password_source
+        )
+        VALUES ${placeholders.join(', ')}
+        ON CONFLICT (username) DO NOTHING
+      `,
+      values
+    );
+  }
+
+  async listLocalAuthCredentials(): Promise<AppLocalAuthCredentialRecord[]> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      username: 'admin' | 'operator';
+      display_name: string;
+      role: 'viewer' | 'admin';
+      password_salt: string;
+      password_hash: string;
+      password_source: 'env' | 'runtime' | 'postgres';
+      created_at: Date | string;
+      updated_at: Date | string;
+      last_login_at: Date | string | null;
+    }>(
+      `
+        SELECT
+          username,
+          display_name,
+          role,
+          password_salt,
+          password_hash,
+          password_source,
+          created_at,
+          updated_at,
+          last_login_at
+        FROM app_local_auth_credential
+        ORDER BY username ASC
+      `
+    );
+
+    return result.rows.map((row) => ({
+      username: row.username,
+      displayName: row.display_name,
+      role: row.role,
+      passwordSalt: row.password_salt,
+      passwordHash: row.password_hash,
+      passwordSource: row.password_source,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+      lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null
+    }));
+  }
+
+  async getLocalAuthCredential(username: 'admin' | 'operator'): Promise<AppLocalAuthCredentialRecord | null> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      username: 'admin' | 'operator';
+      display_name: string;
+      role: 'viewer' | 'admin';
+      password_salt: string;
+      password_hash: string;
+      password_source: 'env' | 'runtime' | 'postgres';
+      created_at: Date | string;
+      updated_at: Date | string;
+      last_login_at: Date | string | null;
+    }>(
+      `
+        SELECT
+          username,
+          display_name,
+          role,
+          password_salt,
+          password_hash,
+          password_source,
+          created_at,
+          updated_at,
+          last_login_at
+        FROM app_local_auth_credential
+        WHERE username = $1
+        LIMIT 1
+      `,
+      [username]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return {
+      username: row.username,
+      displayName: row.display_name,
+      role: row.role,
+      passwordSalt: row.password_salt,
+      passwordHash: row.password_hash,
+      passwordSource: row.password_source,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+      lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null
+    };
+  }
+
+  async upsertLocalAuthCredential(seed: AppLocalAuthCredentialSeed): Promise<AppLocalAuthCredentialRecord> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      username: 'admin' | 'operator';
+      display_name: string;
+      role: 'viewer' | 'admin';
+      password_salt: string;
+      password_hash: string;
+      password_source: 'env' | 'runtime' | 'postgres';
+      created_at: Date | string;
+      updated_at: Date | string;
+      last_login_at: Date | string | null;
+    }>(
+      `
+        INSERT INTO app_local_auth_credential (
+          username,
+          display_name,
+          role,
+          password_salt,
+          password_hash,
+          password_source
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (username) DO UPDATE SET
+          display_name = EXCLUDED.display_name,
+          role = EXCLUDED.role,
+          password_salt = EXCLUDED.password_salt,
+          password_hash = EXCLUDED.password_hash,
+          password_source = EXCLUDED.password_source
+        RETURNING
+          username,
+          display_name,
+          role,
+          password_salt,
+          password_hash,
+          password_source,
+          created_at,
+          updated_at,
+          last_login_at
+      `,
+      [
+        seed.username,
+        seed.displayName,
+        seed.role,
+        seed.passwordSalt,
+        seed.passwordHash,
+        seed.passwordSource
+      ]
+    );
+
+    const row = result.rows[0];
+    return {
+      username: row.username,
+      displayName: row.display_name,
+      role: row.role,
+      passwordSalt: row.password_salt,
+      passwordHash: row.password_hash,
+      passwordSource: row.password_source,
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+      lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null
+    };
+  }
+
+  async touchLocalAuthCredentialLogin(username: 'admin' | 'operator') {
+    await this.initPromise;
+    await this.pool.query(
+      `
+        UPDATE app_local_auth_credential
+        SET last_login_at = NOW()
+        WHERE username = $1
+      `,
+      [username]
+    );
+  }
+
+  async listAppActionAudit(query: AppActionAuditQuery): Promise<AppActionAuditRecord[]> {
+    await this.initPromise;
+
+    const values: Array<string | number> = [];
+    const conditions: string[] = [];
+
+    if (query.actionType) {
+      values.push(query.actionType);
+      conditions.push(`action_type = $${values.length}`);
+    }
+
+    if (query.actionResult) {
+      values.push(query.actionResult);
+      conditions.push(`action_result = $${values.length}`);
+    }
+
+    if (query.actorUsername) {
+      values.push(query.actorUsername);
+      conditions.push(`actor_username = $${values.length}`);
+    }
+
+    if (query.surface) {
+      values.push(query.surface);
+      conditions.push(`surface = $${values.length}`);
+    }
+
+    const limit = Number.isFinite(query.limit) && (query.limit ?? 0) > 0
+      ? Math.min(Number(query.limit), 1000)
+      : 100;
+    values.push(limit);
+
+    const whereClause = conditions.length > 0
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    const result = await this.pool.query<{
+      audit_id: number;
+      occurred_at: Date | string;
+      action_type: string;
+      action_result: 'success' | 'failed' | 'denied';
+      severity: 'info' | 'warning' | 'critical';
+      actor_username: string | null;
+      actor_role: string | null;
+      surface: string | null;
+      source_ip: string | null;
+      user_agent: string | null;
+      target_type: string | null;
+      target_id: string | null;
+      message: string | null;
+      error_message: string | null;
+      request_summary_json: unknown;
+      result_summary_json: unknown;
+      correlation_id: string | null;
+    }>(
+      `
+        SELECT
+          audit_id,
+          occurred_at,
+          action_type,
+          action_result,
+          severity,
+          actor_username,
+          actor_role,
+          surface,
+          source_ip,
+          user_agent,
+          target_type,
+          target_id,
+          message,
+          error_message,
+          request_summary_json,
+          result_summary_json,
+          correlation_id
+        FROM app_action_audit
+        ${whereClause}
+        ORDER BY occurred_at DESC, audit_id DESC
+        LIMIT $${values.length}
+      `,
+      values
+    );
+
+    return result.rows.map((row) => ({
+      auditId: row.audit_id,
+      occurredAt: new Date(row.occurred_at).toISOString(),
+      actionType: row.action_type,
+      actionResult: row.action_result,
+      severity: row.severity,
+      actorUsername: row.actor_username,
+      actorRole: row.actor_role,
+      surface: row.surface,
+      sourceIp: row.source_ip,
+      userAgent: row.user_agent,
+      targetType: row.target_type,
+      targetId: row.target_id,
+      message: row.message,
+      errorMessage: row.error_message,
+      requestSummaryJson: row.request_summary_json ?? null,
+      resultSummaryJson: row.result_summary_json ?? null,
+      correlationId: row.correlation_id
+    }));
+  }
+
+  async recordAppActionAudit(payload: AppActionAuditPayload) {
+    await this.initPromise;
+    await this.writeAppActionAudit(payload);
+  }
+
   async drain() {
     await this.writeChain;
   }
@@ -1078,6 +1656,10 @@ export function isPostgresMirrorEnabled() {
   return Boolean(getPostgresUrl());
 }
 
+export function isPostgresPrimaryMetricsEnabled() {
+  return isPostgresMirrorEnabled() && /^(1|true|yes|primary)$/i.test(process.env.POSTGRES_PRIMARY_METRICS || '');
+}
+
 export async function syncDashboardStateToPostgresNow(payload: DashboardStateMirrorPayload) {
   const mirror = getPostgresMirror();
   if (!mirror) {
@@ -1085,6 +1667,24 @@ export async function syncDashboardStateToPostgresNow(payload: DashboardStateMir
   }
 
   await mirror.syncDashboardState(payload);
+}
+
+export async function getDashboardStateCurrentFromPostgres(stateKey: string) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return null;
+  }
+
+  return mirror.getDashboardStateCurrent(stateKey);
+}
+
+export async function getAssetTelemetryHistoryFromPostgres(query: AssetTelemetryHistoryQuery) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return [];
+  }
+
+  return mirror.getAssetTelemetryHistory(query);
 }
 
 export async function bootstrapCollectorTargetConfigNow(seeds: CollectorTargetConfigSeed[]) {
@@ -1189,6 +1789,69 @@ export async function touchAppUserLoginInPostgres(email: string) {
   }
 
   await mirror.touchAppUserLogin(email);
+}
+
+export async function bootstrapLocalAuthCredentialsNow(seeds: AppLocalAuthCredentialSeed[]) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    throw new Error('POSTGRES_URL is not configured. Postgres mirror is disabled.');
+  }
+
+  await mirror.bootstrapLocalAuthCredentials(seeds);
+}
+
+export async function listLocalAuthCredentialsFromPostgres() {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return [];
+  }
+
+  return mirror.listLocalAuthCredentials();
+}
+
+export async function getLocalAuthCredentialFromPostgres(username: 'admin' | 'operator') {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return null;
+  }
+
+  return mirror.getLocalAuthCredential(username);
+}
+
+export async function upsertLocalAuthCredentialInPostgres(seed: AppLocalAuthCredentialSeed) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    throw new Error('POSTGRES_URL is not configured. Postgres mirror is disabled.');
+  }
+
+  return mirror.upsertLocalAuthCredential(seed);
+}
+
+export async function touchLocalAuthCredentialLoginInPostgres(username: 'admin' | 'operator') {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return;
+  }
+
+  await mirror.touchLocalAuthCredentialLogin(username);
+}
+
+export async function listAppActionAuditFromPostgres(query: AppActionAuditQuery) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return [];
+  }
+
+  return mirror.listAppActionAudit(query);
+}
+
+export async function recordAppActionAuditInPostgres(payload: AppActionAuditPayload) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    throw new Error('POSTGRES_URL is not configured. Postgres mirror is disabled.');
+  }
+
+  await mirror.recordAppActionAudit(payload);
 }
 
 export async function closePostgresMirror() {

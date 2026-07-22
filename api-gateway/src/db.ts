@@ -6,6 +6,8 @@ import {
   AssetTelemetryRecord,
   DashboardStateMirrorPayload,
   NormalizedAssetsMirrorPayload,
+  getDashboardStateCurrentFromPostgres,
+  isPostgresPrimaryMetricsEnabled,
   mirrorDashboardStateToPostgres
 } from './postgres';
 
@@ -36,11 +38,13 @@ interface ServerNode {
   lastBoot: string | null;
   availabilityToday: number | null;
   history: number[];
+  nutanixStatusText: string | null;
   nutanixCpu: number | null;
   nutanixMemory: number | null;
   nutanixDisk: string | null;
   nutanixStatus: AssetStatus | null;
   nutanixHistory: number[];
+  solarwindsStatusText: string | null;
   solarwindsCpu: number | null;
   solarwindsMemory: number | null;
   solarwindsDisk: string | null;
@@ -231,11 +235,13 @@ function createDefaultServer(id: string, name: string): ServerNode {
     lastBoot: null,
     availabilityToday: null,
     history: [],
+    nutanixStatusText: null,
     nutanixCpu: null,
     nutanixMemory: null,
     nutanixDisk: null,
     nutanixStatus: null,
     nutanixHistory: [],
+    solarwindsStatusText: null,
     solarwindsCpu: null,
     solarwindsMemory: null,
     solarwindsDisk: null,
@@ -504,11 +510,13 @@ function mergeServers(incomingServers: any[]): ServerNode[] {
     target.hardwareType = typeof target.hardwareType === 'string' ? target.hardwareType : null;
     target.lastBoot = typeof target.lastBoot === 'string' ? target.lastBoot : null;
     target.availabilityToday = typeof target.availabilityToday === 'number' ? target.availabilityToday : null;
+    target.nutanixStatusText = typeof target.nutanixStatusText === 'string' ? target.nutanixStatusText : null;
     target.nutanixCpu = typeof target.nutanixCpu === 'number' ? target.nutanixCpu : null;
     target.nutanixMemory = typeof target.nutanixMemory === 'number' ? target.nutanixMemory : null;
     target.nutanixDisk = typeof target.nutanixDisk === 'string' ? target.nutanixDisk : null;
     target.nutanixStatus = normalizeAssetStatus(target.nutanixStatus) ?? null;
     target.nutanixHistory = Array.isArray(target.nutanixHistory) ? target.nutanixHistory : [];
+    target.solarwindsStatusText = typeof target.solarwindsStatusText === 'string' ? target.solarwindsStatusText : null;
     target.solarwindsCpu = typeof target.solarwindsCpu === 'number' ? target.solarwindsCpu : null;
     target.solarwindsMemory = typeof target.solarwindsMemory === 'number' ? target.solarwindsMemory : null;
     target.solarwindsDisk = typeof target.solarwindsDisk === 'string' ? target.solarwindsDisk : null;
@@ -814,15 +822,21 @@ function buildDashboardStateMirrorPayload(nextState: StoredDbSchema): DashboardS
   };
 }
 
-function saveState(nextState: StoredDbSchema): void {
-  const mirrorPayload = buildDashboardStateMirrorPayload(nextState);
+function writeStateLocally(nextState: StoredDbSchema, updatedAt: string): void {
   upsertStateStmt.run({
     state_key: STATE_KEY,
     state_json: JSON.stringify(nextState),
-    updated_at: mirrorPayload.capturedAt
+    updated_at: updatedAt
   });
+}
 
-  mirrorDashboardStateToPostgres(mirrorPayload);
+function saveState(nextState: StoredDbSchema): void {
+  const mirrorPayload = buildDashboardStateMirrorPayload(nextState);
+  writeStateLocally(nextState, mirrorPayload.capturedAt);
+
+  if (!isPostgresPrimaryMetricsEnabled()) {
+    mirrorDashboardStateToPostgres(mirrorPayload);
+  }
 }
 
 function persist(): void {
@@ -1069,6 +1083,22 @@ export function getDashboardStateMirrorPayload(): DashboardStateMirrorPayload {
   return buildDashboardStateMirrorPayload(normalizeState(state));
 }
 
+export async function hydrateStateFromPostgres(): Promise<boolean> {
+  if (!isPostgresPrimaryMetricsEnabled()) {
+    return false;
+  }
+
+  const record = await getDashboardStateCurrentFromPostgres(STATE_KEY);
+  if (!record) {
+    return false;
+  }
+
+  const nextState = normalizeState(JSON.parse(record.stateJson));
+  state = nextState;
+  writeStateLocally(nextState, record.capturedAt);
+  return true;
+}
+
 export function updateNutanix(data: {
   meta?: UpdateMeta;
   uptime?: string;
@@ -1083,7 +1113,7 @@ export function updateNutanix(data: {
   storageCapacityTib?: number;
   memoryUsedGib?: number;
   memoryCapacityGib?: number;
-  vms?: Array<{ name: string; diskUsage?: string; backupStatus?: 'successful' | 'failed' | 'N/A'; cpu?: number; memory?: number; status?: string }>;
+  vms?: Array<{ name: string; diskUsage?: string; backupStatus?: 'successful' | 'failed' | 'N/A'; cpu?: number; memory?: number; status?: string; statusText?: string }>;
 }): void {
   const attemptedAt = currentTimestamp(data.meta);
   markSectionAttempt('nutanix', attemptedAt);
@@ -1171,6 +1201,9 @@ export function updateNutanix(data: {
         server.status = normalizedStatus;
         server.nutanixStatus = normalizedStatus;
       }
+      if (vm.statusText !== undefined) {
+        server.nutanixStatusText = vm.statusText;
+      }
     }
   }
 
@@ -1192,6 +1225,7 @@ export function updateSolarWinds(data: {
     memory?: number;
     disk?: string;
     status?: string;
+    statusText?: string;
     nodeId?: number;
     pollingIp?: string;
     machineType?: string;
@@ -1291,6 +1325,9 @@ export function updateSolarWinds(data: {
       }
       if (incoming.status !== undefined) {
         server.solarwindsStatus = normalizeAssetStatus(incoming.status) ?? server.solarwindsStatus;
+      }
+      if (incoming.statusText !== undefined) {
+        server.solarwindsStatusText = incoming.statusText;
       }
 
       if (!isNutanixBackedServer(server)) {
