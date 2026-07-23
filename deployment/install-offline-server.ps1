@@ -18,6 +18,8 @@ param(
   [string]$SymphonyUrl = '',
   [string]$SymphonyUser = '',
   [string]$SymphonyPassword = '',
+  [string]$AdminLoginId = 'admin',
+  [string]$OperatorLoginId = 'operator',
   [int]$OperatorPort = 21060,
   [int]$AdminPort = 21061,
   [switch]$SkipFirewallRule,
@@ -129,6 +131,8 @@ Write-Host 'Non-interactive mode:' $NonInteractive
   -SymphonyUrl $SymphonyUrl `
   -SymphonyUser $SymphonyUser `
   -SymphonyPassword $SymphonyPassword `
+  -AdminLoginId $AdminLoginId `
+  -OperatorLoginId $OperatorLoginId `
   -OperatorPort $OperatorPort `
   -AdminPort $AdminPort `
   -NonInteractive:$NonInteractive `

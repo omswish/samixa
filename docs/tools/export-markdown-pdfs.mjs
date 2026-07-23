@@ -67,7 +67,10 @@ const documentDefinitions = [
       { alt: 'Operator login', figureClassName: 'figure-medium page-break-before' },
       { alt: 'Operator dashboard', figureClassName: 'figure-page page-break-before' },
       { alt: 'Admin overview', figureClassName: 'figure-page page-break-before' },
-      { alt: 'Admin sessions', figureClassName: 'figure-page page-break-before' }
+      { alt: 'Admin sessions', figureClassName: 'figure-page page-break-before' },
+      { alt: 'Admin sources', figureClassName: 'figure-page page-break-before' },
+      { alt: 'Admin audit', figureClassName: 'figure-page page-break-before' },
+      { alt: 'Admin help', figureClassName: 'figure-page page-break-before' }
     ]
   },
   {

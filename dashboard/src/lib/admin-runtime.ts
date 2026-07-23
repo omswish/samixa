@@ -201,6 +201,15 @@ function parseUrlHost(value: string | null | undefined) {
   }
 }
 
+function parseListenLabel(value: string, fallback: string) {
+  try {
+    const parsed = new URL(value);
+    return `${parsed.hostname}:${parsed.port || (parsed.protocol === 'https:' ? '443' : '80')}`;
+  } catch {
+    return fallback;
+  }
+}
+
 function getProjectRoot() {
   return findProjectRoot();
 }
@@ -362,15 +371,17 @@ async function loadPm2Processes() {
 }
 
 function getServiceDefinitions(): ServiceDefinition[] {
+  const gatewayListen = parseListenLabel(INTERNAL_GATEWAY_BASE_URL, '127.0.0.1:4000');
+
   return [
     {
       id: 'api-gateway',
       displayName: 'API Gateway',
       exposedToLan: false,
-      listen: '127.0.0.1:4000',
+      listen: gatewayListen,
       startupOrder: 1,
       healthKind: 'http',
-      healthTarget: 'http://127.0.0.1:4000/api/status',
+      healthTarget: INTERNAL_GATEWAY_STATUS_URL,
       notes: 'Central ingest, runtime config, and websocket source.'
     },
     {

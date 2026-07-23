@@ -18,6 +18,8 @@ param(
   [string]$SymphonyUrl = '',
   [string]$SymphonyUser = '',
   [string]$SymphonyPassword = '',
+  [string]$AdminLoginId = 'admin',
+  [string]$OperatorLoginId = 'operator',
   [int]$OperatorPort = 21060,
   [int]$AdminPort = 21061,
   [switch]$NonInteractive,
@@ -318,6 +320,32 @@ if ([string]::IsNullOrWhiteSpace($SymphonyPassword)) {
   }
 }
 
+if ([string]::IsNullOrWhiteSpace($AdminLoginId)) {
+  if ($NonInteractive) {
+    $AdminLoginId = 'admin'
+  } else {
+    $AdminLoginId = Read-RequiredText -Prompt 'Admin login ID' -Default 'admin'
+  }
+}
+if ([string]::IsNullOrWhiteSpace($OperatorLoginId)) {
+  if ($NonInteractive) {
+    $OperatorLoginId = 'operator'
+  } else {
+    $OperatorLoginId = Read-RequiredText -Prompt 'Operator login ID' -Default 'operator'
+  }
+}
+$AdminLoginId = $AdminLoginId.Trim().ToLowerInvariant()
+$OperatorLoginId = $OperatorLoginId.Trim().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($AdminLoginId)) {
+  throw 'AdminLoginId is required.'
+}
+if ([string]::IsNullOrWhiteSpace($OperatorLoginId)) {
+  throw 'OperatorLoginId is required.'
+}
+if ($AdminLoginId -eq $OperatorLoginId) {
+  throw 'AdminLoginId and OperatorLoginId must be different.'
+}
+
 if (-not $PSBoundParameters.ContainsKey('SkipFirewallRule')) {
   if ($NonInteractive) {
     $SkipFirewallRule = $false
@@ -361,6 +389,8 @@ $envLines = @(
   "ITDASH_RUNTIME_ROOT=$RuntimeRoot",
   "SECRET_STORE_PASSPHRASE=$SecretStorePassphrase",
   "APP_AUTH_SECRET=$appAuthSecret",
+  "APP_ADMIN_LOGIN_ID=$AdminLoginId",
+  "APP_OPERATOR_LOGIN_ID=$OperatorLoginId",
   'APP_ADMIN_PASSWORD=17172737',
   'APP_OPERATOR_PASSWORD=17172737',
   'APP_LOGIN_PASSWORD=17172737',
@@ -375,6 +405,8 @@ Write-Host 'Install root:' $InstallRoot
 Write-Host 'Runtime root:' $RuntimeRoot
 Write-Host 'Operator port:' $OperatorPort
 Write-Host 'Admin port:' $AdminPort
+Write-Host 'Admin login ID:' $AdminLoginId
+Write-Host 'Operator login ID:' $OperatorLoginId
 Write-Host 'Non-interactive mode:' $NonInteractive
 Write-Host 'Secret store enabled:' (-not [string]::IsNullOrWhiteSpace($SecretStorePassphrase))
 Write-Host 'Nutanix host:' $NutanixHost

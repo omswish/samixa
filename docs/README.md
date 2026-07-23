@@ -6,7 +6,7 @@
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-19 |
+| Last Updated | 2026-07-23 |
 
 ## Canonical Documents
 - [Product Requirements Document](product-requirements-document.md)
@@ -21,6 +21,7 @@ Generated PDFs are placed under `docs/pdf/` and mirrored into `dashboard/public/
 Regenerate them with:
 
 ```powershell
+node docs/tools/capture-live-screenshots.mjs
 node docs/tools/export-markdown-pdfs.mjs
 ```
 
@@ -29,6 +30,9 @@ node docs/tools/export-markdown-pdfs.mjs
 - [Operator dashboard](assets/screenshots/operator-dashboard.png)
 - [Admin overview](assets/screenshots/admin-overview.png)
 - [Admin sessions](assets/screenshots/admin-sessions.png)
+- [Admin sources](assets/screenshots/admin-sources.png)
+- [Admin audit](assets/screenshots/admin-audit.png)
+- [Admin help](assets/screenshots/admin-help.png)
 
 ## Current Scope
 - Primary wallboard target: `1920x1200`

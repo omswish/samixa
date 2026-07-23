@@ -33,7 +33,7 @@ type SpecialQueueCounts = {
   priority1Incidents: number;
   priority2Incidents: number;
   onboardingRequests: number;
-  securityRequests: number;
+  securityIncidents: number;
 };
 
 type GridRow = Record<string, string>;
@@ -504,7 +504,7 @@ async function scrapeSpecialQueues(page: Page): Promise<SpecialQueueCounts> {
     priority1Incidents: incidentRows.filter((row) => /^P1\b/i.test(row.Priority || '')).length,
     priority2Incidents: incidentRows.filter((row) => /^P2\b/i.test(row.Priority || '')).length,
     onboardingRequests: requestRows.filter((row) => /on-?boarding|off-?boarding/i.test(row.Category || '')).length,
-    securityRequests: requestRows.filter((row) => /security/i.test(row.Category || '')).length
+    securityIncidents: incidentRows.filter((row) => /security/i.test(row.Category || '')).length
   };
 }
 
@@ -644,7 +644,7 @@ async function scrapeSymphonyPage(page: Page, attemptedAt: string, targetHost: s
     throw new Error('One or more Symphony SLA widgets could not be read reliably');
   }
 
-  console.log('Extracting P1/P2 and service request category counts from queue pages...');
+  console.log('Extracting P1/P2, onboarding/offboarding SR, and security incident counts from queue pages...');
   const specialQueues = await scrapeSpecialQueues(page);
 
   return {

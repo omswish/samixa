@@ -58,6 +58,7 @@ var
   SolarWindsNetworksPage: TInputQueryWizardPage;
   SymphonyPage: TInputQueryWizardPage;
   DashboardPortsPage: TInputQueryWizardPage;
+  AppLoginPage: TInputQueryWizardPage;
   GeneratedAppAuthSecret: string;
 
 procedure InitializeWizard;
@@ -133,6 +134,18 @@ begin
   DashboardPortsPage.Add('Admin port', False);
   DashboardPortsPage.Values[0] := '21060';
   DashboardPortsPage.Values[1] := '21061';
+
+  AppLoginPage :=
+    CreateInputQueryPage(
+      DashboardPortsPage.ID,
+      'Dashboard Login IDs',
+      'Choose the operator and admin login IDs',
+      'These IDs label the fixed admin and operator portals. Users will still enter only the relevant portal password on each URL.'
+    );
+  AppLoginPage.Add('Operator login ID', False);
+  AppLoginPage.Add('Admin login ID', False);
+  AppLoginPage.Values[0] := 'operator';
+  AppLoginPage.Values[1] := 'admin';
 end;
 
 function TrimmedPageValue(Page: TInputQueryWizardPage; Index: Integer): string;
@@ -257,6 +270,8 @@ begin
     'ITDASH_RUNTIME_ROOT=' + GetRuntimeRoot() + #13#10 +
     'SECRET_STORE_PASSPHRASE=' + TrimmedPageValue(SecretStorePage, 0) + #13#10 +
     'APP_AUTH_SECRET=' + GetOrCreateAppAuthSecret() + #13#10 +
+    'APP_ADMIN_LOGIN_ID=' + Lowercase(TrimmedPageValue(AppLoginPage, 1)) + #13#10 +
+    'APP_OPERATOR_LOGIN_ID=' + Lowercase(TrimmedPageValue(AppLoginPage, 0)) + #13#10 +
     'APP_ADMIN_PASSWORD=17172737' + #13#10 +
     'APP_OPERATOR_PASSWORD=17172737' + #13#10 +
     'APP_LOGIN_PASSWORD=17172737' + #13#10 +
@@ -451,6 +466,25 @@ begin
     if Result and (TrimmedPageValue(DashboardPortsPage, 0) = TrimmedPageValue(DashboardPortsPage, 1)) then
     begin
       MsgBox('Operator port and admin port must be different.', mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+
+  if CurPageID = AppLoginPage.ID then
+  begin
+    if TrimmedPageValue(AppLoginPage, 0) = '' then
+    begin
+      MsgBox('Operator login ID is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (TrimmedPageValue(AppLoginPage, 1) = '') then
+    begin
+      MsgBox('Admin login ID is required.', mbError, MB_OK);
+      Result := False;
+    end;
+    if Result and (CompareText(TrimmedPageValue(AppLoginPage, 0), TrimmedPageValue(AppLoginPage, 1)) = 0) then
+    begin
+      MsgBox('Operator login ID and admin login ID must be different.', mbError, MB_OK);
       Result := False;
     end;
   end;

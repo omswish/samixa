@@ -57,6 +57,7 @@ interface ServerMetric {
   memory?: number;
   disk?: string;
   status?: AssetStatus;
+  statusText?: string;
   nodeId?: number;
   pollingIp?: string;
   machineType?: string;
@@ -888,6 +889,7 @@ async function scrapeServerNode(page: Page, entry: ServerInventoryEntry): Promis
     memory,
     disk: diskUsage !== undefined ? `${diskUsage}%` : undefined,
     status: parseAssetStatus(details?.NodeStatusDescription) ?? parseAssetStatus(details?.NodeStatusAltText),
+    statusText: details?.NodeStatusDescription || details?.NodeStatusAltText,
     pollingIp: details?.IPAddressString || details?.HrefIPAddress,
     machineType: details?.MachineType,
     hardwareType: details?.HardwareType,

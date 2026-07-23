@@ -40,6 +40,8 @@ interface NetworkLink {
   dailyTransmitUtilization?: number | null;
   dailyReceiveUtilization?: number | null;
   history: number[];
+  txHistory?: number[];
+  rxHistory?: number[];
 }
 
 interface SectionHealth {
@@ -419,7 +421,7 @@ function CombinedUtilizationSparklineRow({
       <div
         style={{
           width: '100%',
-          height: '108px',
+          height: 'var(--wall-network-spark-height)',
           padding: '2px 0',
           borderRadius: '10px',
           background: 'rgba(255,255,255,0.72)',
@@ -469,8 +471,8 @@ function HeaderMetricStack({
         display: 'grid',
         gap: detail ? '2px' : '1px',
         minWidth: 0,
-        minHeight: detail ? '50px' : '54px',
-        padding: detail ? '6px 8px' : '7px 8px',
+        minHeight: detail ? 'var(--wall-network-header-metric-min-height)' : 'var(--wall-network-header-metric-min-height-compact)',
+        padding: 'var(--wall-network-header-metric-padding)',
         borderRadius: '12px',
         background: 'rgba(255,255,255,0.52)',
         border: '1px solid rgba(141,110,99,0.10)',
@@ -597,8 +599,8 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
               style={{
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '5px',
-                padding: '7px',
+                gap: 'var(--wall-network-link-gap)',
+                padding: 'var(--wall-network-link-padding)',
                 borderRadius: '16px',
                 background: 'rgba(255,255,255,0.5)',
                 border: `1px solid ${palette.border}`,
@@ -607,13 +609,13 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
             >
               <div className="network-link-top-grid">
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.08em', color: palette.text }}>{link.provider}</div>
+                  <div style={{ fontSize: 'var(--wall-network-provider-size)', fontWeight: 800, letterSpacing: '0.08em', color: palette.text }}>{link.provider}</div>
                   <div
                     style={{
-                      fontSize: '0.86rem',
+                      fontSize: 'var(--wall-network-label-size)',
                       fontWeight: 800,
                       lineHeight: 1.2,
-                      marginTop: '2px',
+                      marginTop: '1px',
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis'
@@ -623,11 +625,11 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                     {label}
                   </div>
                   {subtitle ? (
-                    <div style={{ fontSize: '0.56rem', opacity: 0.66, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ display: 'var(--wall-network-subtitle-display)', fontSize: 'var(--wall-network-subtitle-size)', opacity: 0.66, marginTop: '1px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {subtitle}
                     </div>
                   ) : null}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '5px', minWidth: 0, flexWrap: 'nowrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', minWidth: 0, flexWrap: 'nowrap' }}>
                     <span
                       style={{
                         display: 'inline-flex',
@@ -636,11 +638,11 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                         flex: '0 0 auto',
                         width: 'fit-content',
                         maxWidth: '100%',
-                        padding: '4px 10px',
+                        padding: 'var(--wall-network-chip-padding)',
                         borderRadius: '999px',
                         background: palette.bg,
                         border: `1px solid ${palette.border}`,
-                        fontSize: '0.54rem',
+                        fontSize: '0.52rem',
                         fontWeight: 800,
                         letterSpacing: '0.07em',
                         color: palette.text,
@@ -665,11 +667,11 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                         justifyContent: 'center',
                         flex: '0 0 auto',
                         width: 'fit-content',
-                        padding: '4px 10px',
+                        padding: 'var(--wall-network-chip-padding)',
                         borderRadius: '999px',
                         background: 'rgba(255,255,255,0.56)',
                         border: '1px solid rgba(141,110,99,0.12)',
-                        fontSize: '0.54rem',
+                        fontSize: '0.52rem',
                         fontWeight: 800,
                         letterSpacing: '0.07em',
                         color: 'var(--text-secondary)',
@@ -680,7 +682,7 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                     </span>
                   </div>
                 </div>
-                <div style={{ display: 'grid', gap: '6px', minWidth: 0 }}>
+                <div style={{ display: 'grid', gap: 'var(--wall-network-header-metric-gap)', minWidth: 0 }}>
                   <div className="network-link-header-metrics">
                     {metricSummary.map((metric) => (
                       <HeaderMetricStack
@@ -696,10 +698,10 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                 </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <CombinedUtilizationSparklineRow
-                  txHistory={link.history || []}
-                  rxHistory={link.history || []}
+                  txHistory={link.txHistory || link.history || []}
+                  rxHistory={link.rxHistory || link.history || []}
                   txRealtimeValue={link.realtimeTransmitUtilization ?? link.transmitUtilization}
                   rxRealtimeValue={link.realtimeReceiveUtilization ?? link.receiveUtilization}
                   txDailyValue={link.dailyTransmitUtilization}
@@ -713,7 +715,7 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', fontSize: '0.5rem', opacity: 0.64 }}>
+              <div style={{ display: 'var(--wall-network-footer-display)', justifyContent: 'space-between', alignItems: 'center', gap: '6px', fontSize: 'var(--wall-network-meta-font-size)', opacity: 0.64 }}>
                 <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {link.lastStatusChange ? `Status changed ${link.lastStatusChange}` : 'No status timestamp'}
                 </div>
