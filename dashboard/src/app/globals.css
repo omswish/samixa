@@ -21,40 +21,79 @@ html {
   --font-headings: 'Outfit', sans-serif;
   --font-body: 'Plus Jakarta Sans', sans-serif;
 
-  --wall-shell-padding: 12px;
-  --wall-shell-gap: 10px;
-  --wall-grid-gap: 12px;
-  --wall-header-padding: 8px 16px;
-  --wall-header-gap: 16px;
-  --wall-header-title-size: 1rem;
-  --wall-header-clock-size: 1.05rem;
-  --wall-panel-padding: 12px 14px;
-  --wall-panel-gap: 10px;
+  --wall-shell-padding: clamp(8px, 0.8vw, 14px);
+  --wall-shell-gap: clamp(8px, 0.65vw, 12px);
+  --wall-grid-gap: clamp(8px, 0.75vw, 14px);
+  --wall-header-padding: clamp(6px, 0.55vw, 10px) clamp(12px, 0.95vw, 18px);
+  --wall-header-gap: clamp(10px, 0.9vw, 18px);
+  --wall-header-title-size: clamp(0.92rem, 0.45vw + 0.75rem, 1.04rem);
+  --wall-header-clock-size: clamp(0.94rem, 0.5vw + 0.76rem, 1.08rem);
+  --wall-panel-padding: clamp(10px, 0.8vw, 14px) clamp(11px, 0.92vw, 15px);
+  --wall-panel-gap: clamp(8px, 0.7vw, 11px);
   --wall-panel-gap-tight: 8px;
-  --wall-title-sm: 1rem;
-  --wall-title-md: 1.1rem;
-  --wall-subtitle-size: 0.68rem;
-  --wall-icon-sm: 42px;
-  --wall-icon-md: 46px;
-  --wall-icon-radius-sm: 14px;
-  --wall-icon-radius-md: 16px;
-  --wall-footer-padding: 8px 16px;
-  --wall-footer-font-size: 0.74rem;
-  --wall-health-pill-font-size: 0.68rem;
-  --wall-health-pill-padding: 5px 10px;
-  --wall-health-pill-max-width: 280px;
+  --wall-title-sm: clamp(0.94rem, 0.48vw + 0.72rem, 1.02rem);
+  --wall-title-md: clamp(1rem, 0.52vw + 0.78rem, 1.12rem);
+  --wall-subtitle-size: clamp(0.6rem, 0.22vw + 0.52rem, 0.7rem);
+  --wall-icon-sm: clamp(38px, 2.2vw, 44px);
+  --wall-icon-md: clamp(42px, 2.45vw, 48px);
+  --wall-icon-radius-sm: clamp(12px, 0.85vw, 15px);
+  --wall-icon-radius-md: clamp(14px, 1vw, 17px);
+  --wall-footer-padding: clamp(6px, 0.55vw, 10px) clamp(12px, 0.95vw, 18px);
+  --wall-footer-font-size: clamp(0.66rem, 0.24vw + 0.58rem, 0.76rem);
+  --wall-health-pill-font-size: clamp(0.6rem, 0.18vw + 0.56rem, 0.7rem);
+  --wall-health-pill-padding: clamp(4px, 0.35vw, 6px) clamp(8px, 0.65vw, 10px);
+  --wall-health-pill-max-width: clamp(220px, 18vw, 320px);
   --wall-hci-node-gap: 6px;
   --wall-hci-node-min-height: 46px;
   --wall-hci-node-icon-size: 24px;
   --wall-hci-node-label-size: 0.44rem;
-  --wall-hsd-card-gap: 12px;
-  --wall-hsd-card-padding: 14px 14px 12px;
-  --wall-hsd-total-size: 2.28rem;
-  --wall-hsd-bars-min-height: 132px;
-  --wall-hsd-bar-height: 84px;
-  --wall-sla-card-padding: 10px 12px;
-  --wall-special-queue-padding: 10px 12px;
-  --wall-network-card-gap: 8px;
+  --wall-hsd-card-gap: clamp(9px, 0.7vw, 12px);
+  --wall-hsd-card-padding: clamp(10px, 0.8vw, 14px) clamp(10px, 0.9vw, 14px) clamp(9px, 0.75vw, 12px);
+  --wall-hsd-heading-size: clamp(0.72rem, 0.45vw + 0.56rem, 0.82rem);
+  --wall-hsd-total-size: clamp(1.95rem, 0.8vw + 1.6rem, 2.3rem);
+  --wall-hsd-bars-min-height: clamp(106px, 11vh, 136px);
+  --wall-hsd-bar-height: clamp(68px, 8vh, 84px);
+  --wall-sla-card-padding: clamp(8px, 0.65vw, 10px) clamp(9px, 0.75vw, 12px);
+  --wall-sla-title-size: clamp(0.54rem, 0.3vw + 0.44rem, 0.62rem);
+  --wall-sla-donut-size: 46px;
+  --wall-sla-donut-label-size: 0.46rem;
+  --wall-sla-donut-note-size: 0rem;
+  --wall-special-queue-padding: clamp(8px, 0.65vw, 10px) clamp(9px, 0.75vw, 12px);
+  --wall-queue-label-size: clamp(0.66rem, 0.42vw + 0.52rem, 0.84rem);
+  --wall-queue-detail-size: clamp(0.5rem, 0.26vw + 0.42rem, 0.6rem);
+  --wall-queue-value-size: clamp(2.3rem, 2.2vw + 1.2rem, 4.3rem);
+  --wall-network-card-gap: clamp(6px, 0.48vw, 8px);
+  --wall-network-link-padding: 7px;
+  --wall-network-link-gap: 5px;
+  --wall-network-header-metric-gap: 6px;
+  --wall-network-header-metric-min-height: 50px;
+  --wall-network-header-metric-min-height-compact: 54px;
+  --wall-network-header-metric-padding: 6px 8px;
+  --wall-network-chip-padding: 4px 10px;
+  --wall-network-spark-height: 108px;
+  --wall-network-meta-font-size: 0.5rem;
+  --wall-network-provider-size: 0.66rem;
+  --wall-network-label-size: 0.86rem;
+  --wall-network-subtitle-size: 0.56rem;
+  --wall-network-subtitle-display: block;
+  --wall-network-footer-display: flex;
+  --wall-server-chip-padding: 3px 6px;
+  --wall-server-chip-font-size: 0.5rem;
+  --wall-server-summary-chip-padding: 4px 7px;
+  --wall-server-summary-label-size: 0.46rem;
+  --wall-server-summary-value-size: 0.84rem;
+  --wall-server-header-label-size: 0.52rem;
+  --wall-server-metric-height: 22px;
+  --wall-server-metric-font-size: 0.6rem;
+  --wall-server-row-padding: 4px 7px;
+  --wall-server-row-gap: 8px;
+  --wall-server-name-size: 0.68rem;
+  --wall-server-tag-gap: 4px;
+  --wall-server-info-button-padding: 2px 6px;
+  --wall-server-state-padding: 4px 5px;
+  --wall-server-state-font-size: 0.46rem;
+  --wall-server-trend-height: 16px;
+  --wall-server-table-columns: minmax(0, 1.94fr) minmax(68px, 0.66fr) minmax(68px, 0.66fr) minmax(68px, 0.66fr) minmax(68px, 0.66fr) 70px 78px;
 }
 
 * {
@@ -99,16 +138,21 @@ h1, h2, h3, h4, h5, h6 {
 .dashboard-shell {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
 .dashboard-mobile-shell {
   display: none;
   min-height: 100vh;
-  padding: 12px;
+  min-height: 100dvh;
+  padding: clamp(10px, 2vw, 14px);
   flex-direction: column;
-  gap: 12px;
+  gap: clamp(10px, 1.8vw, 14px);
 }
 
 .dashboard-mobile-header,
@@ -185,23 +229,25 @@ h1, h2, h3, h4, h5, h6 {
 
 .dashboard-header--wall {
   min-height: 52px;
+  flex-wrap: wrap;
 }
 
 .dashboard-hci-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: var(--wall-panel-gap);
   min-height: 0;
 }
 
 .dashboard-wall-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.42fr) minmax(520px, 0.98fr);
+  grid-template-columns: minmax(0, 1.42fr) minmax(clamp(360px, 30vw, 520px), 0.98fr);
   grid-template-areas:
     "left servers";
   gap: var(--wall-grid-gap);
   flex: 1 1 auto;
   min-height: 0;
+  align-items: stretch;
 }
 
 .dashboard-left-stack {
@@ -210,6 +256,7 @@ h1, h2, h3, h4, h5, h6 {
   flex-direction: column;
   gap: var(--wall-grid-gap);
   min-height: 0;
+  min-width: 0;
 }
 
 .dashboard-hci-card-grid {
@@ -229,6 +276,7 @@ h1, h2, h3, h4, h5, h6 {
 .dashboard-panel {
   min-height: 0;
   overflow: hidden;
+  min-width: 0;
 }
 
 .dashboard-panel--hsd {
@@ -245,7 +293,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .hsd-modern-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
   gap: var(--wall-panel-gap);
 }
 
@@ -268,7 +316,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .hsd-footer-row {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.7fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
   gap: var(--wall-panel-gap);
   min-height: 0;
   align-items: stretch;
@@ -289,65 +337,65 @@ h1, h2, h3, h4, h5, h6 {
 
 .network-overview-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+  gap: var(--wall-network-card-gap);
 }
 
 .network-detail-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: var(--wall-network-card-gap);
   min-height: 0;
 }
 
 .network-detail-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(86px, 100%), 1fr));
+  gap: var(--wall-network-card-gap);
 }
 
 .network-link-top-grid {
   display: grid;
   grid-template-columns: minmax(186px, 0.74fr) minmax(0, 1.26fr);
-  gap: 8px;
+  gap: var(--wall-network-card-gap);
   align-items: start;
 }
 
 .network-link-header-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(74px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(min(78px, 100%), 1fr));
+  gap: var(--wall-network-card-gap);
   min-width: 0;
 }
 
 .network-status-chip-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: var(--wall-network-card-gap);
 }
 
 .network-link-split {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 130px;
-  gap: 10px;
+  gap: var(--wall-panel-gap);
   min-height: 0;
 }
 
 .network-bar-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--wall-panel-gap);
 }
 
 .network-carrier-strip {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--wall-network-card-gap);
 }
 
 .server-fleet-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(92px, 100%), 1fr));
   gap: 5px;
   min-height: 0;
 }
@@ -358,7 +406,36 @@ h1, h2, h3, h4, h5, h6 {
   gap: 3px;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
+}
+
+.dashboard-header-controls,
+.dashboard-footer-left,
+.dashboard-footer-right {
+  min-width: 0;
+}
+
+.dashboard-header-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.dashboard-network-slot {
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+
+.dashboard-servers-header {
+  min-width: 0;
+}
+
+.dashboard-footer {
+  flex-wrap: wrap;
+}
+
+.dashboard-footer-right {
+  margin-left: auto;
 }
 
 @media (min-width: 1600px) and (max-height: 1100px) {
@@ -407,11 +484,8 @@ h1, h2, h3, h4, h5, h6 {
     grid-template-columns: minmax(0, 1.38fr) minmax(500px, 0.96fr);
   }
 
-  .dashboard-hci-strip,
   .server-fleet-summary-grid,
   .network-link-header-metrics,
-  .hsd-modern-grid,
-  .hsd-footer-row,
   .hsd-sla-grid,
   .hsd-state-grid {
     gap: 8px;
@@ -444,20 +518,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 @media (max-width: 1520px) {
-  .dashboard-hci-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .dashboard-wall-grid {
-    grid-template-columns: minmax(0, 1.3fr) minmax(480px, 1fr);
-  }
-
-  .hsd-modern-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .hsd-footer-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1.28fr) minmax(clamp(340px, 32vw, 460px), 1fr);
   }
 
   .hsd-header-sla-grid {
@@ -479,22 +541,19 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1240px), (max-aspect-ratio: 4/3) and (max-width: 1366px) {
   body {
     overflow: auto;
   }
 
   .dashboard-shell {
     height: auto;
+    min-height: 100dvh;
     overflow: visible;
   }
 
   .dashboard-header--wall {
     gap: 10px;
-  }
-
-  .dashboard-hci-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .dashboard-wall-grid {
@@ -505,23 +564,46 @@ h1, h2, h3, h4, h5, h6 {
     gap: 12px;
   }
 
+  .dashboard-left-stack {
+    display: grid;
+    align-content: start;
+  }
+
   .dashboard-hci-card-grid {
     grid-template-columns: 1fr;
   }
 
-  .hsd-footer-row,
-  .hsd-modern-grid,
   .hsd-header-sla-grid,
   .hsd-sla-grid,
-  .network-detail-metrics,
-  .network-overview-grid,
-  .network-carrier-strip,
   .server-fleet-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .hsd-bottom-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-panel,
+  .server-table-list {
+    overflow: visible;
+  }
+
+  .dashboard-servers-header {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .dashboard-header-controls,
+  .dashboard-footer-right {
+    justify-content: flex-start;
+  }
+
+  .dashboard-footer-right {
+    margin-left: 0;
+  }
+
+  .dashboard-network-slot {
+    min-height: clamp(440px, 46vh, 720px);
   }
 
   .network-link-split,
@@ -533,15 +615,12 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .network-overview-grid,
   .hsd-state-grid,
-  .hsd-modern-grid,
   .hsd-sla-grid,
   .network-detail-metrics,
-  .network-link-header-metrics,
   .network-carrier-strip,
-  .dashboard-hci-strip,
   .server-summary-grid,
   .server-fleet-summary-grid {
     grid-template-columns: 1fr;
@@ -552,84 +631,151 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
-@media (max-width: 1024px) and (orientation: portrait) {
-  body {
-    overflow: auto;
-  }
-
-  .dashboard-shell {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-  }
-
-  .dashboard-wall-grid {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "left"
-      "servers";
-    align-items: start;
-  }
-
-  .dashboard-left-stack {
-    display: grid;
-    align-content: start;
-  }
-
-  .dashboard-left-stack > * {
-    flex: none !important;
-    min-height: auto !important;
-  }
-
-  .dashboard-panel,
-  .server-table-list {
-    overflow: visible;
-  }
-
-  .dashboard-hci-card-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .dashboard-hci-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .hsd-modern-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .hsd-footer-row,
-  .network-detail-list,
-  .network-link-top-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .server-fleet-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 640px) {
   .dashboard-header--wall {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .dashboard-hci-strip,
-  .hsd-modern-grid,
-  .hsd-footer-row,
   .server-fleet-summary-grid {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 900px), (max-width: 1180px) and (orientation: portrait) {
+@media (max-width: 1100px), (max-aspect-ratio: 13/10) and (max-width: 1024px) {
   .dashboard-shell--desktop {
     display: none !important;
   }
 
   .dashboard-mobile-shell {
     display: flex;
+  }
+}
+
+@media (min-width: 1280px) and (max-height: 820px) and (orientation: landscape) {
+  :root {
+    --wall-shell-padding: 5px;
+    --wall-shell-gap: 5px;
+    --wall-grid-gap: 6px;
+    --wall-header-padding: 2px 9px;
+    --wall-header-gap: 10px;
+    --wall-header-title-size: 0.92rem;
+    --wall-header-clock-size: 0.9rem;
+    --wall-panel-padding: 6px 7px;
+    --wall-panel-gap: 5px;
+    --wall-panel-gap-tight: 4px;
+    --wall-title-sm: 0.88rem;
+    --wall-title-md: 0.94rem;
+    --wall-subtitle-size: 0.56rem;
+    --wall-icon-sm: 34px;
+    --wall-icon-md: 38px;
+    --wall-icon-radius-sm: 11px;
+    --wall-icon-radius-md: 13px;
+    --wall-footer-padding: 2px 6px;
+    --wall-footer-font-size: 0.56rem;
+    --wall-health-pill-font-size: 0.5rem;
+    --wall-health-pill-padding: 2px 5px;
+    --wall-health-pill-max-width: 228px;
+    --wall-hci-node-gap: 4px;
+    --wall-hci-node-min-height: 30px;
+    --wall-hci-node-icon-size: 15px;
+    --wall-hci-node-label-size: 0.34rem;
+    --wall-hsd-card-gap: 5px;
+    --wall-hsd-card-padding: 6px 7px 5px;
+    --wall-hsd-heading-size: 0.72rem;
+    --wall-hsd-total-size: 1.5rem;
+    --wall-hsd-bars-min-height: 50px;
+    --wall-hsd-bar-height: 26px;
+    --wall-sla-card-padding: 4px 5px;
+    --wall-sla-title-size: 0.48rem;
+    --wall-sla-donut-size: 34px;
+    --wall-sla-donut-label-size: 0.38rem;
+    --wall-sla-donut-note-size: 0rem;
+    --wall-special-queue-padding: 4px 5px;
+    --wall-queue-label-size: 0.58rem;
+    --wall-queue-detail-size: 0.42rem;
+    --wall-queue-value-size: 1.8rem;
+    --wall-network-card-gap: 5px;
+    --wall-network-link-padding: 6px;
+    --wall-network-link-gap: 4px;
+    --wall-network-header-metric-gap: 5px;
+    --wall-network-header-metric-min-height: 42px;
+    --wall-network-header-metric-min-height-compact: 46px;
+    --wall-network-header-metric-padding: 4px 6px;
+    --wall-network-chip-padding: 3px 8px;
+    --wall-network-spark-height: 116px;
+    --wall-network-meta-font-size: 0.46rem;
+    --wall-network-provider-size: 0.6rem;
+    --wall-network-label-size: 0.8rem;
+    --wall-network-subtitle-size: 0.52rem;
+    --wall-network-subtitle-display: none;
+    --wall-network-footer-display: none;
+    --wall-server-chip-padding: 1px 4px;
+    --wall-server-chip-font-size: 0.4rem;
+    --wall-server-summary-chip-padding: 3px 6px;
+    --wall-server-summary-label-size: 0.42rem;
+    --wall-server-summary-value-size: 0.74rem;
+    --wall-server-header-label-size: 0.46rem;
+    --wall-server-metric-height: 17px;
+    --wall-server-metric-font-size: 0.5rem;
+    --wall-server-row-padding: 3px 4px;
+    --wall-server-row-gap: 4px;
+    --wall-server-name-size: 0.6rem;
+    --wall-server-tag-gap: 2px;
+    --wall-server-info-button-padding: 1px 5px;
+    --wall-server-state-padding: 3px 4px;
+    --wall-server-state-font-size: 0.4rem;
+    --wall-server-trend-height: 12px;
+    --wall-server-table-columns: minmax(172px, 3.55fr) minmax(46px, 0.38fr) minmax(46px, 0.38fr) minmax(46px, 0.38fr) minmax(46px, 0.38fr) 50px 64px;
+  }
+
+  .dashboard-header--wall {
+    min-height: 36px;
+  }
+
+  .dashboard-hci-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .dashboard-wall-grid {
+    grid-template-columns: minmax(0, 1.34fr) minmax(470px, 1.06fr);
+  }
+
+  .dashboard-panel--hsd {
+    flex: 1.02 1 0 !important;
+  }
+
+  .dashboard-network-slot {
+    flex: 0.74 1 0 !important;
+  }
+
+  .hsd-modern-grid,
+  .hsd-footer-row {
+    gap: 4px;
+  }
+
+  .hsd-modern-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .hsd-footer-row {
+    grid-template-columns: 1.55fr 1.55fr repeat(4, minmax(0, 0.72fr));
+  }
+
+  .hsd-footer-row > * {
+    min-width: 0;
+  }
+
+  .server-table-list {
+    gap: 2px;
+  }
+
+  .server-fleet-summary-grid {
+    gap: 4px;
+  }
+
+  .dashboard-footer {
+    gap: 8px;
   }
 }
 

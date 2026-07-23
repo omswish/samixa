@@ -198,6 +198,7 @@ async function collectNutanixData() {
     loadNutanixRuntimeConfig(API_URL),
     loadNutanixRuntimeSecrets(API_URL)
   ]);
+  const targetBaseUrl = runtimeConfig.baseUrl;
 
   try {
     const nutanixUser = requireEnv('NUTANIX_USER', runtimeSecrets.username ?? undefined);
@@ -209,7 +210,7 @@ async function collectNutanixData() {
     };
 
     // 1. Fetch Cluster Stats
-    const clusterUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}/PrismGateway/services/rest/v2.0/cluster/`;
+    const clusterUrl = `${targetBaseUrl}/PrismGateway/services/rest/v2.0/cluster/`;
     const clusterRes = await fetch(clusterUrl, { headers });
     
     if (!clusterRes.ok) {
@@ -233,7 +234,7 @@ async function collectNutanixData() {
     let nodes: Array<{ name: string; status: NutanixNodeStatus }> = [];
 
     try {
-      const hostsUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}/PrismGateway/services/rest/v2.0/hosts/`;
+      const hostsUrl = `${targetBaseUrl}/PrismGateway/services/rest/v2.0/hosts/`;
       const hostsRes = await fetch(hostsUrl, { headers });
       if (hostsRes.ok) {
         const hostsData = (await hostsRes.json()) as any;
@@ -254,10 +255,9 @@ async function collectNutanixData() {
     let totalLogicalAllocatedBytes = 0;
     let activeLogicalUsedBytes = 0;
     try {
-      const baseUrl = `https://${runtimeConfig.host}:${runtimeConfig.port}`;
       const [vmsRes, vmDiskUsageIndex] = await Promise.all([
-        fetch(`${baseUrl}/PrismGateway/services/rest/v1/vms`, { headers }),
-        fetchVmDiskUsageIndex(baseUrl, headers)
+        fetch(`${targetBaseUrl}/PrismGateway/services/rest/v1/vms`, { headers }),
+        fetchVmDiskUsageIndex(targetBaseUrl, headers)
       ]);
       if (vmsRes.ok) {
         const vmsData = (await vmsRes.json()) as any;

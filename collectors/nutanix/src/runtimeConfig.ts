@@ -5,6 +5,7 @@ const DEFAULT_POLL_INTERVAL_MS = 30000;
 export interface NutanixRuntimeConfig {
   host: string;
   port: string;
+  baseUrl: string;
   pollIntervalMs: number;
 }
 
@@ -16,11 +17,112 @@ function buildRuntimeConfigUrl(apiUrl: string): string {
 }
 
 function defaultConfig(): NutanixRuntimeConfig {
+  const port = String(DEFAULT_PORT).trim() || '9440';
+  const host = normalizeNutanixHost(DEFAULT_HOST, '10.23.50.27');
   return {
-    host: DEFAULT_HOST,
-    port: DEFAULT_PORT,
+    host,
+    port,
+    baseUrl: `https://${host}:${port}`,
     pollIntervalMs: DEFAULT_POLL_INTERVAL_MS
   };
+}
+
+function hasUrlScheme(value: string) {
+  return /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(value);
+}
+
+function trimAuthorityInput(value: string | null | undefined) {
+  return (value || '')
+    .trim()
+    .replace(/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//, '')
+    .replace(/^\/\//, '')
+    .split(/[/?#]/, 1)[0]
+    .trim();
+}
+
+function parsePortValue(value: unknown): string | null {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 && value <= 65535 ? String(value) : null;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? String(parsed) : null;
+}
+
+function parseAuthorityParts(value: string | null | undefined) {
+  const authority = trimAuthorityInput(value);
+  if (!authority) {
+    return { hostname: null, port: null };
+  }
+
+  if (authority.startsWith('[')) {
+    const closingBracketIndex = authority.indexOf(']');
+    if (closingBracketIndex === -1) {
+      return { hostname: authority, port: null };
+    }
+
+    const hostname = authority.slice(1, closingBracketIndex).trim() || null;
+    const remainder = authority.slice(closingBracketIndex + 1);
+    const portMatches = [...remainder.matchAll(/:(\d{1,5})/g)];
+    return {
+      hostname,
+      port: parsePortValue(portMatches.at(-1)?.[1] ?? null)
+    };
+  }
+
+  const segments = authority.split(':').map((segment) => segment.trim()).filter(Boolean);
+  if (segments.length === 0) {
+    return { hostname: null, port: null };
+  }
+
+  const hostname = segments[0] || null;
+  const numericPortSegment = [...segments.slice(1)].reverse().find((segment) => /^\d{1,5}$/.test(segment));
+  return {
+    hostname,
+    port: parsePortValue(numericPortSegment ?? null)
+  };
+}
+
+function tryParseUrlLike(value: string | null | undefined) {
+  const trimmed = (value || '').trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return new URL(hasUrlScheme(trimmed) ? trimmed : `https://${trimmed}`);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeNutanixHost(value: string | null | undefined, fallback: string) {
+  const parsed = tryParseUrlLike(value);
+  if (parsed?.hostname) {
+    return parsed.hostname;
+  }
+
+  return parseAuthorityParts(value).hostname || fallback;
+}
+
+function normalizeNutanixPort(...candidates: unknown[]) {
+  for (const candidate of candidates) {
+    const parsed = parsePortValue(candidate);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return parsePortValue(DEFAULT_PORT) || '9440';
 }
 
 export async function loadNutanixRuntimeConfig(apiUrl: string): Promise<NutanixRuntimeConfig> {
@@ -56,17 +158,24 @@ export async function loadNutanixRuntimeConfig(apiUrl: string): Promise<NutanixR
       return fallback;
     }
 
-    const parsedUrl = target.targetUrl ? new URL(target.targetUrl) : null;
+    const parsedUrl = tryParseUrlLike(target.targetUrl);
+    const hostFromParsedTarget = parsedUrl?.hostname || null;
+    const hostFromRawTarget = parseAuthorityParts(target.targetUrl).hostname;
+    const hostFromStoredHost = normalizeNutanixHost(target.host, fallback.host);
     const metadataPort = target.metadata?.port;
-    const resolvedPort = typeof metadataPort === 'number'
-      ? String(metadataPort)
-      : typeof metadataPort === 'string' && metadataPort
-        ? metadataPort
-        : (parsedUrl?.port || fallback.port);
+    const resolvedPort = normalizeNutanixPort(
+      metadataPort,
+      parsedUrl?.port,
+      parseAuthorityParts(target.targetUrl).port,
+      parseAuthorityParts(target.host).port,
+      fallback.port
+    );
+    const resolvedHost = hostFromParsedTarget || hostFromRawTarget || hostFromStoredHost || fallback.host;
 
     return {
-      host: target.host || parsedUrl?.hostname || fallback.host,
+      host: resolvedHost,
       port: resolvedPort,
+      baseUrl: `https://${resolvedHost}:${resolvedPort}`,
       pollIntervalMs: typeof target.pollIntervalSeconds === 'number' && target.pollIntervalSeconds > 0
         ? target.pollIntervalSeconds * 1000
         : fallback.pollIntervalMs

@@ -39,6 +39,65 @@ function buildAuditCsv(rows: any[]) {
   return [headers.join(','), ...dataRows].join('\r\n');
 }
 
+function escapeHtml(value: unknown) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(typeof value === 'string' ? value : JSON.stringify(value))
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildAuditExcelHtml(rows: any[]) {
+  const headers = [
+    'occurredAt',
+    'actionType',
+    'actionResult',
+    'severity',
+    'actorUsername',
+    'actorRole',
+    'surface',
+    'sourceIp',
+    'userAgent',
+    'targetType',
+    'targetId',
+    'message',
+    'errorMessage',
+    'requestSummaryJson',
+    'resultSummaryJson',
+    'correlationId'
+  ];
+
+  const headerHtml = headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('');
+  const rowHtml = rows.map((row) => (
+    `<tr>${headers.map((header) => `<td>${escapeHtml(row?.[header])}</td>`).join('')}</tr>`
+  )).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #c9b9a8; padding: 6px 8px; vertical-align: top; text-align: left; }
+    th { background: #f4eee6; font-weight: 700; }
+    tr:nth-child(even) td { background: #fcf8f2; }
+  </style>
+</head>
+<body>
+  <table>
+    <thead><tr>${headerHtml}</tr></thead>
+    <tbody>${rowHtml}</tbody>
+  </table>
+</body>
+</html>`;
+}
+
 export async function GET(request: Request) {
   const auth = await requireCurrentSession('admin');
   if (auth.response) {
@@ -74,6 +133,18 @@ export async function GET(request: Request) {
         headers: {
           'content-type': 'text/csv; charset=utf-8',
           'content-disposition': `attachment; filename="itdash-audit-${new Date().toISOString().slice(0, 10)}.csv"`,
+          'cache-control': 'no-store'
+        }
+      });
+    }
+
+    if (format === 'xls') {
+      const workbookHtml = buildAuditExcelHtml(Array.isArray(payload.rows) ? payload.rows : []);
+      return new NextResponse(workbookHtml, {
+        status: 200,
+        headers: {
+          'content-type': 'application/vnd.ms-excel; charset=utf-8',
+          'content-disposition': `attachment; filename="itdash-audit-${new Date().toISOString().slice(0, 10)}.xls"`,
           'cache-control': 'no-store'
         }
       });

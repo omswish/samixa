@@ -128,7 +128,7 @@ interface SymphonyState {
   priority1Incidents: number;
   priority2Incidents: number;
   onboardingRequests: number;
-  securityRequests: number;
+  securityIncidents: number;
   serviceRequestsSla: number;
   incidentsResponseSla: number;
   incidentsResolutionSla: number;
@@ -420,7 +420,7 @@ function createDefaultState(): StoredDbSchema {
       priority1Incidents: 0,
       priority2Incidents: 0,
       onboardingRequests: 0,
-      securityRequests: 0,
+      securityIncidents: 0,
       serviceRequestsSla: 100,
       incidentsResponseSla: 100,
       incidentsResolutionSla: 100,
@@ -463,7 +463,12 @@ function normalizeState(raw: any): StoredDbSchema {
 
   base.symphony = {
     ...base.symphony,
-    ...(raw?.symphony ?? {})
+    ...(raw?.symphony ?? {}),
+    securityIncidents: typeof raw?.symphony?.securityIncidents === 'number'
+      ? raw.symphony.securityIncidents
+      : typeof raw?.symphony?.securityRequests === 'number'
+        ? raw.symphony.securityRequests
+        : base.symphony.securityIncidents
   };
 
   if (raw?.sections) {
@@ -763,8 +768,8 @@ function buildNormalizedAssets(snapshot: DbSchema, capturedAt: string): Normaliz
     { assetId: 'symphony-change-records', displayName: 'Change Records', metricName: 'count', value: snapshot.symphony.changeRecords, unit: 'count' },
     { assetId: 'symphony-priority1', displayName: 'Priority 1 Incidents', metricName: 'count', value: snapshot.symphony.priority1Incidents, unit: 'count' },
     { assetId: 'symphony-priority2', displayName: 'Priority 2 Incidents', metricName: 'count', value: snapshot.symphony.priority2Incidents, unit: 'count' },
-    { assetId: 'symphony-onboarding', displayName: 'Onboarding Requests', metricName: 'count', value: snapshot.symphony.onboardingRequests, unit: 'count' },
-    { assetId: 'symphony-security', displayName: 'Security Requests', metricName: 'count', value: snapshot.symphony.securityRequests, unit: 'count' },
+    { assetId: 'symphony-onboarding', displayName: 'Onboarding/Offboarding SR', metricName: 'count', value: snapshot.symphony.onboardingRequests, unit: 'count' },
+    { assetId: 'symphony-security', displayName: 'Security Incidents', metricName: 'count', value: snapshot.symphony.securityIncidents, unit: 'count' },
     { assetId: 'symphony-incidents-response-sla', displayName: 'Incident Response SLA', metricName: 'percent', value: snapshot.symphony.incidentsResponseSla, unit: 'percent' },
     { assetId: 'symphony-incidents-resolution-sla', displayName: 'Incident Resolution SLA', metricName: 'percent', value: snapshot.symphony.incidentsResolutionSla, unit: 'percent' },
     { assetId: 'symphony-requests-response-sla', displayName: 'Request Response SLA', metricName: 'percent', value: snapshot.symphony.requestsResponseSla, unit: 'percent' },
@@ -1492,7 +1497,7 @@ export function updateSymphony(data: {
   priority1Incidents?: number;
   priority2Incidents?: number;
   onboardingRequests?: number;
-  securityRequests?: number;
+  securityIncidents?: number;
   serviceRequestsSla?: number;
   incidentsResponseSla?: number;
   incidentsResolutionSla?: number;
@@ -1516,7 +1521,7 @@ export function updateSymphony(data: {
     data.priority1Incidents,
     data.priority2Incidents,
     data.onboardingRequests,
-    data.securityRequests,
+    data.securityIncidents,
     data.serviceRequestsSla,
     data.incidentsResponseSla,
     data.incidentsResolutionSla,
@@ -1543,7 +1548,7 @@ export function updateSymphony(data: {
   if (data.priority1Incidents !== undefined) state.symphony.priority1Incidents = data.priority1Incidents;
   if (data.priority2Incidents !== undefined) state.symphony.priority2Incidents = data.priority2Incidents;
   if (data.onboardingRequests !== undefined) state.symphony.onboardingRequests = data.onboardingRequests;
-  if (data.securityRequests !== undefined) state.symphony.securityRequests = data.securityRequests;
+  if (data.securityIncidents !== undefined) state.symphony.securityIncidents = data.securityIncidents;
   if (data.serviceRequestsSla !== undefined) state.symphony.serviceRequestsSla = data.serviceRequestsSla;
   if (data.incidentsResponseSla !== undefined) state.symphony.incidentsResponseSla = data.incidentsResponseSla;
   if (data.incidentsResolutionSla !== undefined) state.symphony.incidentsResolutionSla = data.incidentsResolutionSla;

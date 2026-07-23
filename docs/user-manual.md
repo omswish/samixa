@@ -3,11 +3,11 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-UM-001 |
-| Version | 1.1 |
+| Version | 1.2 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-19 |
+| Last Updated | 2026-07-23 |
 | Audience | Operators, admins, support users |
 
 ## 1. Purpose
@@ -112,14 +112,21 @@ On narrow screens the dashboard switches to a stacked responsive layout. This is
 
 ![Admin overview](assets/screenshots/admin-overview.png)
 
-The admin console provides five workflow areas:
+The admin console provides six workflow lanes:
 - Overview
 - Services
 - Sessions
 - Sources
+- Audit
 - Help
 
-## 9. Services Tab
+The top summary strip surfaces:
+- stack health
+- portal access readiness
+- source setup state
+- reference library access
+
+## 9. Services Lane
 Use `Services` to:
 - inspect PM2-backed process health
 - restart a single service
@@ -135,7 +142,7 @@ Use this tab first when:
 - a collector appears down
 - the dashboard stops updating
 
-## 10. Sessions Tab
+## 10. Sessions Lane
 
 ![Admin sessions](assets/screenshots/admin-sessions.png)
 
@@ -170,7 +177,10 @@ When SolarWinds session validation fails:
 3. Complete the login flow.
 4. Refresh the session state and verify recovery.
 
-## 13. Sources Tab
+## 13. Sources Lane
+
+![Admin sources](assets/screenshots/admin-sources.png)
+
 Use `Sources` to manage:
 - enable or disable state
 - target URLs
@@ -180,12 +190,33 @@ Use `Sources` to manage:
 
 Save source changes before expecting the new values to take effect.
 
+Workflow note:
+- keep password changes inside the `Application Access` lane
+- keep collector endpoint edits inside the `Collector endpoints` lane
+- verify source changes from `Services` or `Sessions`, not while editing
+
 Credential model:
 - Nutanix credentials are configured independently
 - SolarWinds 45 and SolarWinds 46 credentials are configured independently
 - HSD credentials are configured independently
 
-## 14. Help Tab
+## 14. Audit Lane
+
+![Admin audit](assets/screenshots/admin-audit.png)
+
+Use `Audit` to:
+- filter recent application actions by actor, result, and surface
+- review a concise on-screen table with timestamp, action, result, and actor
+- export the detailed event log as an Excel-compatible file for offline analysis
+
+Operational note:
+- the on-screen table is intentionally compact for quick review
+- the export includes deeper fields such as target IDs, source IPs, and serialized request/result summaries
+
+## 15. Help Lane
+
+![Admin help](assets/screenshots/admin-help.png)
+
 The `Help` tab exposes the maintained PDF documentation set directly inside the admin console.
 
 Use it for:
@@ -195,27 +226,27 @@ Use it for:
 - opening the user manual
 - opening the developer handbook
 
-## 15. Troubleshooting Guide
+## 16. Troubleshooting Guide
 
-### 15.1 A Dashboard Card Looks Wrong
+### 16.1 A Dashboard Card Looks Wrong
 1. Check the card data-link status.
 2. If stale or erroring, treat it as last-synced.
 3. If healthy but abnormal, treat it as a live operational condition.
 4. Escalate to admin review if needed.
 
-### 15.2 A Collector Is Not Updating
+### 16.2 A Collector Is Not Updating
 1. Check `Services`.
 2. Check `Sessions`.
 3. Check `Sources`.
 4. Restart the affected service only after confirming the probable cause.
 
-### 15.3 Credentials Were Changed
+### 16.3 Credentials Were Changed
 1. Update the values in `Sources`.
 2. Save changes.
 3. Restart the affected collector if necessary.
 4. Verify the next successful sync.
 
-## 16. Operational Dos And Don'ts
+## 17. Operational Dos And Don'ts
 
 Do:
 - use the data-link state to judge freshness

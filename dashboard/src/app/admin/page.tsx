@@ -206,6 +206,89 @@ function buildSurfaceUrl(pathname: string, port: string) {
   return nextUrl.toString();
 }
 
+function hasUrlScheme(value: string) {
+  return /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(value);
+}
+
+function trimAuthorityInput(value: string | null | undefined) {
+  return (value || '')
+    .trim()
+    .replace(/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//, '')
+    .replace(/^\/\//, '')
+    .split(/[/?#]/, 1)[0]
+    .trim();
+}
+
+function parsePortValue(value: string | null | undefined) {
+  const trimmed = (value || '').trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535 ? parsed : null;
+}
+
+function parseAuthorityParts(value: string | null | undefined) {
+  const authority = trimAuthorityInput(value);
+  if (!authority) {
+    return { hostname: null, port: null as number | null };
+  }
+
+  if (authority.startsWith('[')) {
+    const closingBracketIndex = authority.indexOf(']');
+    if (closingBracketIndex === -1) {
+      return { hostname: authority, port: null as number | null };
+    }
+
+    const hostname = authority.slice(1, closingBracketIndex).trim() || null;
+    const remainder = authority.slice(closingBracketIndex + 1);
+    const portMatches = [...remainder.matchAll(/:(\d{1,5})/g)];
+    return {
+      hostname,
+      port: parsePortValue(portMatches.at(-1)?.[1] ?? null)
+    };
+  }
+
+  const segments = authority.split(':').map((segment) => segment.trim()).filter(Boolean);
+  if (segments.length === 0) {
+    return { hostname: null, port: null as number | null };
+  }
+
+  const numericPortSegment = [...segments.slice(1)].reverse().find((segment) => /^\d{1,5}$/.test(segment));
+  return {
+    hostname: segments[0] || null,
+    port: parsePortValue(numericPortSegment ?? null)
+  };
+}
+
+function normalizeNutanixTargetUrlInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(hasUrlScheme(trimmed) ? trimmed : `https://${trimmed}`);
+    return `https://${parsed.hostname}:${parsed.port || '9440'}`;
+  } catch {
+    const { hostname, port } = parseAuthorityParts(trimmed);
+    if (!hostname) {
+      return trimmed;
+    }
+
+    return `https://${hostname}:${port || 9440}`;
+  }
+}
+
+function parseUrlHostname(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return null;
+  }
+}
+
 function renderPasswordStatus(target: CollectorTargetSettings) {
   if (target.clearPassword) {
     return 'Will be cleared on save';
@@ -482,7 +565,7 @@ export default function AdminPage() {
       query.set('surface', auditFilters.surface);
     }
     query.set('limit', String(auditFilters.limit));
-    query.set('format', 'csv');
+    query.set('format', 'xls');
     window.location.assign(`/api/admin/audit?${query.toString()}`);
   };
 
@@ -765,45 +848,82 @@ export default function AdminPage() {
     }
   ];
 
+  const sessionTargetCount = sessions.reduce((total, workflow) => total + workflow.targets.length, 0);
+  const authenticatedSessionTargets = sessions.reduce(
+    (total, workflow) => total + workflow.targets.filter((target) => target.authStatus === 'authenticated').length,
+    0
+  );
+  const workflowScopes = [
+    {
+      key: 'services' as const,
+      title: 'Runtime control',
+      detail: 'Start, stop, or restart stack components and check current health.',
+      count: `${servicesAttention} need action`
+    },
+    {
+      key: 'sessions' as const,
+      title: 'Portal access',
+      detail: 'Recover HSD and SolarWinds sessions, import state files, and reauthenticate.',
+      count: `${sessionsAttention} need renewal`
+    },
+    {
+      key: 'sources' as const,
+      title: 'Collector setup',
+      detail: 'Manage app passwords, source URLs, credentials, and source-specific selectors.',
+      count: `${enabledTargets}/4 enabled`
+    },
+    {
+      key: 'audit' as const,
+      title: 'Traceability',
+      detail: 'Review application actions and export the detailed event log for offline analysis.',
+      count: `${auditRows.length} loaded`
+    },
+    {
+      key: 'help' as const,
+      title: 'Reference pack',
+      detail: 'Open PRD, design, timeline, handbook, and user manual PDFs from the console.',
+      count: `${helpDocuments.length} docs`
+    }
+  ];
+
   const renderOverviewPanel = () => (
     <div style={panelScrollerStyle}>
-      <section style={overviewTopGridStyle}>
-        <div className="glass-panel" style={panelStyle}>
+      <section style={workflowLaneGridStyle}>
+        <div className="glass-panel" style={heroPanelStyle}>
           <div style={panelHeaderStyle}>
             <div>
-              <h2 style={panelTitleStyle}>Control Overview</h2>
-              <div style={panelHintStyle}>First-stop recovery view for stack health, source readiness, and operator routing.</div>
+              <h2 style={panelTitleStyle}>Command Center</h2>
+              <div style={panelHintStyle}>First stop for current posture, urgent remediation, and routing into the correct workflow lane.</div>
             </div>
             <span style={{ ...statusChipStyle, color: '#1565c0', background: 'rgba(21,101,192,0.10)', borderColor: 'rgba(21,101,192,0.20)' }}>
-              LIVE
+              CONTROL LIVE
             </span>
           </div>
 
-          <div style={overviewMetricGridStyle}>
-            <div style={overviewMetricCardStyle}>
-              <div style={overviewMetricLabelStyle}>Services needing attention</div>
-              <div style={overviewMetricValueStyle}>{servicesAttention}</div>
-              <button type="button" onClick={() => setActiveTab('services')} style={overviewLinkButtonStyle}>
-                Open services
-              </button>
+          <div style={workflowStatGridStyle}>
+            <div style={workflowStatCardStyle}>
+              <div style={workflowStatCaptionStyle}>Stack health</div>
+              <div style={workflowStatValueStyle}>{servicesOnline}/{services.length}</div>
+              <div style={workflowStatDetailStyle}>{servicesAttention} services need action</div>
             </div>
-            <div style={overviewMetricCardStyle}>
-              <div style={overviewMetricLabelStyle}>Sessions needing renewal</div>
-              <div style={overviewMetricValueStyle}>{sessionsAttention}</div>
-              <button type="button" onClick={() => setActiveTab('sessions')} style={overviewLinkButtonStyle}>
-                Open sessions
-              </button>
+            <div style={workflowStatCardStyle}>
+              <div style={workflowStatCaptionStyle}>Portal access</div>
+              <div style={workflowStatValueStyle}>{authenticatedSessionTargets}/{sessionTargetCount || 1}</div>
+              <div style={workflowStatDetailStyle}>{sessionsAttention} workflows need renewal</div>
             </div>
-            <div style={overviewMetricCardStyle}>
-              <div style={overviewMetricLabelStyle}>Enabled source targets</div>
-              <div style={overviewMetricValueStyle}>{enabledTargets}/4</div>
-              <button type="button" onClick={() => setActiveTab('sources')} style={overviewLinkButtonStyle}>
-                Open sources
-              </button>
+            <div style={workflowStatCardStyle}>
+              <div style={workflowStatCaptionStyle}>Collector targets</div>
+              <div style={workflowStatValueStyle}>{enabledTargets}/4</div>
+              <div style={workflowStatDetailStyle}>Saved endpoints currently enabled</div>
+            </div>
+            <div style={workflowStatCardStyle}>
+              <div style={workflowStatCaptionStyle}>Document library</div>
+              <div style={workflowStatValueStyle}>{helpDocuments.length}</div>
+              <div style={workflowStatDetailStyle}>Embedded PDFs mirrored for admins</div>
             </div>
           </div>
 
-          <div style={compactActionRowStyle}>
+          <div style={workflowActionBarStyle}>
             <button type="button" onClick={() => window.location.assign(buildSurfaceUrl('/', OPERATOR_PORT))} style={secondaryButtonStyle}>
               <ShieldCheck size={16} />
               Open Operator View
@@ -822,27 +942,24 @@ export default function AdminPage() {
         <div className="glass-panel" style={panelStyle}>
           <div style={panelHeaderStyle}>
             <div>
-              <h2 style={panelTitleStyle}>Workflow Areas</h2>
-              <div style={panelHintStyle}>Compact lanes for service control, session recovery, and source administration.</div>
+              <h2 style={panelTitleStyle}>Workflow Lanes</h2>
+              <div style={panelHintStyle}>Each lane isolates one admin task scope so source edits, session work, and service control do not compete visually.</div>
             </div>
           </div>
 
-          <div style={{ display: 'grid', gap: '8px' }}>
-            {tabs.filter((tab) => tab.key !== 'overview').map((tab) => (
+          <div style={workflowScopeGridStyle}>
+            {workflowScopes.map((scope) => (
               <button
-                key={tab.key}
+                key={scope.key}
                 type="button"
-                onClick={() => setActiveTab(tab.key)}
-                style={overviewNavCardStyle}
+                onClick={() => setActiveTab(scope.key)}
+                style={workflowScopeButtonStyle(activeTab === scope.key)}
               >
-                <div style={{ display: 'grid', gap: '4px' }}>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: 'var(--text-primary)' }}>
-                    {tab.icon}
-                    {tab.label}
-                  </div>
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', textAlign: 'left' }}>{tab.detail}</div>
+                <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
+                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{scope.title}</div>
+                  <div style={{ fontSize: '0.79rem', color: 'var(--text-secondary)' }}>{scope.detail}</div>
                 </div>
-                <span style={overviewNavPillStyle}>Open</span>
+                <span style={overviewNavPillStyle}>{scope.count}</span>
               </button>
             ))}
           </div>
@@ -854,7 +971,7 @@ export default function AdminPage() {
           <div style={panelHeaderStyle}>
             <div>
               <h2 style={panelTitleStyle}>Service Snapshot</h2>
-              <div style={panelHintStyle}>Live PM2 and gateway status across the shared stack.</div>
+              <div style={panelHintStyle}>Core stack and collectors, reduced to one-line health rows for faster triage.</div>
             </div>
           </div>
 
@@ -875,7 +992,13 @@ export default function AdminPage() {
                 >
                   <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
                     <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{service.displayName}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{service.healthSummary}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      {joinDetails([
+                        service.healthSummary,
+                        service.listen || 'No direct listen socket',
+                        service.lastSync ? `Last sync ${service.lastSync}` : null
+                      ])}
+                    </div>
                   </div>
                   <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
                     {service.overallStatus.toUpperCase()}
@@ -889,126 +1012,184 @@ export default function AdminPage() {
         <div className="glass-panel" style={panelStyle}>
           <div style={panelHeaderStyle}>
             <div>
-              <h2 style={panelTitleStyle}>Session Snapshot</h2>
-              <div style={panelHintStyle}>Imported browser state and renewal readiness.</div>
+              <h2 style={panelTitleStyle}>Source Readiness</h2>
+              <div style={panelHintStyle}>Session validity, saved endpoints, and operator access in one compact audit lane.</div>
             </div>
           </div>
 
           <div style={{ display: 'grid', gap: '10px' }}>
-            {loading ? (
-              <div style={loadingRowStyle}>
-                <RefreshCw size={18} className="animate-spin" />
-                Loading session state...
+            <button type="button" onClick={() => setActiveTab('sessions')} style={overviewListRowStyle}>
+              <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
+                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Session workflows</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {authenticatedSessionTargets}/{sessionTargetCount || 1} authenticated targets across HSD and SolarWinds
+                </div>
               </div>
-            ) : sessions.map((workflow) => {
-              const tone = toneStyles(workflow.overallStatus);
-              return (
-                <button
-                  key={workflow.id}
-                  type="button"
-                  onClick={() => setActiveTab('sessions')}
-                  style={overviewListRowStyle}
-                >
-                  <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
-                    <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{workflow.displayName}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{workflow.summary}</div>
-                  </div>
-                  <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
-                    {workflow.overallStatus.toUpperCase()}
-                  </span>
-                </button>
-              );
-            })}
+              <span style={overviewNavPillStyle}>{sessions.length} workflows</span>
+            </button>
+            <button type="button" onClick={() => setActiveTab('sources')} style={overviewListRowStyle}>
+              <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
+                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Collector target state</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  {enabledTargets}/4 endpoints enabled, credentials managed from the shared source lane
+                </div>
+              </div>
+              <span style={overviewNavPillStyle}>Open lane</span>
+            </button>
+            <button type="button" onClick={() => setActiveTab('help')} style={overviewListRowStyle}>
+              <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
+                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Reference library</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  PRD, timeline, design, handbook, and user manual embedded for server-side review
+                </div>
+              </div>
+              <span style={overviewNavPillStyle}>{helpDocuments.length} PDFs</span>
+            </button>
           </div>
         </div>
       </section>
     </div>
   );
 
-  const renderServicesPanel = () => (
-    <section className="glass-panel" style={contentPanelStyle}>
-      <div style={panelHeaderStyle}>
-        <div>
-          <h2 style={panelTitleStyle}>Services</h2>
-          <div style={panelHintStyle}>Run, stop, restart, and verify the live stack without leaving the admin surface.</div>
-        </div>
-        <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
-          <RefreshCw size={14} />
-          Refresh state
-        </button>
-      </div>
+  const renderServicesPanel = () => {
+    const serviceGroups = [
+      {
+        title: 'Shared web stack',
+        detail: 'Gateway, UI, and frontdoor processes that must remain consistent for both admin and operator access.',
+        services: services.filter((service) => ['api-gateway', 'dashboard-ui', 'dashboard-frontdoor-operator', 'dashboard-frontdoor-admin'].includes(service.id))
+      },
+      {
+        title: 'Collectors',
+        detail: 'Source-facing workers for Nutanix, SolarWinds, and HSD.',
+        services: services.filter((service) => !['api-gateway', 'dashboard-ui', 'dashboard-frontdoor-operator', 'dashboard-frontdoor-admin'].includes(service.id))
+      }
+    ];
 
-      <div style={cardGridStyle}>
+    return (
+      <section className="glass-panel" style={contentPanelStyle}>
+        <div style={panelHeaderStyle}>
+          <div>
+            <h2 style={panelTitleStyle}>Services</h2>
+            <div style={panelHintStyle}>Compact service rows with current health, endpoint context, and scoped restart actions.</div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
+              <RefreshCw size={14} />
+              Refresh state
+            </button>
+            <button type="button" onClick={() => void handleServiceAction('restart-all', 'stack')} disabled={serviceBusy !== null} style={primaryButtonStyle(serviceBusy !== null)}>
+              <RotateCcw size={14} />
+              Restart Stack
+            </button>
+          </div>
+        </div>
+
+        <div style={workflowStatGridStyle}>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Online</div>
+            <div style={workflowStatValueStyle}>{servicesOnline}</div>
+            <div style={workflowStatDetailStyle}>Services reporting healthy</div>
+          </div>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Attention</div>
+            <div style={workflowStatValueStyle}>{servicesAttention}</div>
+            <div style={workflowStatDetailStyle}>Processes or health probes need review</div>
+          </div>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>LAN listeners</div>
+            <div style={workflowStatValueStyle}>{services.filter((service) => service.exposedToLan).length}</div>
+            <div style={workflowStatDetailStyle}>Frontdoor surfaces exposed to clients</div>
+          </div>
+        </div>
+
         {loading ? (
           <div style={loadingRowStyle}>
             <RefreshCw size={18} className="animate-spin" />
             Loading service state...
           </div>
-        ) : services.map((service) => {
-          const tone = toneStyles(service.overallStatus);
-          const endpointDetails = joinDetails([
-            service.listen || 'No direct listen socket',
-            service.pid ? `PID ${service.pid}` : null,
-            service.uptime ? `Uptime ${service.uptime}` : null
-          ]);
-          const healthDetails = joinDetails([
-            service.lastSync ? `Last sync ${service.lastSync}` : null,
-            service.lastError || null
-          ]);
-          return (
-            <div key={service.id} style={compactCardStyle}>
-              <div style={compactCardHeaderStyle}>
-                <div style={{ display: 'grid', gap: '4px' }}>
-                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{service.displayName}</div>
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{service.notes}</div>
+        ) : (
+          <div style={{ display: 'grid', gap: '14px' }}>
+            {serviceGroups.map((group) => (
+              <div key={group.title} style={scopeSectionStyle}>
+                <div style={scopeSectionHeaderStyle}>
+                  <div>
+                    <div style={scopeSectionTitleStyle}>{group.title}</div>
+                    <div style={scopeSectionHintStyle}>{group.detail}</div>
+                  </div>
+                  <span style={metaPillStyle}>{group.services.length} items</span>
                 </div>
-                <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
-                  {service.overallStatus.toUpperCase()}
-                </span>
-              </div>
 
-              <div style={metaRowStyle}>
-                <span style={metaPillStyle}>{service.exposedToLan ? 'LAN exposed' : 'Loopback only'}</span>
-                {endpointDetails ? <span style={metaPillStyle}>{endpointDetails}</span> : null}
-              </div>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {group.services.map((service) => {
+                    const tone = toneStyles(service.overallStatus);
+                    const endpointDetails = joinDetails([
+                      service.listen || 'No direct listen socket',
+                      service.pid ? `PID ${service.pid}` : null,
+                      service.uptime ? `Uptime ${service.uptime}` : null
+                    ]);
+                    const healthDetails = joinDetails([
+                      service.healthSummary,
+                      service.lastSync ? `Last sync ${service.lastSync}` : null,
+                      service.lastError || null
+                    ]);
 
-              <div style={serviceHealthStyle}>
-                <strong style={{ color: 'var(--text-primary)' }}>{service.healthSummary}</strong>
-                {healthDetails ? <span>{healthDetails}</span> : null}
-              </div>
+                    return (
+                      <div key={service.id} style={serviceRowStyle}>
+                        <div style={serviceRowMainStyle}>
+                          <div style={{ display: 'grid', gap: '4px' }}>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{service.displayName}</div>
+                              <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                                {service.overallStatus.toUpperCase()}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{service.notes}</div>
+                          </div>
 
-              <div style={compactActionRowStyle}>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                  Startup order {service.startupOrder ?? '-'}
+                          <div style={metaRowStyle}>
+                            <span style={metaPillStyle}>{service.exposedToLan ? 'LAN exposed' : 'Loopback only'}</span>
+                            <span style={metaPillStyle}>Startup order {service.startupOrder ?? '-'}</span>
+                            {endpointDetails ? <span style={metaPillStyle}>{endpointDetails}</span> : null}
+                          </div>
+
+                          <div style={serviceHealthStyle}>
+                            <strong style={{ color: 'var(--text-primary)' }}>{service.healthSummary}</strong>
+                            {healthDetails ? <span>{healthDetails}</span> : null}
+                          </div>
+                        </div>
+
+                        <div style={serviceActionRailStyle}>
+                          <button type="button" onClick={() => void handleServiceAction('start', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
+                            <Play size={14} />
+                            Start
+                          </button>
+                          <button type="button" onClick={() => void handleServiceAction('stop', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
+                            <Square size={14} />
+                            Stop
+                          </button>
+                          <button type="button" onClick={() => void handleServiceAction('restart', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
+                            <RotateCcw size={14} />
+                            Restart
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <button type="button" onClick={() => void handleServiceAction('start', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
-                    <Play size={14} />
-                    Start
-                  </button>
-                  <button type="button" onClick={() => void handleServiceAction('stop', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
-                    <Square size={14} />
-                    Stop
-                  </button>
-                  <button type="button" onClick={() => void handleServiceAction('restart', service.id)} disabled={serviceBusy !== null} style={secondaryButtonStyle}>
-                    <RotateCcw size={14} />
-                    Restart
-                  </button>
-                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  };
 
   const renderSessionsPanel = () => (
     <section className="glass-panel" style={contentPanelStyle}>
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Sessions</h2>
-          <div style={panelHintStyle}>Import refreshed storage-state JSON. HSD server-local reauth stops the HSD Collector first, opens the interactive browser on the host, and requires a manual restart after login.</div>
+          <div style={panelHintStyle}>Recovery lane for live portal access, imported browser state, and server-local reauthentication workflows.</div>
         </div>
         <button type="button" onClick={() => void loadAll()} style={secondaryButtonStyle}>
           <RefreshCw size={14} />
@@ -1019,65 +1200,98 @@ export default function AdminPage() {
       <input ref={hsdImportRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={(event) => void handleImport('symphony', event.target.files?.[0] || null)} />
       <input ref={solarwindsImportRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={(event) => void handleImport('solarwinds', event.target.files?.[0] || null)} />
 
-      <div style={cardGridStyle}>
-        {loading ? (
-          <div style={loadingRowStyle}>
-            <RefreshCw size={18} className="animate-spin" />
-            Loading session state...
+      <div style={workflowLaneGridStyle}>
+        <div className="glass-panel" style={panelStyle}>
+          <div style={panelHeaderStyle}>
+            <div>
+              <h3 style={panelTitleStyle}>Recovery Guidance</h3>
+              <div style={panelHintStyle}>Session tasks are separated from source edits so credentials and cookies are never changed in the same lane by accident.</div>
+            </div>
           </div>
-        ) : sessions.map((workflow) => {
-          const tone = toneStyles(workflow.overallStatus);
-          return (
-            <div key={workflow.id} style={compactCardStyle}>
-              <div style={compactCardHeaderStyle}>
-                <div style={{ display: 'grid', gap: '4px' }}>
-                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{workflow.displayName}</div>
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{workflow.summary}</div>
-                </div>
-                <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
-                  {sessionStatusLabel(workflow.overallStatus)}
-                </span>
-              </div>
+          <div style={guideListStyle}>
+            <div style={guideStepStyle}>
+              <strong style={{ color: 'var(--text-primary)' }}>1. Validate current state</strong>
+              <span>Use the session status on each workflow card before restarting any collectors.</span>
+            </div>
+            <div style={guideStepStyle}>
+              <strong style={{ color: 'var(--text-primary)' }}>2. Import only trusted storage-state JSON</strong>
+              <span>Imports replace the saved browser state on the server for the selected workflow.</span>
+            </div>
+            <div style={guideStepStyle}>
+              <strong style={{ color: 'var(--text-primary)' }}>3. Reauthenticate from the host when required</strong>
+              <span>HSD reauth stops the HSD collector first; after login, restart the collector from the Services lane.</span>
+            </div>
+          </div>
+          <div style={metaRowStyle}>
+            <span style={metaPillStyle}>{authenticatedSessionTargets}/{sessionTargetCount || 1} authenticated targets</span>
+            {session?.isServerLocal ? <span style={metaPillStyle}>Server-local helper available</span> : <span style={metaPillStyle}>Remote viewer mode</span>}
+          </div>
+        </div>
 
-              <div style={{ display: 'grid', gap: '8px' }}>
-                {workflow.targets.map((target) => (
-                  <div key={target.id} style={targetCardStyle}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <strong style={{ color: 'var(--text-primary)' }}>{target.label}</strong>
-                      <span style={metaPillStyle}>{target.updatedAt ? `Updated ${target.updatedAt}` : 'Not present'}</span>
-                    </div>
-                    <div style={metaRowStyle}>
-                      {target.sizeBytes ? <span style={metaPillStyle}>{(target.sizeBytes / 1024).toFixed(1)} KB</span> : null}
-                      {target.authSummary ? <span style={metaPillStyle}>{target.authSummary}</span> : null}
-                      {target.validatedAt ? <span style={metaPillStyle}>Checked {target.validatedAt}</span> : null}
-                      {target.issue ? <span style={{ ...metaPillStyle, color: '#b3261e' }}>{target.issue}</span> : null}
-                    </div>
+        <div style={{ display: 'grid', gap: '12px' }}>
+          {loading ? (
+            <div style={loadingRowStyle}>
+              <RefreshCw size={18} className="animate-spin" />
+              Loading session state...
+            </div>
+          ) : sessions.map((workflow) => {
+            const tone = toneStyles(workflow.overallStatus);
+            return (
+              <div key={workflow.id} style={compactCardStyle}>
+                <div style={compactCardHeaderStyle}>
+                  <div style={{ display: 'grid', gap: '4px' }}>
+                    <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{workflow.displayName}</div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>{workflow.summary}</div>
                   </div>
-                ))}
-              </div>
+                  <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                    {sessionStatusLabel(workflow.overallStatus)}
+                  </span>
+                </div>
 
-              <div style={compactActionRowStyle}>
-                <button
-                  type="button"
-                  onClick={() => (workflow.id === 'symphony' ? hsdImportRef.current : solarwindsImportRef.current)?.click()}
-                  disabled={sessionBusy !== null}
-                  style={secondaryButtonStyle}
-                >
-                  <HardDriveDownload size={14} />
-                  Import Session
-                </button>
-                {session?.isServerLocal ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void handleLaunchReauth(workflow.id)}
-                      disabled={sessionBusy !== null}
-                      style={secondaryButtonStyle}
-                    >
-                      <KeyRound size={14} />
-                      {workflow.id === 'symphony' ? 'Stop Collector + Reauth' : 'Launch Reauth on Server'}
-                    </button>
-                    {workflow.id === 'symphony' ? (
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  {workflow.targets.map((target) => (
+                    <div key={target.id} style={sessionTargetRowStyle}>
+                      <div style={{ display: 'grid', gap: '4px' }}>
+                        <strong style={{ color: 'var(--text-primary)' }}>{target.label}</strong>
+                        <span style={{ fontSize: '0.79rem', color: 'var(--text-secondary)' }}>
+                          {joinDetails([
+                            target.updatedAt ? `Updated ${target.updatedAt}` : 'Not present',
+                            target.validatedAt ? `Checked ${target.validatedAt}` : null
+                          ])}
+                        </span>
+                      </div>
+                      <div style={metaRowStyle}>
+                        {target.sizeBytes ? <span style={metaPillStyle}>{(target.sizeBytes / 1024).toFixed(1)} KB</span> : null}
+                        {target.issue ? <span style={{ ...metaPillStyle, color: '#b3261e' }}>{target.issue}</span> : null}
+                        {target.authSummary ? <span style={metaPillStyle}>{target.authSummary}</span> : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={compactActionRowStyle}>
+                  <button
+                    type="button"
+                    onClick={() => (workflow.id === 'symphony' ? hsdImportRef.current : solarwindsImportRef.current)?.click()}
+                    disabled={sessionBusy !== null}
+                    style={secondaryButtonStyle}
+                  >
+                    <HardDriveDownload size={14} />
+                    Import Session
+                  </button>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {session?.isServerLocal ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleLaunchReauth(workflow.id)}
+                        disabled={sessionBusy !== null}
+                        style={secondaryButtonStyle}
+                      >
+                        <KeyRound size={14} />
+                        {workflow.id === 'symphony' ? 'Stop Collector + Reauth' : 'Launch Reauth on Server'}
+                      </button>
+                    ) : null}
+                    {session?.isServerLocal && workflow.id === 'symphony' ? (
                       <button
                         type="button"
                         onClick={() => void handleLaunchReauth('symphony', 'legacy-profile')}
@@ -1088,12 +1302,12 @@ export default function AdminPage() {
                         Import Legacy HSD Profile
                       </button>
                     ) : null}
-                  </>
-                ) : null}
+                  </div>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </section>
   );
@@ -1103,7 +1317,7 @@ export default function AdminPage() {
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Source Configuration</h2>
-          <div style={panelHintStyle}>Configure Nutanix, SolarWinds 45, SolarWinds 46, and HSD from one compact control lane.</div>
+          <div style={panelHintStyle}>Separated control areas for app access, endpoint configuration, and source-specific metadata.</div>
         </div>
         <button type="button" onClick={() => void handleSave()} disabled={saving || !draft} style={primaryButtonStyle(saving || !draft)}>
           <Save size={16} />
@@ -1112,343 +1326,433 @@ export default function AdminPage() {
       </div>
 
       {!draft ? (
-          <div style={loadingRowStyle}>
-            <RefreshCw size={18} className="animate-spin" />
-            Loading source settings...
-          </div>
-        ) : (
+        <div style={loadingRowStyle}>
+          <RefreshCw size={18} className="animate-spin" />
+          Loading source settings...
+        </div>
+      ) : (
         <div style={{ display: 'grid', gap: '14px' }}>
-          <div style={itemCardStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ display: 'grid', gap: '4px' }}>
-                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Portal Passwords</div>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                  Change admin and operator login passwords from the admin UI. Postgres is primary when configured; runtime and env remain fallback-only.
+          <div style={workflowStatGridStyle}>
+            <div style={workflowStatCardStyle}>
+              <div style={workflowStatCaptionStyle}>Password mode</div>
+              <div style={workflowStatValueStyle}>
+                {authStatus?.mode === 'postgres'
+                  ? 'PG'
+                  : authStatus?.mode === 'runtime'
+                    ? 'RT'
+                    : 'ENV'}
+              </div>
+              <div style={workflowStatDetailStyle}>Admin and operator login source</div>
+            </div>
+            <div style={workflowStatCardStyle}>
+              <div style={workflowStatCaptionStyle}>Targets enabled</div>
+              <div style={workflowStatValueStyle}>{enabledTargets}/4</div>
+              <div style={workflowStatDetailStyle}>Collectors currently active</div>
+            </div>
+            <div style={workflowStatCardStyle}>
+              <div style={workflowStatCaptionStyle}>Save discipline</div>
+              <div style={workflowStatValueStyle}>1</div>
+              <div style={workflowStatDetailStyle}>Edit endpoints here, then verify from Services or Sessions</div>
+            </div>
+          </div>
+
+          <div style={workflowLaneCompactStyle}>
+            <div className="glass-panel" style={sourceAccessPanelStyle}>
+              <div style={panelHeaderStyle}>
+                <div>
+                  <h3 style={panelTitleStyle}>Application Access</h3>
+                  <div style={panelHintStyle}>Admin-only lane for changing the web login passwords. Leave fields blank to keep the current values.</div>
+                </div>
+                <button type="button" onClick={() => void handleSavePortalPasswords()} disabled={authBusy} style={primaryButtonStyle(authBusy)}>
+                  <Save size={16} />
+                  {authBusy ? 'Saving...' : 'Save Passwords'}
+                </button>
+              </div>
+
+              <div style={metaRowStyle}>
+                <span style={metaPillStyle}>
+                  Mode {
+                    authStatus?.mode === 'postgres'
+                      ? 'Postgres primary'
+                      : authStatus?.mode === 'runtime'
+                        ? 'Runtime override'
+                        : 'Environment default'
+                  }
+                </span>
+                <span style={metaPillStyle}>Admin {authStatus?.users.admin.source || 'env'}</span>
+                <span style={metaPillStyle}>Operator {authStatus?.users.operator.source || 'env'}</span>
+                {authStatus?.updatedAt ? <span style={metaPillStyle}>Updated {new Date(authStatus.updatedAt).toLocaleString()}</span> : null}
+                {authStatus?.users.admin.lastLoginAt ? <span style={metaPillStyle}>Admin login {new Date(authStatus.users.admin.lastLoginAt).toLocaleString()}</span> : null}
+                {authStatus?.users.operator.lastLoginAt ? <span style={metaPillStyle}>Operator login {new Date(authStatus.users.operator.lastLoginAt).toLocaleString()}</span> : null}
+              </div>
+
+              <div style={sourceFieldGridStyle}>
+                <label style={fieldBlockStyle}>
+                  Admin password
+                  <input
+                    type="password"
+                    value={passwordDraft.adminPassword}
+                    onChange={(event) => setPasswordDraft((current) => ({ ...current, adminPassword: event.target.value }))}
+                    placeholder="Leave blank to keep unchanged"
+                    style={fieldStyle}
+                  />
+                </label>
+                <label style={fieldBlockStyle}>
+                  Confirm admin password
+                  <input
+                    type="password"
+                    value={passwordDraft.adminConfirm}
+                    onChange={(event) => setPasswordDraft((current) => ({ ...current, adminConfirm: event.target.value }))}
+                    placeholder="Repeat admin password"
+                    style={fieldStyle}
+                  />
+                </label>
+                <label style={fieldBlockStyle}>
+                  Operator password
+                  <input
+                    type="password"
+                    value={passwordDraft.operatorPassword}
+                    onChange={(event) => setPasswordDraft((current) => ({ ...current, operatorPassword: event.target.value }))}
+                    placeholder="Leave blank to keep unchanged"
+                    style={fieldStyle}
+                  />
+                </label>
+                <label style={fieldBlockStyle}>
+                  Confirm operator password
+                  <input
+                    type="password"
+                    value={passwordDraft.operatorConfirm}
+                    onChange={(event) => setPasswordDraft((current) => ({ ...current, operatorConfirm: event.target.value }))}
+                    placeholder="Repeat operator password"
+                    style={fieldStyle}
+                  />
+                </label>
+              </div>
+
+              <div style={guideListStyle}>
+                <div style={guideStepStyle}>
+                  <strong style={{ color: 'var(--text-primary)' }}>Change passwords only when needed</strong>
+                  <span>Leave all fields blank to keep the current admin and operator credentials unchanged.</span>
+                </div>
+                <div style={guideStepStyle}>
+                  <strong style={{ color: 'var(--text-primary)' }}>Separate app access from source credentials</strong>
+                  <span>These passwords control dashboard login only. Nutanix, SolarWinds, and HSD credentials stay in their own source cards.</span>
+                </div>
+                <div style={guideStepStyle}>
+                  <strong style={{ color: 'var(--text-primary)' }}>Verify after saving</strong>
+                  <span>After saving, confirm authentication and collector behavior from the Services and Sessions lanes.</span>
                 </div>
               </div>
-              <button type="button" onClick={() => void handleSavePortalPasswords()} disabled={authBusy} style={primaryButtonStyle(authBusy)}>
-                <Save size={16} />
-                {authBusy ? 'Saving...' : 'Save Passwords'}
-              </button>
             </div>
 
-            <div style={metaRowStyle}>
-              <span style={metaPillStyle}>
-                Mode {
-                  authStatus?.mode === 'postgres'
-                    ? 'Postgres primary'
-                    : authStatus?.mode === 'runtime'
-                      ? 'Runtime override'
-                      : 'Environment default'
-                }
-              </span>
-              <span style={metaPillStyle}>Admin {authStatus?.users.admin.source || 'env'}</span>
-              <span style={metaPillStyle}>Operator {authStatus?.users.operator.source || 'env'}</span>
-              {authStatus?.updatedAt ? <span style={metaPillStyle}>Updated {new Date(authStatus.updatedAt).toLocaleString()}</span> : null}
-              {authStatus?.users.admin.lastLoginAt ? <span style={metaPillStyle}>Admin login {new Date(authStatus.users.admin.lastLoginAt).toLocaleString()}</span> : null}
-              {authStatus?.users.operator.lastLoginAt ? <span style={metaPillStyle}>Operator login {new Date(authStatus.users.operator.lastLoginAt).toLocaleString()}</span> : null}
+            <div style={{ display: 'grid', gap: '12px' }}>
+              <div style={scopeSectionStyle}>
+                <div style={scopeSectionHeaderStyle}>
+                  <div>
+                    <div style={scopeSectionTitleStyle}>Collector endpoints</div>
+                    <div style={scopeSectionHintStyle}>One card per source domain, with endpoint, credentials, polling cadence, and source-specific selectors.</div>
+                  </div>
+                  <span style={metaPillStyle}>Save once after all changes</span>
+                </div>
+
+                <div style={sourceGridStyle}>
+                  {renderTargetCard(
+                    'HSD / Symphony',
+                    draft.collectors.symphony.primary,
+                    (patch) => updateTarget('symphony', patch),
+                    <label style={fieldBlockStyle}>
+                      Exact workgroup
+                      <textarea
+                        value={String(draft.collectors.symphony.primary.metadata.exactWorkgroup || '')}
+                        onChange={(event) => updateTarget('symphony', {
+                          metadata: {
+                            ...draft.collectors.symphony.primary.metadata,
+                            exactWorkgroup: event.target.value
+                          }
+                        })}
+                        rows={2}
+                        style={textAreaStyle}
+                      />
+                    </label>,
+                    {
+                      description: 'Session-dependent service desk source and exact queue/workgroup mapping.'
+                    }
+                  )}
+
+                  {renderTargetCard(
+                    'Nutanix',
+                    draft.collectors.nutanix.primary,
+                    (patch) => updateTarget('nutanix', patch),
+                    undefined,
+                    {
+                      normalizeTargetUrl: normalizeNutanixTargetUrlInput,
+                      targetUrlHint: 'Accepted: host, https://host, or https://host:9440. Saved as canonical Prism URL.',
+                      description: 'Primary HCI truth source when available.'
+                    }
+                  )}
+
+                  {renderTargetCard(
+                    'SolarWinds Servers (45)',
+                    draft.collectors.solarwinds.servers,
+                    (patch) => updateSolarwindsTarget('servers', patch),
+                    <label style={fieldBlockStyle}>
+                      Monitored servers
+                      <textarea
+                        value={(draft.collectors.solarwinds.servers.metadata.monitoredServers || []).join('\n')}
+                        onChange={(event) => updateSolarwindsTarget('servers', {
+                          metadata: {
+                            ...draft.collectors.solarwinds.servers.metadata,
+                            monitoredServers: parseLines(event.target.value)
+                          }
+                        })}
+                        rows={4}
+                        style={textAreaStyle}
+                      />
+                    </label>,
+                    {
+                      description: 'Server portal source for on-prem visibility and fallback data.'
+                    }
+                  )}
+
+                  {renderTargetCard(
+                    'SolarWinds Networks (46)',
+                    draft.collectors.solarwinds.networks,
+                    (patch) => updateSolarwindsTarget('networks', patch),
+                    <label style={fieldBlockStyle}>
+                      Network object IDs
+                      <textarea
+                        value={(draft.collectors.solarwinds.networks.metadata.networkObjectIds || []).join('\n')}
+                        onChange={(event) => updateSolarwindsTarget('networks', {
+                          metadata: {
+                            ...draft.collectors.solarwinds.networks.metadata,
+                            networkObjectIds: parseLines(event.target.value).slice(0, 5)
+                          }
+                        })}
+                        rows={4}
+                        style={textAreaStyle}
+                      />
+                    </label>,
+                    {
+                      description: 'Interface portal source for WAN and SDWAN objects.'
+                    }
+                  )}
+                </div>
+              </div>
             </div>
-
-            <div style={sourceFieldGridStyle}>
-              <label style={fieldBlockStyle}>
-                Admin password
-                <input
-                  type="password"
-                  value={passwordDraft.adminPassword}
-                  onChange={(event) => setPasswordDraft((current) => ({ ...current, adminPassword: event.target.value }))}
-                  placeholder="Leave blank to keep unchanged"
-                  style={fieldStyle}
-                />
-              </label>
-              <label style={fieldBlockStyle}>
-                Confirm admin password
-                <input
-                  type="password"
-                  value={passwordDraft.adminConfirm}
-                  onChange={(event) => setPasswordDraft((current) => ({ ...current, adminConfirm: event.target.value }))}
-                  placeholder="Repeat admin password"
-                  style={fieldStyle}
-                />
-              </label>
-              <label style={fieldBlockStyle}>
-                Operator password
-                <input
-                  type="password"
-                  value={passwordDraft.operatorPassword}
-                  onChange={(event) => setPasswordDraft((current) => ({ ...current, operatorPassword: event.target.value }))}
-                  placeholder="Leave blank to keep unchanged"
-                  style={fieldStyle}
-                />
-              </label>
-              <label style={fieldBlockStyle}>
-                Confirm operator password
-                <input
-                  type="password"
-                  value={passwordDraft.operatorConfirm}
-                  onChange={(event) => setPasswordDraft((current) => ({ ...current, operatorConfirm: event.target.value }))}
-                  placeholder="Repeat operator password"
-                  style={fieldStyle}
-                />
-              </label>
-            </div>
-          </div>
-
-          <div style={sourceGridStyle}>
-            {renderTargetCard(
-              'HSD / Symphony',
-              draft.collectors.symphony.primary,
-              (patch) => updateTarget('symphony', patch),
-              <label style={fieldBlockStyle}>
-                Exact workgroup
-                <textarea
-                  value={String(draft.collectors.symphony.primary.metadata.exactWorkgroup || '')}
-                  onChange={(event) => updateTarget('symphony', {
-                    metadata: {
-                      ...draft.collectors.symphony.primary.metadata,
-                      exactWorkgroup: event.target.value
-                    }
-                  })}
-                  rows={2}
-                  style={textAreaStyle}
-                />
-              </label>
-            )}
-
-            {renderTargetCard(
-              'Nutanix',
-              draft.collectors.nutanix.primary,
-              (patch) => updateTarget('nutanix', patch)
-            )}
-
-            {renderTargetCard(
-              'SolarWinds Servers (45)',
-              draft.collectors.solarwinds.servers,
-              (patch) => updateSolarwindsTarget('servers', patch),
-              <label style={fieldBlockStyle}>
-                Monitored servers
-                <textarea
-                  value={(draft.collectors.solarwinds.servers.metadata.monitoredServers || []).join('\n')}
-                  onChange={(event) => updateSolarwindsTarget('servers', {
-                    metadata: {
-                      ...draft.collectors.solarwinds.servers.metadata,
-                      monitoredServers: parseLines(event.target.value)
-                    }
-                  })}
-                  rows={4}
-                  style={textAreaStyle}
-                />
-              </label>
-            )}
-
-            {renderTargetCard(
-              'SolarWinds Networks (46)',
-              draft.collectors.solarwinds.networks,
-              (patch) => updateSolarwindsTarget('networks', patch),
-              <label style={fieldBlockStyle}>
-                Network object IDs
-                <textarea
-                  value={(draft.collectors.solarwinds.networks.metadata.networkObjectIds || []).join('\n')}
-                  onChange={(event) => updateSolarwindsTarget('networks', {
-                    metadata: {
-                      ...draft.collectors.solarwinds.networks.metadata,
-                      networkObjectIds: parseLines(event.target.value).slice(0, 5)
-                    }
-                  })}
-                  rows={4}
-                  style={textAreaStyle}
-                />
-              </label>
-            )}
           </div>
         </div>
       )}
     </section>
   );
 
-  const renderAuditPanel = () => (
-    <section className="glass-panel" style={contentPanelStyle}>
-      <div style={panelHeaderStyle}>
-        <div>
-          <h2 style={panelTitleStyle}>Audit Trail</h2>
-          <div style={panelHintStyle}>Focused application audit for admin actions, login outcomes, service control, settings changes, and session workflows.</div>
-        </div>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => void loadAudit()} style={secondaryButtonStyle}>
-            <RefreshCw size={14} />
-            Refresh audit
-          </button>
-          <button type="button" onClick={handleExportAuditCsv} style={secondaryButtonStyle}>
-            <HardDriveDownload size={14} />
-            Export CSV
-          </button>
-        </div>
-      </div>
+  const renderAuditPanel = () => {
+    const successCount = auditRows.filter((row) => row.actionResult === 'success').length;
+    const deniedCount = auditRows.filter((row) => row.actionResult === 'denied').length;
+    const failedCount = auditRows.filter((row) => row.actionResult === 'failed').length;
 
-      <div style={itemCardStyle}>
-        <div style={sourceFieldGridStyle}>
-          <label style={fieldBlockStyle}>
-            Action type
-            <input
-              value={auditFilters.actionType}
-              onChange={(event) => setAuditFilters((current) => ({ ...current, actionType: event.target.value }))}
-              placeholder="admin.settings.update"
-              style={fieldStyle}
-            />
-          </label>
-          <label style={fieldBlockStyle}>
-            Result
-            <select
-              value={auditFilters.actionResult}
-              onChange={(event) => setAuditFilters((current) => ({ ...current, actionResult: event.target.value as AuditFilterState['actionResult'] }))}
-              style={fieldStyle}
-            >
-              <option value="all">All</option>
-              <option value="success">Success</option>
-              <option value="failed">Failed</option>
-              <option value="denied">Denied</option>
-            </select>
-          </label>
-          <label style={fieldBlockStyle}>
-            Actor
-            <input
-              value={auditFilters.actorUsername}
-              onChange={(event) => setAuditFilters((current) => ({ ...current, actorUsername: event.target.value }))}
-              placeholder="admin"
-              style={fieldStyle}
-            />
-          </label>
-          <label style={fieldBlockStyle}>
-            Surface
-            <select
-              value={auditFilters.surface}
-              onChange={(event) => setAuditFilters((current) => ({ ...current, surface: event.target.value as AuditFilterState['surface'] }))}
-              style={fieldStyle}
-            >
-              <option value="all">All</option>
-              <option value="admin">Admin</option>
-              <option value="operator">Operator</option>
-            </select>
-          </label>
-          <label style={fieldBlockStyle}>
-            Row limit
-            <select
-              value={String(auditFilters.limit)}
-              onChange={(event) => setAuditFilters((current) => ({ ...current, limit: Number(event.target.value) as AuditFilterState['limit'] }))}
-              style={fieldStyle}
-            >
-              <option value="50">50</option>
-              <option value="100">100</option>
-              <option value="250">250</option>
-            </select>
-          </label>
-        </div>
-
-        <div style={compactActionRowStyle}>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-            {auditLoadedAt ? `Last loaded ${new Date(auditLoadedAt).toLocaleString()}` : 'Audit data not loaded yet in this session.'}
+    return (
+      <section className="glass-panel" style={contentPanelStyle}>
+        <div style={panelHeaderStyle}>
+          <div>
+            <h2 style={panelTitleStyle}>Audit Trail</h2>
+            <div style={panelHintStyle}>Screen view is intentionally compact: timestamp, action, result, and actor only. Use Excel export for the full detailed event payload.</div>
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => {
-                const next = createDefaultAuditFilters();
-                setAuditFilters(next);
-                void loadAudit(next);
-              }}
-              style={secondaryButtonStyle}
-            >
-              <RotateCcw size={14} />
-              Reset filters
+            <button type="button" onClick={() => void loadAudit()} style={secondaryButtonStyle}>
+              <RefreshCw size={14} />
+              Refresh audit
             </button>
-            <button type="button" onClick={() => void loadAudit()} style={primaryButtonStyle(auditLoading)}>
-              <History size={14} />
-              {auditLoading ? 'Loading...' : 'Apply filters'}
+            <button type="button" onClick={handleExportAuditCsv} style={secondaryButtonStyle}>
+              <HardDriveDownload size={14} />
+              Export Excel
             </button>
           </div>
         </div>
-      </div>
 
-      <div style={{ display: 'grid', gap: '10px' }}>
-        {auditLoading ? (
-          <div style={loadingRowStyle}>
-            <RefreshCw size={18} className="animate-spin" />
-            Loading audit records...
+        <div style={workflowStatGridStyle}>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Loaded rows</div>
+            <div style={workflowStatValueStyle}>{auditRows.length}</div>
+            <div style={workflowStatDetailStyle}>{auditLoadedAt ? `Loaded ${new Date(auditLoadedAt).toLocaleString()}` : 'Not loaded in this session'}</div>
           </div>
-        ) : auditRows.length === 0 ? (
-          <div style={{ ...itemCardStyle, color: 'var(--text-secondary)' }}>
-            No audit records matched the current filter.
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Success</div>
+            <div style={workflowStatValueStyle}>{successCount}</div>
+            <div style={workflowStatDetailStyle}>Completed actions</div>
           </div>
-        ) : auditRows.map((row) => {
-          const tone = toneStyles(
-            row.actionResult === 'success'
-              ? 'online'
-              : row.actionResult === 'denied'
-                ? 'warning'
-                : 'error'
-          );
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Denied</div>
+            <div style={workflowStatValueStyle}>{deniedCount}</div>
+            <div style={workflowStatDetailStyle}>Rejected attempts</div>
+          </div>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Failed</div>
+            <div style={workflowStatValueStyle}>{failedCount}</div>
+            <div style={workflowStatDetailStyle}>Errored operations</div>
+          </div>
+        </div>
 
-          return (
-            <div key={row.auditId} style={itemCardStyle}>
-              <div style={compactCardHeaderStyle}>
-                <div style={{ display: 'grid', gap: '4px' }}>
-                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{row.actionType}</div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                    {formatAuditTimestamp(row.occurredAt)}
-                  </div>
-                </div>
-                <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
-                  {row.actionResult.toUpperCase()}
-                </span>
-              </div>
+        <div style={itemCardStyle}>
+          <div style={auditFilterGridStyle}>
+            <label style={fieldBlockStyle}>
+              Action type
+              <input
+                value={auditFilters.actionType}
+                onChange={(event) => setAuditFilters((current) => ({ ...current, actionType: event.target.value }))}
+                placeholder="admin.settings.update"
+                style={fieldStyle}
+              />
+            </label>
+            <label style={fieldBlockStyle}>
+              Result
+              <select
+                value={auditFilters.actionResult}
+                onChange={(event) => setAuditFilters((current) => ({ ...current, actionResult: event.target.value as AuditFilterState['actionResult'] }))}
+                style={fieldStyle}
+              >
+                <option value="all">All</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+                <option value="denied">Denied</option>
+              </select>
+            </label>
+            <label style={fieldBlockStyle}>
+              Actor
+              <input
+                value={auditFilters.actorUsername}
+                onChange={(event) => setAuditFilters((current) => ({ ...current, actorUsername: event.target.value }))}
+                placeholder="admin"
+                style={fieldStyle}
+              />
+            </label>
+            <label style={fieldBlockStyle}>
+              Surface
+              <select
+                value={auditFilters.surface}
+                onChange={(event) => setAuditFilters((current) => ({ ...current, surface: event.target.value as AuditFilterState['surface'] }))}
+                style={fieldStyle}
+              >
+                <option value="all">All</option>
+                <option value="admin">Admin</option>
+                <option value="operator">Operator</option>
+              </select>
+            </label>
+            <label style={fieldBlockStyle}>
+              Row limit
+              <select
+                value={String(auditFilters.limit)}
+                onChange={(event) => setAuditFilters((current) => ({ ...current, limit: Number(event.target.value) as AuditFilterState['limit'] }))}
+                style={fieldStyle}
+              >
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="250">250</option>
+              </select>
+            </label>
+          </div>
 
-              <div style={metaRowStyle}>
-                <span style={metaPillStyle}>{row.surface || 'unknown surface'}</span>
-                <span style={metaPillStyle}>{row.actorUsername || 'unknown actor'}</span>
-                {row.actorRole ? <span style={metaPillStyle}>{row.actorRole}</span> : null}
-                {row.targetType ? <span style={metaPillStyle}>{row.targetType}</span> : null}
-                {row.targetId ? <span style={metaPillStyle}>{row.targetId}</span> : null}
-                {row.sourceIp ? <span style={metaPillStyle}>{row.sourceIp}</span> : null}
-              </div>
-
-              <div style={{ display: 'grid', gap: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                {row.message ? <div><strong style={{ color: 'var(--text-primary)' }}>Message:</strong> {row.message}</div> : null}
-                {row.errorMessage ? <div><strong style={{ color: '#b3261e' }}>Error:</strong> {row.errorMessage}</div> : null}
-              </div>
-
-              {(row.requestSummaryJson || row.resultSummaryJson) ? (
-                <div style={sourceFieldGridStyle}>
-                  {row.requestSummaryJson ? (
-                    <label style={fieldBlockStyle}>
-                      Request Summary
-                      <textarea readOnly value={stringifyAuditJson(row.requestSummaryJson)} rows={4} style={textAreaStyle} />
-                    </label>
-                  ) : null}
-                  {row.resultSummaryJson ? (
-                    <label style={fieldBlockStyle}>
-                      Result Summary
-                      <textarea readOnly value={stringifyAuditJson(row.resultSummaryJson)} rows={4} style={textAreaStyle} />
-                    </label>
-                  ) : null}
-                </div>
-              ) : null}
+          <div style={compactActionRowStyle}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+              Filtered rows stay minimal on screen; export includes source IP, target IDs, request summaries, and error payloads.
             </div>
-          );
-        })}
-      </div>
-    </section>
-  );
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = createDefaultAuditFilters();
+                  setAuditFilters(next);
+                  void loadAudit(next);
+                }}
+                style={secondaryButtonStyle}
+              >
+                <RotateCcw size={14} />
+                Reset filters
+              </button>
+              <button type="button" onClick={() => void loadAudit()} style={primaryButtonStyle(auditLoading)}>
+                <History size={14} />
+                {auditLoading ? 'Loading...' : 'Apply filters'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div style={auditTableCardStyle}>
+          {auditLoading ? (
+            <div style={loadingRowStyle}>
+              <RefreshCw size={18} className="animate-spin" />
+              Loading audit records...
+            </div>
+          ) : auditRows.length === 0 ? (
+            <div style={{ ...itemCardStyle, color: 'var(--text-secondary)' }}>
+              No audit records matched the current filter.
+            </div>
+          ) : (
+            <div style={auditTableWrapStyle}>
+              <table style={auditTableStyle}>
+                <thead>
+                  <tr>
+                    <th style={auditHeadCellStyle}>Timestamp</th>
+                    <th style={auditHeadCellStyle}>Action</th>
+                    <th style={auditHeadCellStyle}>Result</th>
+                    <th style={auditHeadCellStyle}>Who</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditRows.map((row) => {
+                    const tone = toneStyles(
+                      row.actionResult === 'success'
+                        ? 'online'
+                        : row.actionResult === 'denied'
+                          ? 'warning'
+                          : 'error'
+                    );
+
+                    return (
+                      <tr key={row.auditId} style={auditRowStyle}>
+                        <td style={auditCellStyle}>
+                          <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{formatAuditTimestamp(row.occurredAt)}</div>
+                        </td>
+                        <td style={auditCellStyle}>
+                          <div style={{ display: 'grid', gap: '4px' }}>
+                            <strong style={{ color: 'var(--text-primary)' }}>{row.actionType}</strong>
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{row.surface || 'unknown surface'}</span>
+                          </div>
+                        </td>
+                        <td style={auditCellStyle}>
+                          <span style={{ ...statusChipStyle, color: tone.color, background: tone.background, borderColor: tone.border }}>
+                            {row.actionResult.toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={auditCellStyle}>
+                          <div style={{ display: 'grid', gap: '4px' }}>
+                            <strong style={{ color: 'var(--text-primary)' }}>{row.actorUsername || 'unknown actor'}</strong>
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{row.actorRole || 'role unavailable'}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  };
 
   const renderHelpPanel = () => (
     <section className="glass-panel" style={contentPanelStyle}>
       <div style={panelHeaderStyle}>
         <div>
           <h2 style={panelTitleStyle}>Help</h2>
-          <div style={panelHintStyle}>The maintained documentation PDF set is embedded here for admin-side review and deployment support.</div>
+          <div style={panelHintStyle}>Reference lane for maintained PDFs. The user manual screenshots are refreshed from the live application and mirrored into this embedded library.</div>
         </div>
         <button
           type="button"
           onClick={() => window.open(selectedHelpDocument.href, '_blank', 'noopener,noreferrer')}
           style={secondaryButtonStyle}
+          aria-label={`Open ${selectedHelpDocument.title} PDF in a new tab`}
         >
           <HardDriveDownload size={16} />
           Open PDF
@@ -1457,23 +1761,35 @@ export default function AdminPage() {
 
       <div style={helpLayoutStyle}>
         <div style={helpListStyle}>
-          {helpDocuments.map((document) => {
-            const active = document.id === selectedHelpDocument.id;
-            return (
-              <button
-                key={document.id}
-                type="button"
-                onClick={() => setSelectedHelpDocId(document.id)}
-                style={helpDocButtonStyle(active)}
-              >
-                <div style={{ display: 'grid', gap: '4px' }}>
-                  <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{document.title}</div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{document.detail}</div>
-                </div>
-                <span style={helpDocPillStyle(active)}>{active ? 'OPEN' : 'PDF'}</span>
-              </button>
-            );
-          })}
+          <div style={scopeSectionStyle}>
+            <div style={scopeSectionHeaderStyle}>
+              <div>
+                <div style={scopeSectionTitleStyle}>Document set</div>
+                <div style={scopeSectionHintStyle}>Choose a document from the left and review the current PDF directly inside the console.</div>
+              </div>
+              <span style={metaPillStyle}>{helpDocuments.length} files</span>
+            </div>
+
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {helpDocuments.map((document) => {
+                const active = document.id === selectedHelpDocument.id;
+                return (
+                  <button
+                    key={document.id}
+                    type="button"
+                    onClick={() => setSelectedHelpDocId(document.id)}
+                    style={helpDocButtonStyle(active)}
+                  >
+                    <div style={{ display: 'grid', gap: '4px', textAlign: 'left' }}>
+                      <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{document.title}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{document.detail}</div>
+                    </div>
+                    <span style={helpDocPillStyle(active)}>{active ? 'OPEN' : 'PDF'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         <div style={helpViewerShellStyle}>
@@ -1482,11 +1798,11 @@ export default function AdminPage() {
               <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{selectedHelpDocument.title}</div>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{selectedHelpDocument.detail}</div>
             </div>
-            <span style={metaPillStyle}>Embedded PDF viewer</span>
+            <span style={metaPillStyle}>Embedded PDF</span>
           </div>
           <iframe
             key={selectedHelpDocument.href}
-            title={selectedHelpDocument.title}
+            title={`${selectedHelpDocument.title} PDF viewer`}
             src={selectedHelpDocument.href}
             style={helpViewerFrameStyle}
           />
@@ -1496,15 +1812,13 @@ export default function AdminPage() {
   );
 
   return (
-    <main
-      style={pageShellStyle}
-    >
+    <main style={pageShellStyle}>
       <div style={pageFrameStyle}>
         <header className="glass-panel" style={headerShellStyle}>
-          <div style={{ display: 'grid', gap: '2px' }}>
-            <div style={{ fontSize: '0.78rem', letterSpacing: '0.16em', fontWeight: 800, color: '#1565c0' }}>ADMIN SURFACE</div>
+          <div style={{ display: 'grid', gap: '4px' }}>
+            <div style={{ fontSize: '0.78rem', letterSpacing: '0.16em', fontWeight: 800, color: '#1565c0' }}>ADMIN CONSOLE</div>
             <h1 style={{ margin: 0, fontSize: '1.45rem', color: 'var(--text-primary)' }}>Utkal IT Dashboard Control</h1>
-            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>Services, credentials, and session recovery on the same web stack.</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>Structured lanes for runtime control, portal access recovery, source setup, audit review, and document access.</div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -1537,7 +1851,7 @@ export default function AdminPage() {
           <button type="button" className="glass-panel" onClick={() => setActiveTab('services')} style={summaryCardButtonStyle(activeTab === 'services')}>
             <ServerCog size={18} style={{ color: '#1565c0' }} />
             <div style={{ display: 'grid', gap: '2px' }}>
-              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#1565c0' }}>SERVICES ONLINE</div>
+              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#1565c0' }}>STACK HEALTH</div>
               <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{servicesAttention} need action</div>
             </div>
             <div style={summaryValueStyle}>{servicesOnline}/{services.length}</div>
@@ -1545,18 +1859,26 @@ export default function AdminPage() {
           <button type="button" className="glass-panel" onClick={() => setActiveTab('sessions')} style={summaryCardButtonStyle(activeTab === 'sessions')}>
             <KeyRound size={18} style={{ color: '#2e7d32' }} />
             <div style={{ display: 'grid', gap: '2px' }}>
-              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#2e7d32' }}>VALID SESSIONS</div>
-              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{sessionsAttention} need renewal</div>
+              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#2e7d32' }}>PORTAL ACCESS</div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>{sessionsAttention} workflows need renewal</div>
             </div>
-            <div style={summaryValueStyle}>{sessionsAvailable}/{sessions.length}</div>
+            <div style={summaryValueStyle}>{authenticatedSessionTargets}/{sessionTargetCount || 1}</div>
           </button>
           <button type="button" className="glass-panel" onClick={() => setActiveTab('sources')} style={summaryCardButtonStyle(activeTab === 'sources')}>
             <Settings2 size={18} style={{ color: '#ef6c00' }} />
             <div style={{ display: 'grid', gap: '2px' }}>
-              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#ef6c00' }}>SOURCE TARGETS</div>
-              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Saved collector endpoints</div>
+              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#ef6c00' }}>SOURCE SETUP</div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Saved collector endpoints and passwords</div>
             </div>
             <div style={summaryValueStyle}>{enabledTargets}/4</div>
+          </button>
+          <button type="button" className="glass-panel" onClick={() => setActiveTab('help')} style={summaryCardButtonStyle(activeTab === 'help')}>
+            <BookOpenText size={18} style={{ color: '#6d4c41' }} />
+            <div style={{ display: 'grid', gap: '2px' }}>
+              <div style={{ fontSize: '0.76rem', letterSpacing: '0.08em', fontWeight: 800, color: '#6d4c41' }}>REFERENCE LIBRARY</div>
+              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)' }}>Embedded documentation set</div>
+            </div>
+            <div style={summaryValueStyle}>{helpDocuments.length}</div>
           </button>
         </section>
 
@@ -1600,13 +1922,21 @@ export default function AdminPage() {
     title: string,
     target: CollectorTargetSettings,
     onChange: (patch: Partial<CollectorTargetSettings>) => void,
-    extra?: React.ReactNode
+    extra?: React.ReactNode,
+    options?: {
+      normalizeTargetUrl?: (value: string) => string;
+      targetUrlHint?: string;
+      description?: string;
+    }
   ) {
     return (
       <div style={itemCardStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ display: 'grid', gap: '4px' }}>
             <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>{title}</div>
+            {options?.description ? (
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{options.description}</div>
+            ) : null}
             <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
               Config: {target.configOrigin} | Secret: {target.secretOrigin}
             </div>
@@ -1626,7 +1956,25 @@ export default function AdminPage() {
         <div style={sourceFieldGridStyle}>
           <label style={fieldBlockStyle}>
             Target URL
-            <input value={target.targetUrl} onChange={(event) => onChange({ targetUrl: event.target.value })} style={fieldStyle} />
+            <input
+              value={target.targetUrl}
+              onChange={(event) => onChange({ targetUrl: event.target.value })}
+              onBlur={(event) => {
+                if (!options?.normalizeTargetUrl) {
+                  return;
+                }
+
+                const normalized = options.normalizeTargetUrl(event.target.value);
+                if (normalized && normalized !== target.targetUrl) {
+                  onChange({
+                    targetUrl: normalized,
+                    host: parseUrlHostname(normalized)
+                  });
+                }
+              }}
+              style={fieldStyle}
+            />
+            {options?.targetUrlHint ? <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{options.targetUrlHint}</span> : null}
           </label>
           <label style={fieldBlockStyle}>
             Username
@@ -1906,6 +2254,217 @@ const panelTitleStyle: React.CSSProperties = {
 const panelHintStyle: React.CSSProperties = {
   fontSize: '0.78rem',
   color: 'var(--text-secondary)'
+};
+
+const workflowLaneGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  gridTemplateColumns: 'minmax(0, 1.35fr) minmax(320px, 0.95fr)'
+};
+
+const workflowLaneCompactStyle: React.CSSProperties = {
+  ...workflowLaneGridStyle,
+  alignItems: 'start'
+};
+
+const heroPanelStyle: React.CSSProperties = {
+  ...panelStyle,
+  padding: '16px'
+};
+
+const sourceAccessPanelStyle: React.CSSProperties = {
+  ...panelStyle,
+  alignSelf: 'start'
+};
+
+const workflowStatGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))'
+};
+
+const workflowStatCardStyle: React.CSSProperties = {
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.62)',
+  padding: '12px',
+  display: 'grid',
+  gap: '4px',
+  alignContent: 'start'
+};
+
+const workflowStatCaptionStyle: React.CSSProperties = {
+  fontSize: '0.72rem',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  fontWeight: 800,
+  color: '#1565c0'
+};
+
+const workflowStatValueStyle: React.CSSProperties = {
+  fontSize: '1.9rem',
+  lineHeight: 1,
+  fontWeight: 800,
+  color: 'var(--text-primary)'
+};
+
+const workflowStatDetailStyle: React.CSSProperties = {
+  fontSize: '0.78rem',
+  color: 'var(--text-secondary)'
+};
+
+const workflowActionBarStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '8px',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'space-between'
+};
+
+const workflowScopeGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '8px'
+};
+
+const workflowScopeButtonStyle = (active: boolean): React.CSSProperties => ({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '12px',
+  padding: '12px 14px',
+  borderRadius: '14px',
+  border: active ? '1px solid rgba(21,101,192,0.24)' : '1px solid rgba(141,110,99,0.14)',
+  background: active ? 'rgba(21,101,192,0.08)' : 'rgba(255,255,255,0.60)',
+  color: 'var(--text-primary)',
+  textAlign: 'left',
+  cursor: 'pointer'
+});
+
+const scopeSectionStyle: React.CSSProperties = {
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.14)',
+  background: 'rgba(255,255,255,0.58)',
+  padding: '12px',
+  display: 'grid',
+  gap: '12px'
+};
+
+const scopeSectionHeaderStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '10px',
+  flexWrap: 'wrap'
+};
+
+const scopeSectionTitleStyle: React.CSSProperties = {
+  fontWeight: 800,
+  color: 'var(--text-primary)'
+};
+
+const scopeSectionHintStyle: React.CSSProperties = {
+  fontSize: '0.78rem',
+  color: 'var(--text-secondary)'
+};
+
+const serviceRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '12px',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  borderRadius: '14px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.74)',
+  padding: '12px'
+};
+
+const serviceRowMainStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '8px',
+  minWidth: 0
+};
+
+const serviceActionRailStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: '8px',
+  flexWrap: 'wrap',
+  alignItems: 'flex-start',
+  justifyContent: 'flex-end'
+};
+
+const guideListStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px'
+};
+
+const guideStepStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '4px',
+  borderRadius: '12px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.62)',
+  padding: '10px 12px',
+  color: 'var(--text-secondary)',
+  fontSize: '0.82rem'
+};
+
+const sessionTargetRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '8px',
+  borderRadius: '12px',
+  border: '1px solid rgba(141,110,99,0.12)',
+  background: 'rgba(255,255,255,0.58)',
+  padding: '10px 12px'
+};
+
+const auditFilterGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: '10px',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))'
+};
+
+const auditTableCardStyle: React.CSSProperties = {
+  borderRadius: '16px',
+  border: '1px solid rgba(141,110,99,0.16)',
+  background: 'rgba(255,255,255,0.68)',
+  padding: '0',
+  minHeight: 0,
+  overflow: 'hidden'
+};
+
+const auditTableWrapStyle: React.CSSProperties = {
+  overflow: 'auto',
+  maxHeight: '100%'
+};
+
+const auditTableStyle: React.CSSProperties = {
+  width: '100%',
+  borderCollapse: 'separate',
+  borderSpacing: 0,
+  minWidth: '720px'
+};
+
+const auditHeadCellStyle: React.CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 1,
+  textAlign: 'left',
+  padding: '12px 14px',
+  background: '#f6efe5',
+  borderBottom: '1px solid rgba(141,110,99,0.18)',
+  fontSize: '0.76rem',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: '#6d4c41'
+};
+
+const auditRowStyle: React.CSSProperties = {
+  background: 'rgba(255,255,255,0.74)'
+};
+
+const auditCellStyle: React.CSSProperties = {
+  padding: '12px 14px',
+  borderBottom: '1px solid rgba(141,110,99,0.12)',
+  verticalAlign: 'top'
 };
 
 const cardGridStyle: React.CSSProperties = {

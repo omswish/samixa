@@ -41,7 +41,12 @@ import {
   saveLegacyLocalAppPasswords,
   verifyLocalAppPassword
 } from './localAppAuth';
-import { ensureCollectorTargetConfigBootstrap, loadRuntimeCollectorConfig, RuntimeConfigSourceName } from './runtimeConfig';
+import {
+  ensureCollectorTargetConfigBootstrap,
+  loadRuntimeCollectorConfig,
+  normalizeNutanixTargetConfig,
+  RuntimeConfigSourceName
+} from './runtimeConfig';
 import { ensureCollectorSecretConfigBootstrap, loadRuntimeCollectorSecrets } from './runtimeSecrets';
 import { encryptSecret } from './secretCrypto';
 import { replaceLocalCollectorSecretConfig, upsertLocalCollectorTargetConfig } from './localCollectorStore';
@@ -323,9 +328,9 @@ function requireLoopback(req: express.Request, res: express.Response): boolean {
   return false;
 }
 
-function parseTargetUrlHost(targetUrl: string): string | null {
+function parseTargetUrlHostname(targetUrl: string): string | null {
   try {
-    return new URL(targetUrl).host;
+    return new URL(targetUrl).hostname;
   } catch {
     return null;
   }
@@ -390,6 +395,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 interface AdminCollectorTargetInput {
   configKey?: unknown;
   targetUrl?: unknown;
+  host?: unknown;
   enabled?: unknown;
   owner?: unknown;
   notes?: unknown;
@@ -819,19 +825,28 @@ app.put('/api/admin/settings', async (req, res) => {
         throw new Error(`Target URL is required for ${write.sourceName}:${write.targetName}.`);
       }
 
+      const normalizedMetadata = sanitizeMetadata(write.target.metadata);
+      const normalizedTarget = write.sourceName === 'nutanix'
+        ? normalizeNutanixTargetConfig({
+          targetUrl,
+          host: typeof write.target.host === 'string' ? write.target.host : null,
+          metadata: normalizedMetadata
+        })
+        : null;
+
       const targetSeed = {
         configKey,
         sourceName: write.sourceName,
         targetName: write.targetName,
-        targetUrl,
-        host: parseTargetUrlHost(targetUrl),
+        targetUrl: normalizedTarget?.targetUrl ?? targetUrl,
+        host: normalizedTarget?.host ?? parseTargetUrlHostname(targetUrl),
         enabled: write.target.enabled !== false,
         owner: typeof write.target.owner === 'string' ? write.target.owner.trim() || null : null,
         notes: typeof write.target.notes === 'string' ? write.target.notes.trim() || null : null,
         pollIntervalSeconds: Number.isFinite(Number(write.target.pollIntervalSeconds))
           ? Number(write.target.pollIntervalSeconds)
           : null,
-        metadataJson: sanitizeMetadata(write.target.metadata)
+        metadataJson: normalizedTarget?.metadata ?? normalizedMetadata
       };
 
       if (saveToPostgres) {
@@ -841,54 +856,64 @@ app.put('/api/admin/settings', async (req, res) => {
       }
 
       const existingSecretTarget = existingSecrets[write.sourceName].targets[write.targetName];
-      const nextUsername = typeof write.target.username === 'string'
+      const providedUsername = typeof write.target.username === 'string'
         ? write.target.username.trim()
-        : existingSecretTarget?.username ?? null;
-      const nextPassword = typeof write.target.password === 'string'
+        : undefined;
+      const existingUsername = existingSecretTarget?.username ?? null;
+      const usernameChanged = providedUsername !== undefined && providedUsername !== existingUsername;
+
+      const providedPassword = typeof write.target.password === 'string' && write.target.password.length > 0
         ? write.target.password
         : undefined;
       const clearPassword = Boolean(write.target.clearPassword);
+      const passwordChanged = clearPassword || providedPassword !== undefined;
+      const shouldWriteSecrets = usernameChanged || passwordChanged;
 
-      const secretSeeds: Array<{
-        configKey: string;
-        sourceName: 'nutanix' | 'solarwinds' | 'symphony';
-        targetName: string;
-        secretName: 'username' | 'password';
-        keyVersion: string;
-        secretCipherJson: ReturnType<typeof encryptSecret>;
-      }> = [];
-      if (nextUsername) {
-        secretSeeds.push({
-          configKey,
-          sourceName: write.sourceName,
-          targetName: write.targetName,
-          secretName: 'username',
-          keyVersion: 'v1',
-          secretCipherJson: encryptSecret(nextUsername)
-        });
-      }
+      if (shouldWriteSecrets) {
+        const nextUsername = usernameChanged
+          ? providedUsername || null
+          : existingUsername;
+        const secretSeeds: Array<{
+          configKey: string;
+          sourceName: 'nutanix' | 'solarwinds' | 'symphony';
+          targetName: string;
+          secretName: 'username' | 'password';
+          keyVersion: string;
+          secretCipherJson: ReturnType<typeof encryptSecret>;
+        }> = [];
+        if (nextUsername) {
+          secretSeeds.push({
+            configKey,
+            sourceName: write.sourceName,
+            targetName: write.targetName,
+            secretName: 'username',
+            keyVersion: 'v1',
+            secretCipherJson: encryptSecret(nextUsername)
+          });
+        }
 
-      const passwordValue = clearPassword
-        ? null
-        : nextPassword !== undefined
-          ? nextPassword
-          : existingSecretTarget?.password ?? null;
+        const passwordValue = clearPassword
+          ? null
+          : providedPassword !== undefined
+            ? providedPassword
+            : existingSecretTarget?.password ?? null;
 
-      if (passwordValue) {
-        secretSeeds.push({
-          configKey,
-          sourceName: write.sourceName,
-          targetName: write.targetName,
-          secretName: 'password',
-          keyVersion: 'v1',
-          secretCipherJson: encryptSecret(passwordValue)
-        });
-      }
+        if (passwordValue) {
+          secretSeeds.push({
+            configKey,
+            sourceName: write.sourceName,
+            targetName: write.targetName,
+            secretName: 'password',
+            keyVersion: 'v1',
+            secretCipherJson: encryptSecret(passwordValue)
+          });
+        }
 
-      if (saveToPostgres) {
-        await replaceCollectorSecretConfigInPostgres(write.sourceName, write.targetName, configKey, secretSeeds);
-      } else {
-        replaceLocalCollectorSecretConfig(write.sourceName, write.targetName, configKey, secretSeeds);
+        if (saveToPostgres) {
+          await replaceCollectorSecretConfigInPostgres(write.sourceName, write.targetName, configKey, secretSeeds);
+        } else {
+          replaceLocalCollectorSecretConfig(write.sourceName, write.targetName, configKey, secretSeeds);
+        }
       }
     }
     res.json(await buildAdminSettingsPayload());
