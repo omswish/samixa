@@ -135,6 +135,7 @@ This writes PDFs to:
 
 ## 11. Deployment-Related Developer Notes
 - deployment is SQLite-first
+- PostgreSQL is not part of the supported installer path for the current release baseline
 - PM2 is the current supervision model
 - offline bundle generation remains important for Windows server deployment
 - documentation changes that affect operations should also be reflected in the admin Help PDF set

@@ -9,7 +9,7 @@ Operational wallboard for Utkal Alumina IT operations. The application aggregate
 | Primary Audience | IT Operations and Tech-Unit IT |
 | Primary Resolution Target | 1920x1200 wallboard |
 | Current Documentation Set | [docs/README.md](docs/README.md) |
-| Last Updated | 2026-07-19 |
+| Last Updated | 2026-07-24 |
 
 ## Runtime Surfaces
 - Operator wallboard: `http://<host>:21060/login`
@@ -38,6 +38,11 @@ The primary reference documents are:
 - [System Design](docs/system-design.md)
 - [User Manual](docs/user-manual.md)
 - [Developer Handbook](docs/developer-handbook.md)
+
+Current deployment baseline:
+- SQLite-first runtime storage
+- Windows installer does not prompt for or bundle PostgreSQL
+- PostgreSQL remains repository-level future work only and is not part of the supported `1.2` installation path
 
 ## Basic Operations
 Build the workspaces:

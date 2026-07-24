@@ -7,7 +7,7 @@
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-19 |
+| Last Updated | 2026-07-24 |
 | Source | Repository git history on `main` |
 
 ## 1. Purpose
@@ -19,6 +19,7 @@ The project currently consists of:
 - a separate admin surface on the same web application stack
 - live collectors for Nutanix, SolarWinds, and Symphony HSD
 - a SQLite-first runtime and deployment model
+- no supported PostgreSQL installer flow in the active release baseline
 - Windows deployment packaging with offline bundle support
 - separate bootstrap credentials for SolarWinds 45, SolarWinds 46, and HSD
 - documentation PDFs exposed directly in the admin console
@@ -135,7 +136,7 @@ Result:
 - one shared web app with separate operator and admin surfaces
 - no synthetic values in normal runtime
 - SQLite-first delivery for reduced installation friction
-- optional PostgreSQL retained as a future maturity path rather than a prerequisite
+- PostgreSQL-related work retained only as future repository-level maturity work rather than a supported deployment prerequisite
 
 ## 7. Current Risks And Watch Areas
 - HSD and SolarWinds remain dependent on browser session lifetime

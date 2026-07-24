@@ -6,7 +6,7 @@
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-23 |
+| Last Updated | 2026-07-24 |
 
 ## Canonical Documents
 - [Product Requirements Document](product-requirements-document.md)
@@ -39,4 +39,5 @@ node docs/tools/export-markdown-pdfs.mjs
 - Secondary desktop target: `1920x1080`
 - Responsive fallback for tablet and mobile browsers
 - Shared web application with separate operator and admin surfaces
-- SQLite-first runtime model with optional PostgreSQL extension
+- SQLite-first runtime and deployment model
+- no supported PostgreSQL installer path in the current release baseline

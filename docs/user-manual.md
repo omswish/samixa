@@ -7,7 +7,7 @@
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-23 |
+| Last Updated | 2026-07-24 |
 | Audience | Operators, admins, support users |
 
 ## 1. Purpose
@@ -134,8 +134,8 @@ Use `Services` to:
 - confirm health summaries and recent sync posture
 
 Operational note:
-- the deployed stack is intended to restore when the configured runtime user signs in on the host
-- service controls and server-local reauthentication should be performed from that same host user context
+- the deployed stack is intended to restore automatically on Windows startup
+- service controls can be issued from the admin surface, but server-local reauthentication still requires an active interactive Windows session on the host
 
 Use this tab first when:
 - a card is stale

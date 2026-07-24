@@ -7,7 +7,7 @@
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-19 |
+| Last Updated | 2026-07-24 |
 | Audience | Architects, developers, infrastructure, reviewers |
 
 ## 1. Purpose
@@ -149,7 +149,8 @@ The UI uses this data to derive link state and staleness messaging. The dashboar
 - installer and bootstrap paths maintain separate credentials for Nutanix, SolarWinds 45, SolarWinds 46, and HSD
 
 ### 8.3 Optional Extensions
-- PostgreSQL remains optional and is not required for the current production baseline
+- PostgreSQL-related source code remains in the repository for future maturity work
+- PostgreSQL is not part of the supported installer or deployment baseline for the current release
 
 ## 9. Authentication And Surface Separation
 
