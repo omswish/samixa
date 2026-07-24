@@ -240,7 +240,6 @@ function getPm2Environment(nodeCandidate: string) {
     ...process.env,
     ITDASH_RUNTIME_ROOT: DEFAULT_RUNTIME_ROOT,
     PM2_HOME: path.join(DEFAULT_RUNTIME_ROOT, 'pm2'),
-    PM2_PIPE_NAMESPACE: 'uail-itdash',
     PATH: pathEntries.filter(Boolean).join(';')
   };
 }
@@ -991,6 +990,60 @@ function escapePowerShellSingleQuoted(value: string) {
   return value.replaceAll("'", "''");
 }
 
+async function getInteractiveWindowsUser() {
+  const { stdout } = await execFileAsync('powershell.exe', [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    "$user = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName; if ($user) { Write-Output $user }"
+  ], {
+    windowsHide: true,
+    maxBuffer: 1024 * 1024
+  });
+
+  const trimmed = stdout.trim();
+  return trimmed || null;
+}
+
+async function launchInteractivePowerShellTask(helperScriptPath: string) {
+  const activeUser = await getInteractiveWindowsUser();
+  if (!activeUser) {
+    throw new Error('No interactive Windows session is available on the server. Sign in locally or through RDP, then retry reauthentication.');
+  }
+
+  const taskName = 'UAIL IT Dashboard Interactive Helper';
+  const escapedTaskName = escapePowerShellSingleQuoted(taskName);
+  const escapedActiveUser = escapePowerShellSingleQuoted(activeUser);
+  const escapedHelperScriptPath = escapePowerShellSingleQuoted(helperScriptPath);
+  const powershellArgs = `-NoExit -ExecutionPolicy Bypass -File ""${helperScriptPath}""`;
+  const escapedPowerShellArgs = escapePowerShellSingleQuoted(powershellArgs);
+
+  await execFileAsync('powershell.exe', [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    [
+      `$taskName = '${escapedTaskName}'`,
+      `$activeUser = '${escapedActiveUser}'`,
+      `$helperScriptPath = '${escapedHelperScriptPath}'`,
+      `$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '${escapedPowerShellArgs}'`,
+      `$trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(5))`,
+      `$principal = New-ScheduledTaskPrincipal -UserId $activeUser -LogonType Interactive -RunLevel Highest`,
+      `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable`,
+      `Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null`,
+      `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null`,
+      `Start-ScheduledTask -TaskName $taskName -ErrorAction Stop | Out-Null`
+    ].join('; ')
+  ], {
+    windowsHide: true,
+    maxBuffer: 1024 * 1024
+  });
+
+  return activeUser;
+}
+
 function resolveCollectorLoginScript(workflowId: SessionWorkflowDefinition['id']) {
   const projectRoot = getAppRoot();
   if (workflowId === 'symphony') {
@@ -1097,31 +1150,40 @@ export async function launchSessionHelper(
 
   await fsp.writeFile(helperScriptPath, `${scriptLines.join('\r\n')}\r\n`, 'utf8');
 
-  const child = spawn('cmd.exe', [
-    '/c',
-    'start',
-    '""',
-    'powershell.exe',
-    '-NoExit',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-File',
-    helperScriptPath
-  ], {
-    cwd: projectRoot,
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true
-  });
-  child.unref();
+  let launchNote = '';
+  try {
+    const activeUser = await launchInteractivePowerShellTask(helperScriptPath);
+    launchNote = ` Launched the helper in the interactive Windows session for ${activeUser}.`;
+  } catch (interactiveLaunchError: any) {
+    const child = spawn('cmd.exe', [
+      '/c',
+      'start',
+      '""',
+      'powershell.exe',
+      '-NoExit',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      helperScriptPath
+    ], {
+      cwd: projectRoot,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.unref();
+    launchNote = interactiveLaunchError?.message
+      ? ` Direct helper launch fallback was used because the interactive task launcher could not be prepared: ${interactiveLaunchError.message}`
+      : ' Direct helper launch fallback was used.';
+  }
 
   return {
     ok: true,
     message: workflowId === 'symphony'
       ? `${preLaunchMessage} ${mode === 'legacy-profile'
-        ? 'Launched HSD legacy-profile import helper. Complete the import on the server, then restart HSD Collector from Services.'
-        : 'Launched HSD interactive reauthentication helper. Complete the HSD login on the server, then restart HSD Collector from Services.'}`
-      : 'Launched SolarWinds interactive reauthentication helper.'
+        ? `Launched HSD legacy-profile import helper. Complete the import on the server, then restart HSD Collector from Services.${launchNote}`
+        : `Launched HSD interactive reauthentication helper. Complete the HSD login on the server, then restart HSD Collector from Services.${launchNote}`}`
+      : `Launched SolarWinds interactive reauthentication helper.${launchNote}`
   };
 }
 

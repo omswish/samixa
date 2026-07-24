@@ -1,6 +1,6 @@
 {
   "name": "solarwinds-collector",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "SolarWinds Orion headless portal scraper",
   "main": "dist/index.js",
   "scripts": {

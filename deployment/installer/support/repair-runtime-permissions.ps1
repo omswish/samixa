@@ -47,11 +47,19 @@ $appRoot = Join-Path $InstallRoot 'app'
 
 $pathsToPrepare = @(
   (Join-Path $RuntimeRoot 'pm2'),
+  (Join-Path $RuntimeRoot 'pm2\logs'),
+  (Join-Path $RuntimeRoot 'pm2\modules'),
+  (Join-Path $RuntimeRoot 'pm2\pids'),
   (Join-Path $RuntimeRoot 'logs'),
   (Join-Path $RuntimeRoot 'sessions'),
   (Join-Path $RuntimeRoot 'config'),
   (Join-Path $RuntimeRoot 'admin\reauth'),
   (Join-Path $appRoot 'data')
+)
+
+$interactiveWritePaths = @(
+  (Join-Path $RuntimeRoot 'sessions'),
+  (Join-Path $RuntimeRoot 'admin\reauth')
 )
 
 foreach ($path in $pathsToPrepare) {
@@ -62,6 +70,10 @@ foreach ($path in $pathsToPrepare) {
   Grant-RecursiveAccess -Path $path -Identity 'SYSTEM' -Rights 'F'
   Grant-RecursiveAccess -Path $path -Identity 'Administrators' -Rights 'F'
   Grant-RecursiveAccess -Path $path -Identity $resolvedRuntimeUser -Rights 'M'
+}
+
+foreach ($path in $interactiveWritePaths) {
+  Grant-RecursiveAccess -Path $path -Identity '*S-1-5-11' -Rights 'M'
 }
 
 Write-Output "Repaired runtime permissions for $resolvedRuntimeUser"

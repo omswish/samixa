@@ -1,6 +1,6 @@
 {
   "name": "frontdoor-proxy",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Minimal user-facing HTTP front door for the dashboard stack",
   "main": "dist/index.js",
   "scripts": {

@@ -32,10 +32,10 @@ Primary deployment model:
 Operational note:
 - the default deployment model is SQLite-first under `C:\ProgramData\UAIL\ITDashboard`
 - installer and offline bundle packages do not ship PostgreSQL anymore; the deployed stack runs without a bundled database server
-- PM2 bootstrap plus `pm2 save` and a runtime-user logon task for `pm2 resurrect` provide the deployed auto-heal path
+- PM2 bootstrap plus `pm2 save` and a Windows startup task running as `SYSTEM` provide the deployed auto-heal path after server restarts
 - the install and repair scripts now normalize runtime write permissions for PM2 state, session files, config, logs, and app data before bootstrapping
 - the admin surface now validates saved HSD and SolarWinds browser sessions against the live portals
-- HSD reauthentication is a server-local action that stops `symphony-collector`, opens an interactive Edge/PowerShell helper on the Windows host, and then expects the admin to restart the collector after login
+- HSD reauthentication is a server-local action that stops `symphony-collector`, then launches an interactive helper in the signed-in Windows session so the login flow stays visible even when the dashboard stack is running from startup recovery
 - HSD also exposes an explicit legacy-profile import helper for recovery cases where an older authenticated Edge profile must be migrated into storage-state JSON
 
 Repair note:
