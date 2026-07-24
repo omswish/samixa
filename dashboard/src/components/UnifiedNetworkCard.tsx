@@ -103,13 +103,13 @@ function formatHealthErrorSummary(message: string | null) {
 function getHealthBadgeStyle(status: SectionHealth['status']) {
   switch (status) {
     case 'ok':
-      return { background: '#e8f5e9', color: '#2e7d32' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(69,147,95,0.15))', color: '#2d6443', border: '1px solid rgba(69,147,95,0.30)' };
     case 'stale':
-      return { background: '#fff3e0', color: '#ef6c00' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(208,149,56,0.15))', color: '#8d5c15', border: '1px solid rgba(208,149,56,0.30)' };
     case 'error':
-      return { background: '#ffebee', color: '#c62828' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(141,31,63,0.17))', color: '#671730', border: '1px solid rgba(141,31,63,0.32)' };
     default:
-      return { background: '#eceff1', color: '#546e7a' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(114,130,143,0.14))', color: '#4f5d68', border: '1px solid rgba(114,130,143,0.25)' };
   }
 }
 
@@ -117,24 +117,24 @@ function getTonePalette(tone: VisualTone) {
   switch (tone) {
     case 'normal':
       return {
-        bg: 'rgba(46,125,50,0.10)',
-        border: 'rgba(46,125,50,0.22)',
-        text: '#1b5e20',
-        fill: '#2e7d32'
+        bg: 'rgba(69,147,95,0.15)',
+        border: 'rgba(69,147,95,0.30)',
+        text: '#2d6443',
+        fill: '#45935f'
       };
     case 'warning':
       return {
-        bg: 'rgba(245,127,23,0.10)',
-        border: 'rgba(245,127,23,0.22)',
-        text: '#b45309',
-        fill: '#f57f17'
+        bg: 'rgba(208,149,56,0.15)',
+        border: 'rgba(208,149,56,0.30)',
+        text: '#8d5c15',
+        fill: '#d09538'
       };
     default:
       return {
-        bg: 'rgba(198,40,40,0.10)',
-        border: 'rgba(198,40,40,0.22)',
-        text: '#b71c1c',
-        fill: '#c62828'
+        bg: 'rgba(141,31,63,0.17)',
+        border: 'rgba(141,31,63,0.32)',
+        text: '#671730',
+        fill: '#8d1f3f'
       };
   }
 }
@@ -398,19 +398,19 @@ function CombinedUtilizationSparklineRow({
             </span>
           ) : null}
           <span
-            style={{
-              padding: '2px 6px',
-              borderRadius: '999px',
-              background: 'rgba(198,40,40,0.10)',
-              border: '1px solid rgba(198,40,40,0.18)',
-              fontSize: '0.48rem',
-              fontWeight: 800,
-              letterSpacing: '0.08em',
-              color: '#b71c1c'
-            }}
-          >
-            ALERT 80
-          </span>
+              style={{
+                padding: '2px 6px',
+                borderRadius: '999px',
+                background: 'rgba(198,40,40,0.10)',
+                border: '1px solid rgba(198,40,40,0.18)',
+                fontSize: '0.48rem',
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                color: '#b71c1c'
+              }}
+            >
+              ALERT 80
+            </span>
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '4px', fontSize: '0.66rem', fontWeight: 800 }}>
           <span style={{ color: TX_ACCENT }}>{`TX ${formatPercent(txRealtimeValue, 1)}`}</span>
@@ -419,20 +419,20 @@ function CombinedUtilizationSparklineRow({
         </span>
       </div>
       <div
+        className="glass-chart-surface"
         style={{
           width: '100%',
           height: 'var(--wall-network-spark-height)',
           padding: '2px 0',
           borderRadius: '10px',
-          background: 'rgba(255,255,255,0.72)',
           border: '1px solid rgba(141,110,99,0.08)'
         }}
       >
         <UptimeChart
           history={txTrend}
-          color="#1697f6"
+          color={TX_ACCENT}
           secondaryHistory={rxTrend}
-          secondaryColor="#ff0aa6"
+          secondaryColor={RX_ACCENT}
           threshold={80}
           fixedDomain={[0, adaptiveScale.upper]}
           yTicks={adaptiveScale.ticks}
@@ -467,6 +467,7 @@ function HeaderMetricStack({
 
   return (
     <div
+      className="glass-compact-surface"
       style={{
         display: 'grid',
         gap: detail ? '2px' : '1px',
@@ -474,7 +475,6 @@ function HeaderMetricStack({
         minHeight: detail ? 'var(--wall-network-header-metric-min-height)' : 'var(--wall-network-header-metric-min-height-compact)',
         padding: 'var(--wall-network-header-metric-padding)',
         borderRadius: '12px',
-        background: 'rgba(255,255,255,0.52)',
         border: '1px solid rgba(141,110,99,0.10)',
         alignContent: 'center'
       }}
@@ -515,11 +515,11 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div
+            className="glass-metal-icon"
             style={{
               width: 'var(--wall-icon-sm)',
               height: 'var(--wall-icon-sm)',
               borderRadius: 'var(--wall-icon-radius-sm)',
-              background: 'rgba(141,110,99,0.14)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
@@ -535,6 +535,7 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
           <div
+            className="glass-alert-surface"
             style={{
               ...healthBadgeStyle,
               display: 'inline-flex',
@@ -595,14 +596,13 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
           return (
             <div
               key={link.id}
-              className="network-link-card"
+              className="network-link-card glass-compact-surface"
               style={{
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 'var(--wall-network-link-gap)',
                 padding: 'var(--wall-network-link-padding)',
                 borderRadius: '16px',
-                background: 'rgba(255,255,255,0.5)',
                 border: `1px solid ${palette.border}`,
                 boxShadow: `inset 0 0 0 1px ${palette.bg}`
               }}
@@ -631,6 +631,7 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                   ) : null}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', minWidth: 0, flexWrap: 'nowrap' }}>
                     <span
+                      className="glass-chip-surface"
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -640,7 +641,6 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                         maxWidth: '100%',
                         padding: 'var(--wall-network-chip-padding)',
                         borderRadius: '999px',
-                        background: palette.bg,
                         border: `1px solid ${palette.border}`,
                         fontSize: '0.52rem',
                         fontWeight: 800,
@@ -661,6 +661,7 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                       {(link.alias || link.provider).toUpperCase()} - {providerState.label.toUpperCase()}
                     </span>
                     <span
+                      className="glass-chip-surface"
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -669,7 +670,6 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
                         width: 'fit-content',
                         padding: 'var(--wall-network-chip-padding)',
                         borderRadius: '999px',
-                        background: 'rgba(255,255,255,0.56)',
                         border: '1px solid rgba(141,110,99,0.12)',
                         fontSize: '0.52rem',
                         fontWeight: 800,

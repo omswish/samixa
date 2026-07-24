@@ -10,7 +10,6 @@ import {
   ChevronDown,
   CheckCircle2,
   Clock,
-  Info,
   Layers,
   LogOut,
   Power,
@@ -101,10 +100,56 @@ interface TicketBreakdown {
 }
 
 const HSD_STATUS_COLORS = {
-  new: '#ff1744',
-  assigned: '#f0b429',
-  inProgress: '#2e7d32',
-  pending: '#7b8794'
+  new: '#8d1f3f',
+  assigned: '#d09538',
+  inProgress: '#45935f',
+  pending: '#72828f'
+} as const;
+
+const MUTED_OK = {
+  bg: 'rgba(69,147,95,0.15)',
+  border: 'rgba(69,147,95,0.30)',
+  text: '#2d6443',
+  fill: '#45935f',
+  soft: 'rgba(69,147,95,0.24)'
+} as const;
+
+const MUTED_WARNING = {
+  bg: 'rgba(208,149,56,0.15)',
+  border: 'rgba(208,149,56,0.30)',
+  text: '#8d5c15',
+  fill: '#d09538',
+  soft: 'rgba(208,149,56,0.24)'
+} as const;
+
+const MUTED_CRITICAL = {
+  bg: 'rgba(141,31,63,0.17)',
+  border: 'rgba(141,31,63,0.32)',
+  text: '#671730',
+  fill: '#8d1f3f',
+  soft: 'rgba(141,31,63,0.26)'
+} as const;
+
+const MUTED_OFFLINE = {
+  bg: 'rgba(114,130,143,0.13)',
+  border: 'rgba(114,130,143,0.25)',
+  text: '#4f5d68',
+  fill: '#72828f',
+  soft: 'rgba(114,130,143,0.21)'
+} as const;
+
+const MUTED_INFO = {
+  bg: 'rgba(74,118,175,0.14)',
+  border: 'rgba(74,118,175,0.26)',
+  text: '#355b8b',
+  fill: '#4a76af'
+} as const;
+
+const MUTED_NEUTRAL = {
+  bg: 'rgba(146,110,89,0.13)',
+  border: 'rgba(146,110,89,0.24)',
+  text: '#69493a',
+  fill: '#926e59'
 } as const;
 
 const SERVER_TABLE_COLUMNS = 'var(--wall-server-table-columns)';
@@ -188,6 +233,72 @@ interface DashboardSession {
   displayName: string | null;
   isServerLocal: boolean;
   expiresAt: string;
+}
+
+type AboutToMissEntry = {
+  kind: 'INC' | 'SR';
+  ref: string;
+};
+
+function normalizeAboutToMissRef(kind: 'INC' | 'SR', value: unknown) {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const cleaned = raw
+    .replace(/^(?:INC|SR)\s*[-:/]?\s*/i, '')
+    .replace(/\s+/g, '');
+
+  if (!cleaned) {
+    return null;
+  }
+
+  return `${kind}-${cleaned}`;
+}
+
+function readOptionalMetricRefs(source: Record<string, unknown>, kind: 'INC' | 'SR', keys: string[]) {
+  for (const key of keys) {
+    const value = source[key];
+
+    const rawItems = Array.isArray(value)
+      ? value
+      : typeof value === 'string'
+        ? value.split(/[,\n|]+/).map((entry) => entry.trim()).filter(Boolean)
+        : null;
+
+    if (!rawItems || rawItems.length === 0) {
+      continue;
+    }
+
+    const refs = rawItems
+      .map((entry) => {
+        if (typeof entry === 'object' && entry !== null) {
+          const objectEntry = entry as Record<string, unknown>;
+          return normalizeAboutToMissRef(
+            kind,
+            objectEntry.ticketNumber
+            ?? objectEntry.recordNumber
+            ?? objectEntry.number
+            ?? objectEntry.id
+            ?? objectEntry.ref
+          );
+        }
+
+        return normalizeAboutToMissRef(kind, entry);
+      })
+      .filter((entry): entry is string => Boolean(entry));
+
+    if (refs.length > 0) {
+      return Array.from(new Set(refs));
+    }
+  }
+
+  return [];
 }
 
 interface TelemetryHistoryQuery {
@@ -400,15 +511,15 @@ function getHealthText(status: SourceStatus | SectionStatus) {
 function getHealthBadgeStyle(status: SourceStatus | SectionStatus) {
   switch (status) {
     case 'ok':
-      return { background: '#e8f5e9', color: '#2e7d32' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(111,138,114,0.14))', color: MUTED_OK.text, border: `1px solid ${MUTED_OK.border}` };
     case 'partial':
-      return { background: '#fff8e1', color: '#f57f17' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(178,139,87,0.14))', color: MUTED_WARNING.text, border: `1px solid ${MUTED_WARNING.border}` };
     case 'stale':
-      return { background: '#fff3e0', color: '#ef6c00' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(178,139,87,0.14))', color: MUTED_WARNING.text, border: `1px solid ${MUTED_WARNING.border}` };
     case 'error':
-      return { background: '#ffebee', color: '#c62828' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(155,95,87,0.14))', color: MUTED_CRITICAL.text, border: `1px solid ${MUTED_CRITICAL.border}` };
     default:
-      return { background: '#eceff1', color: '#546e7a' };
+      return { background: 'linear-gradient(180deg, rgba(255,255,255,0.96), rgba(118,131,140,0.14))', color: MUTED_OFFLINE.text, border: `1px solid ${MUTED_OFFLINE.border}` };
   }
 }
 
@@ -489,37 +600,13 @@ function getAvailabilityTone(value: number | null | undefined): VisualTone {
 function getTonePalette(tone: VisualTone) {
   switch (tone) {
     case 'normal':
-      return {
-        bg: 'rgba(46, 125, 50, 0.10)',
-        border: 'rgba(46, 125, 50, 0.22)',
-        text: '#1b5e20',
-        fill: '#2e7d32',
-        soft: 'rgba(46, 125, 50, 0.16)'
-      };
+      return MUTED_OK;
     case 'warning':
-      return {
-        bg: 'rgba(245, 127, 23, 0.10)',
-        border: 'rgba(245, 127, 23, 0.22)',
-        text: '#b45309',
-        fill: '#f57f17',
-        soft: 'rgba(245, 127, 23, 0.18)'
-      };
+      return MUTED_WARNING;
     case 'critical':
-      return {
-        bg: 'rgba(198, 40, 40, 0.10)',
-        border: 'rgba(198, 40, 40, 0.22)',
-        text: '#b71c1c',
-        fill: '#c62828',
-        soft: 'rgba(198, 40, 40, 0.18)'
-      };
+      return MUTED_CRITICAL;
     default:
-      return {
-        bg: 'rgba(84, 110, 122, 0.10)',
-        border: 'rgba(84, 110, 122, 0.22)',
-        text: '#455a64',
-        fill: '#607d8b',
-        soft: 'rgba(84, 110, 122, 0.18)'
-      };
+      return MUTED_OFFLINE;
   }
 }
 
@@ -674,26 +761,26 @@ function getServerSourceChip(server: ServerNode) {
   if (server.usingFallback && server.effectiveTelemetrySource === 'solarwinds') {
     return {
       label: 'SW45 FB',
-      color: '#ef6c00',
-      background: 'rgba(239,108,0,0.12)',
-      border: 'rgba(239,108,0,0.18)'
+      color: MUTED_WARNING.text,
+      background: MUTED_WARNING.bg,
+      border: MUTED_WARNING.border
     };
   }
 
   if (server.sourceOfTruth === 'nutanix') {
     return {
       label: 'NX',
-      color: '#1565c0',
-      background: 'rgba(21,101,192,0.10)',
-      border: 'rgba(21,101,192,0.18)'
+      color: MUTED_INFO.text,
+      background: MUTED_INFO.bg,
+      border: MUTED_INFO.border
     };
   }
 
   return {
     label: 'SW45',
-    color: '#8d6e63',
-    background: 'rgba(141,110,99,0.10)',
-    border: 'rgba(141,110,99,0.18)'
+    color: MUTED_NEUTRAL.text,
+    background: MUTED_NEUTRAL.bg,
+    border: MUTED_NEUTRAL.border
   };
 }
 
@@ -701,35 +788,35 @@ function getServerProtectionChip(server: ServerNode) {
   if (server.backupStatus === 'successful') {
     return {
       label: 'PD OK',
-      accent: '#1b5e20',
-      background: 'rgba(46,125,50,0.12)',
-      border: 'rgba(46,125,50,0.18)'
+      accent: MUTED_OK.text,
+      background: MUTED_OK.bg,
+      border: MUTED_OK.border
     };
   }
 
   if (server.backupStatus === 'failed') {
     return {
       label: 'PD FAIL',
-      accent: '#b71c1c',
-      background: 'rgba(198,40,40,0.12)',
-      border: 'rgba(198,40,40,0.18)'
+      accent: MUTED_CRITICAL.text,
+      background: MUTED_CRITICAL.bg,
+      border: MUTED_CRITICAL.border
     };
   }
 
   if (server.sourceOfTruth === 'nutanix' || server.platform === 'hci-vm') {
     return {
       label: 'NO PD',
-      accent: '#ef6c00',
-      background: 'rgba(239,108,0,0.12)',
-      border: 'rgba(239,108,0,0.18)'
+      accent: MUTED_WARNING.text,
+      background: MUTED_WARNING.bg,
+      border: MUTED_WARNING.border
     };
   }
 
   return {
     label: 'SW45',
-    accent: '#8d6e63',
-    background: 'rgba(141,110,99,0.10)',
-    border: 'rgba(141,110,99,0.16)'
+    accent: MUTED_NEUTRAL.text,
+    background: MUTED_NEUTRAL.bg,
+    border: MUTED_NEUTRAL.border
   };
 }
 
@@ -792,15 +879,15 @@ function formatSmallNumber(value: number | null | undefined, suffix = '') {
 
 function getSlaAccent(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) {
-    return '#b0b7bf';
+    return '#96a0a8';
   }
   if (value >= 99.95) {
-    return '#84c341';
+    return MUTED_OK.fill;
   }
   if (value >= 95) {
-    return '#ff8f00';
+    return '#b68a4f';
   }
-  return '#f0b429';
+  return '#c19a5f';
 }
 
 function formatHealthErrorSummary(message: string | null) {
@@ -918,6 +1005,7 @@ function HciHeaderChip({
 
   return (
     <div
+      className="glass-compact-surface"
       style={{
         minWidth: 0,
         display: 'flex',
@@ -925,7 +1013,6 @@ function HciHeaderChip({
         gap: '5px',
         padding: '10px 12px',
         borderRadius: '14px',
-        background: 'rgba(255,255,255,0.56)',
         border: `1px solid ${accent}22`,
         boxShadow: `inset 0 0 0 1px ${accent}14`
       }}
@@ -960,6 +1047,7 @@ function HciNodeMarkers({ nodes }: { nodes: NutanixNodeHealth[] }) {
 
         return (
           <div
+            className="glass-dense-surface"
             key={node.name}
             style={{
               display: 'flex',
@@ -970,13 +1058,13 @@ function HciNodeMarkers({ nodes }: { nodes: NutanixNodeHealth[] }) {
               minHeight: 'var(--wall-hci-node-min-height)',
               padding: '5px 4px',
               borderRadius: '10px',
-              background: palette.bg,
               border: `1px solid ${palette.border}`,
               boxSizing: 'border-box'
             }}
             title={`${node.name} | ${statusLabel}`}
           >
             <div
+              className="glass-metal-icon"
               style={{
                 width: 'var(--wall-hci-node-icon-size)',
                 height: 'var(--wall-hci-node-icon-size)',
@@ -984,7 +1072,6 @@ function HciNodeMarkers({ nodes }: { nodes: NutanixNodeHealth[] }) {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: 'rgba(255,255,255,0.66)',
                 border: `1px solid ${palette.border}`
               }}
             >
@@ -1024,13 +1111,13 @@ function HsdOverviewCard({
 
   return (
     <div
+      className="glass-hero-surface"
       style={{
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--wall-hsd-card-gap)',
         padding: 'var(--wall-hsd-card-padding)',
         borderRadius: '18px',
-        background: 'rgba(255,255,255,0.66)',
         border: '1px solid rgba(141,110,99,0.12)',
         boxShadow: 'inset 0 4px 0 0 rgba(93,64,55,0.10)'
       }}
@@ -1040,6 +1127,7 @@ function HsdOverviewCard({
           <div style={{ fontSize: 'var(--wall-hsd-heading-size)', fontWeight: 900, letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>{title}</div>
         </div>
       <div
+        className="glass-inset-surface"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -1048,7 +1136,6 @@ function HsdOverviewCard({
           minHeight: 'clamp(54px, 5.3vh, 62px)',
           padding: 'clamp(6px, 0.5vw, 8px) clamp(12px, 0.95vw, 16px)',
           borderRadius: '16px',
-          background: 'linear-gradient(180deg, rgba(93,64,55,0.12), rgba(255,255,255,0.82))',
           border: '1px solid rgba(141,110,99,0.14)',
           boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.45)'
           }}
@@ -1083,6 +1170,7 @@ function HsdOverviewCard({
           </div>
 
           <div
+            className="glass-chart-surface"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(4, minmax(52px, 1fr))',
@@ -1091,7 +1179,6 @@ function HsdOverviewCard({
               minHeight: 'var(--wall-hsd-bars-min-height)',
               padding: 'clamp(8px, 0.65vw, 10px) clamp(6px, 0.55vw, 8px) clamp(6px, 0.55vw, 8px)',
               borderRadius: '16px',
-              background: 'linear-gradient(180deg, rgba(93,64,55,0.04), rgba(255,255,255,0.74))',
               border: '1px solid rgba(141,110,99,0.10)'
             }}
           >
@@ -1203,7 +1290,8 @@ function MiniDonutMetric({
   stroke = 6,
   labelSize = '0.52rem',
   noteSize = '0.56rem',
-  noteMinHeight = '10px'
+  noteMinHeight = '10px',
+  centerFontScale = 0.19
 }: {
   label: string;
   value: number | null;
@@ -1215,6 +1303,7 @@ function MiniDonutMetric({
   labelSize?: string;
   noteSize?: string;
   noteMinHeight?: string;
+  centerFontScale?: number;
 }) {
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -1225,7 +1314,15 @@ function MiniDonutMetric({
     : `${Number.isInteger(Number(pct.toFixed(1))) ? pct.toFixed(0) : pct.toFixed(1)}%`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', minWidth: `${Math.max(40, size + 2)}px` }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '4px',
+        minWidth: `${Math.max(40, size + 2)}px`
+      }}
+    >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(62,39,35,0.10)" strokeWidth={stroke} />
         <circle
@@ -1240,7 +1337,13 @@ function MiniDonutMetric({
           strokeDashoffset={dashOffset}
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
-        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: `${Math.max(9, Math.round(size * 0.19))}px`, fontWeight: 800, fill: accent }}>
+        <text
+          x="50%"
+          y="50%"
+          textAnchor="middle"
+          dominantBaseline="middle"
+          style={{ fontSize: `${Math.max(9, Math.round(size * centerFontScale))}px`, fontWeight: 800, fill: accent }}
+        >
           {centerLabel || formattedValue}
         </text>
       </svg>
@@ -1254,64 +1357,271 @@ function HsdSlaHeaderCard({
   title,
   response,
   resolution,
-  accent,
-  aboutToMiss = null
+  accent
 }: {
   title: string;
   response: number;
   resolution: number;
   accent: string;
-  aboutToMiss?: number | null;
 }) {
+  const renderMetric = (label: string, value: number, metricAccent: string) => {
+    const safeValue = Math.max(0, Math.min(100, value));
+    const displayValue = Number.isInteger(Number(safeValue.toFixed(1))) ? safeValue.toFixed(0) : safeValue.toFixed(1);
+
+    return (
+      <div
+        className="glass-dense-surface"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+          alignItems: 'center',
+          gap: '8px',
+          minWidth: 0,
+          padding: '8px 10px',
+          borderRadius: '12px',
+          border: `1px solid ${metricAccent}24`,
+          overflow: 'hidden',
+          background: `linear-gradient(180deg, rgba(255,255,255,0.92), ${metricAccent}08)`,
+          boxShadow: `inset 0 1px 0 rgba(255,255,255,0.72), 0 2px 8px rgba(62,39,35,0.03)`
+        }}
+      >
+        <div
+          style={{
+            fontSize: 'var(--wall-sla-metric-label-size)',
+            letterSpacing: '0.08em',
+            fontWeight: 900,
+            color: metricAccent,
+            lineHeight: 1,
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {label}
+        </div>
+        <div
+          style={{
+            width: '100%',
+            height: 'var(--wall-sla-metric-bar-height)',
+            borderRadius: '999px',
+            background: 'rgba(62,39,35,0.09)',
+            overflow: 'hidden'
+          }}
+        >
+          <div
+            style={{
+              width: `${safeValue}%`,
+              height: '100%',
+              borderRadius: '999px',
+              background: metricAccent
+            }}
+          />
+        </div>
+        <div
+          style={{
+            fontSize: 'var(--wall-sla-metric-value-size)',
+            lineHeight: 0.88,
+            fontWeight: 900,
+            color: metricAccent,
+            whiteSpace: 'nowrap',
+            textAlign: 'right'
+          }}
+        >
+          {displayValue}%
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div
+      className="glass-compact-surface"
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
+        display: 'grid',
+        gridTemplateRows: 'auto 1fr',
         gap: 'var(--wall-panel-gap-tight)',
         padding: 'var(--wall-sla-card-padding)',
         borderRadius: '16px',
-        background: 'rgba(255,255,255,0.56)',
         border: `1px solid ${accent}22`,
         minWidth: 0,
         height: '100%',
         boxSizing: 'border-box'
       }}
     >
-      <div style={{ fontSize: 'var(--wall-sla-title-size)', fontWeight: 800, letterSpacing: '0.08em', color: accent }}>{title}</div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
-        <MiniDonutMetric
-          label="RESP"
-          value={response}
-          accent={getSlaAccent(response)}
-          size={32}
-          stroke={4}
-          labelSize="var(--wall-sla-donut-label-size)"
-          noteSize="var(--wall-sla-donut-note-size)"
-          noteMinHeight="0px"
-        />
-        <MiniDonutMetric
-          label="RES"
-          value={resolution}
-          accent={getSlaAccent(resolution)}
-          size={32}
-          stroke={4}
-          labelSize="var(--wall-sla-donut-label-size)"
-          noteSize="var(--wall-sla-donut-note-size)"
-          noteMinHeight="0px"
-        />
-        <MiniDonutMetric
-          label="ATM"
-          value={aboutToMiss === null ? null : Math.min(100, aboutToMiss)}
-          accent={aboutToMiss !== null && aboutToMiss > 0 ? '#c62828' : '#b0b7bf'}
-          centerLabel={aboutToMiss === null ? undefined : `${aboutToMiss}`}
-          size={32}
-          stroke={4}
-          labelSize="var(--wall-sla-donut-label-size)"
-          noteSize="var(--wall-sla-donut-note-size)"
-          noteMinHeight="0px"
-        />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px',
+          minWidth: 0
+        }}
+      >
+        <div
+          style={{
+            fontSize: 'var(--wall-sla-title-size)',
+            fontWeight: 900,
+            letterSpacing: '0.08em',
+            color: accent,
+            lineHeight: 1.08,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            textAlign: 'left',
+            flex: '1 1 auto'
+          }}
+        >
+          {title}
+        </div>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gap: '8px',
+          alignContent: 'start'
+        }}
+      >
+        {renderMetric('RESP', response, getSlaAccent(response))}
+        {renderMetric('RES', resolution, getSlaAccent(resolution))}
+      </div>
+    </div>
+  );
+}
+
+function HsdAboutToMissCard({
+  entries
+}: {
+  entries: AboutToMissEntry[];
+}) {
+  const visibleEntries = entries.slice(0, 3);
+  const remainingCount = Math.max(0, entries.length - visibleEntries.length);
+
+  return (
+    <div
+      className="glass-compact-surface"
+      style={{
+        display: 'grid',
+        gridTemplateRows: 'auto 1fr',
+        gap: '10px',
+        padding: 'var(--wall-sla-card-padding)',
+        borderRadius: '16px',
+        border: '1px solid rgba(198,40,40,0.14)',
+        minWidth: 0,
+        height: '100%',
+        boxSizing: 'border-box'
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+          minWidth: 0
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: '1 1 auto' }}>
+          <div
+            style={{
+              fontSize: 'var(--wall-sla-title-size)',
+              fontWeight: 900,
+              letterSpacing: '0.08em',
+              color: MUTED_CRITICAL.text,
+              lineHeight: 1.08,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis'
+            }}
+          >
+            ABOUT TO MISS
+          </div>
+        </div>
+        <span
+          className="glass-chip-surface"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: '28px',
+            padding: '3px 8px',
+            borderRadius: '999px',
+            border: `1px solid ${MUTED_CRITICAL.border}`,
+            color: MUTED_CRITICAL.text,
+            fontSize: 'var(--wall-atm-count-size)',
+            fontWeight: 900,
+            letterSpacing: '0.06em',
+            lineHeight: 1
+          }}
+          title={`${entries.length} about to miss item${entries.length === 1 ? '' : 's'}`}
+        >
+          {entries.length}
+        </span>
+      </div>
+      <div
+        className="glass-chart-surface"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          alignContent: 'center',
+          gap: '6px',
+          minHeight: 0,
+          minWidth: 0,
+          flexWrap: 'wrap',
+          padding: '8px 10px',
+          borderRadius: '12px',
+          border: `1px solid ${MUTED_CRITICAL.border}`
+        }}
+      >
+        {visibleEntries.length > 0 ? (
+          <>
+            {visibleEntries.map((entry) => (
+              <span
+                className="glass-chip-surface"
+              key={entry.ref}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                minWidth: 0,
+                padding: '4px 8px',
+                borderRadius: '999px',
+                color: entry.kind === 'INC' ? MUTED_CRITICAL.text : MUTED_INFO.text,
+                border: `1px solid ${entry.kind === 'INC' ? MUTED_CRITICAL.border : MUTED_INFO.border}`,
+                fontSize: 'var(--wall-atm-ref-size)',
+                fontWeight: 900,
+                letterSpacing: '0.03em',
+                  lineHeight: 1,
+                  whiteSpace: 'nowrap'
+                }}
+                title={entry.ref}
+              >
+                {entry.ref}
+              </span>
+            ))}
+            {remainingCount > 0 ? (
+              <span
+                style={{
+                  fontSize: 'var(--wall-atm-more-size)',
+                  fontWeight: 800,
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'nowrap',
+                  opacity: 0.82
+                }}
+              >
+                +{remainingCount} more
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span
+            style={{
+              fontSize: 'calc(var(--wall-sla-metric-value-size) + 0.02rem)',
+              fontWeight: 800,
+              lineHeight: 1,
+              color: 'var(--text-secondary)',
+              opacity: 0.42
+            }}
+          >
+            -
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1322,17 +1632,21 @@ function SpecialQueueCard({
 }: {
   queue: { label: string; detail: string; value: number; accent: string; background: string; border: string };
 }) {
+  const compactLabel = queue.label.length >= 7;
+
   return (
     <div
+      className="glass-hero-surface"
       style={{
         display: 'grid',
-        gridTemplateColumns: 'minmax(54px, 0.82fr) minmax(0, 1.18fr)',
+        gridTemplateRows: 'auto 1fr auto',
+        justifyItems: 'stretch',
         alignItems: 'stretch',
         gap: '6px',
         minHeight: 0,
         padding: 'var(--wall-special-queue-padding)',
         borderRadius: '16px',
-        background: queue.background,
+        background: `linear-gradient(180deg, rgba(255,255,255,0.94) 0%, ${queue.background} 100%)`,
         border: `1px solid ${queue.border}`,
         height: '100%',
         boxSizing: 'border-box',
@@ -1343,64 +1657,71 @@ function SpecialQueueCard({
       <div
         style={{
           display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: '6px',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: '8px',
           minWidth: 0,
-          height: '100%'
+          width: '100%'
         }}
       >
         <div
           style={{
-            fontSize: 'var(--wall-queue-label-size)',
-            letterSpacing: '0.04em',
+            fontSize: compactLabel ? 'calc(var(--wall-queue-label-size) - 0.08rem)' : 'var(--wall-queue-label-size)',
+            letterSpacing: compactLabel ? '0.02em' : '0.04em',
             fontWeight: 900,
             color: queue.accent,
-            lineHeight: 1
+            lineHeight: 1,
+            textAlign: 'center',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            maxWidth: '100%'
           }}
         >
           {queue.label}
         </div>
-        <div
-          style={{
-            fontSize: 'var(--wall-queue-detail-size)',
-            opacity: 0.8,
-            lineHeight: 1.14,
-            whiteSpace: 'normal',
-            overflowWrap: 'break-word',
-            textAlign: 'left'
-          }}
-          title={queue.detail}
-        >
-          {queue.detail}
-        </div>
       </div>
 
       <div
+        className="glass-inset-surface"
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'flex-end',
+          justifyContent: 'center',
           minWidth: 0,
-          paddingRight: '2px',
-          fontSize: 'var(--wall-queue-value-size)',
-          fontWeight: 900,
-          letterSpacing: '-0.07em',
-          lineHeight: 0.8,
-          color: queue.accent,
-          textAlign: 'right',
-          whiteSpace: 'nowrap'
+          width: '100%',
+          borderRadius: '12px',
+          border: `1px solid ${queue.border}`,
+          padding: '4px 8px'
         }}
       >
         <span
           style={{
-            display: 'inline-block',
-            minWidth: 'fit-content'
+            fontSize: 'var(--wall-queue-value-size)',
+            fontWeight: 900,
+            color: queue.accent,
+            letterSpacing: '-0.04em',
+            lineHeight: 0.9,
+            textAlign: 'center',
+            whiteSpace: 'nowrap'
           }}
         >
           {queue.value}
         </span>
+      </div>
+
+      <div
+        style={{
+          fontSize: 'var(--wall-queue-detail-size)',
+          opacity: 0.8,
+          lineHeight: 1.14,
+          whiteSpace: 'pre-line',
+          overflowWrap: 'break-word',
+          textAlign: 'center'
+        }}
+        title={queue.detail}
+      >
+        {queue.detail}
       </div>
     </div>
   );
@@ -1451,13 +1772,13 @@ function HsdSlaWidget({
 
   return (
     <div
+      className="glass-compact-surface"
       style={{
         display: 'flex',
         flexDirection: 'column',
         gap: '12px',
         padding: '14px',
         borderRadius: '16px',
-        background: 'rgba(255,255,255,0.56)',
         border: `1px solid ${accent}22`
       }}
     >
@@ -1501,6 +1822,7 @@ function CompactMetaPill({
 }) {
   return (
     <span
+      className="glass-chip-surface"
       title={title || label}
       style={{
         display: 'inline-flex',
@@ -1511,8 +1833,9 @@ function CompactMetaPill({
         fontWeight: 800,
         letterSpacing: '0.08em',
         color,
-        background,
-        border: `1px solid ${border}`
+        background: `linear-gradient(180deg, rgba(255,255,255,0.94), ${background})`,
+        border: `1px solid ${border}`,
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.72), 0 1px 2px rgba(62,39,35,0.04)`
       }}
     >
       {label}
@@ -1535,24 +1858,68 @@ function FleetSummaryChip({
 }) {
   return (
     <div
+      className="glass-pill-surface"
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: '6px',
+        display: 'grid',
+        gridTemplateRows: 'auto auto',
+        alignContent: 'space-between',
+        gap: '4px',
         minWidth: 0,
-        padding: 'var(--wall-server-summary-chip-padding)',
-        borderRadius: '10px',
-        background,
-        border: `1px solid ${border}`
+        minHeight: '50px',
+        padding: '6px 9px 7px',
+        borderRadius: '13px',
+        background: `linear-gradient(180deg, rgba(255,255,255,0.94), ${background})`,
+        border: `1px solid ${border}`,
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.78), 0 3px 10px rgba(62,39,35,0.05)`
       }}
     >
-      <span style={{ fontSize: 'var(--wall-server-summary-label-size)', fontWeight: 800, letterSpacing: '0.08em', color: accent, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 'var(--wall-server-summary-value-size)', fontWeight: 800, color: accent, lineHeight: 1 }}>
-        {value}
-      </span>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+          minWidth: 0
+        }}
+      >
+        <span
+          style={{
+            fontSize: '0.48rem',
+            fontWeight: 900,
+            letterSpacing: '0.08em',
+            color: accent,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            textAlign: 'center'
+          }}
+        >
+          {label}
+        </span>
+      </div>
+      <div
+        className="glass-inset-surface"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          minWidth: 0,
+          borderRadius: '10px',
+          border: `1px solid ${border}`,
+          padding: '3px 8px'
+        }}
+      >
+        <span
+          style={{
+            fontSize: '1.02rem',
+            fontWeight: 900,
+            color: accent,
+            lineHeight: 1
+          }}
+        >
+          {value}
+        </span>
+      </div>
     </div>
   );
 }
@@ -1584,56 +1951,22 @@ function ServerTableMetricBar({
 }) {
   const palette = getTonePalette(tone);
   const fill = value === null ? 0 : Math.max(0, Math.min(100, value));
-  const displayValue = value === null
-    ? 'NA'
-    : label === 'Availability'
-      ? `${value.toFixed(1)}%`
-      : `${formatSmallNumber(value)}%`;
+  const displayValue = value === null ? 'N/A' : `${formatSmallNumber(value)}%`;
 
   return (
-    <div style={{ minWidth: 0 }}>
-      <div
-        title={`${label}: ${labelValue(label, value)}`}
-        style={{
-          position: 'relative',
-          width: '100%',
-          height: 'var(--wall-server-metric-height)',
-          borderRadius: '999px',
-          overflow: 'hidden',
-          background: value === null ? 'rgba(109,76,65,0.06)' : palette.bg,
-          border: `1px solid ${value === null ? 'rgba(109,76,65,0.12)' : palette.border}`,
-          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.45)'
-        }}
-      >
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }} title={`${label}: ${labelValue(label, value)}`}>
+      <div style={{ fontSize: 'var(--wall-server-metric-value-size)', fontWeight: 800, color: value === null ? 'rgba(93,64,55,0.52)' : palette.text, lineHeight: 1, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+        {displayValue}
+      </div>
+      <div style={{ width: '100%', height: 'var(--wall-server-metric-bar-height)', borderRadius: '999px', overflow: 'hidden', background: 'rgba(62,39,35,0.08)' }}>
         <div
           style={{
-            position: 'absolute',
-            inset: 0,
             width: `${fill}%`,
+            height: '100%',
             borderRadius: '999px',
-            background: value === null
-              ? 'transparent'
-              : `linear-gradient(90deg, ${palette.fill} 0%, ${palette.fill}dd 72%, ${palette.fill}b3 100%)`
+            background: value === null ? 'transparent' : palette.fill
           }}
         />
-        <div
-          style={{
-            position: 'relative',
-            zIndex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '100%',
-            height: '100%',
-            fontSize: 'var(--wall-server-metric-font-size)',
-            fontWeight: 900,
-            letterSpacing: '0.03em',
-            color: value === null ? 'rgba(93,64,55,0.72)' : fill >= 48 ? '#ffffff' : palette.text,
-            textShadow: fill >= 48 ? '0 1px 2px rgba(0,0,0,0.18)' : 'none'
-          }}
-        >
-          {displayValue}
-        </div>
       </div>
     </div>
   );
@@ -1662,6 +1995,7 @@ function DashboardLegendChip({
 }) {
   return (
     <span
+      className="glass-chip-surface"
       title={label}
       style={{
         display: 'inline-flex',
@@ -1670,11 +2004,11 @@ function DashboardLegendChip({
         padding: '3px 8px',
         borderRadius: '999px',
         border: `1px solid ${border}`,
-        background,
         fontSize: '0.56rem',
         fontWeight: 800,
         letterSpacing: '0.06em',
-        color
+        color,
+        background: `linear-gradient(180deg, rgba(255,255,255,0.94), ${background})`
       }}
     >
       <span
@@ -1714,11 +2048,11 @@ function ServerInfoDrawer({ server }: { server: ServerNode }) {
 
   return (
     <div
+      className="glass-compact-surface"
       style={{
         marginTop: '4px',
         padding: '10px 12px',
         borderRadius: '14px',
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.82), rgba(246,243,238,0.96))',
         border: `1px solid ${palette.border}`,
         boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.48)'
       }}
@@ -1803,16 +2137,18 @@ function ServerFleetTableRow({
   return (
     <div data-server-info-root={server.id} style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
       <div
+        className="glass-dense-surface"
         style={{
           display: 'grid',
           gridTemplateColumns: SERVER_TABLE_COLUMNS,
           alignItems: 'center',
           gap: 'var(--wall-server-row-gap)',
           padding: 'var(--wall-server-row-padding)',
+          paddingRight: '24px',
           borderRadius: expanded ? '11px 11px 0 0' : '11px',
-          background: 'rgba(255,255,255,0.52)',
           border: `1px solid ${palette.border}`,
-          boxShadow: `inset 4px 0 0 ${palette.fill}`
+          boxShadow: `inset 4px 0 0 ${palette.fill}`,
+          position: 'relative'
         }}
       >
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--wall-server-tag-gap)' }}>
@@ -1820,28 +2156,6 @@ function ServerFleetTableRow({
             <span style={{ fontSize: 'var(--wall-server-name-size)', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={server.name}>
               {formatServerName(server.name)}
             </span>
-            <button
-              type="button"
-              onClick={onToggleInfo}
-              aria-expanded={expanded}
-              aria-label={`Toggle details for ${formatServerName(server.name)}`}
-              title={infoMessage ? `Server details. ${infoMessage.source}: ${infoMessage.message}` : `Show more details for ${formatServerName(server.name)}`}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '3px',
-                padding: 'var(--wall-server-info-button-padding)',
-                borderRadius: '999px',
-                border: `1px solid ${expanded ? palette.border : 'rgba(141,110,99,0.12)'}`,
-                background: expanded ? palette.bg : 'rgba(255,255,255,0.68)',
-                color: expanded ? palette.text : 'rgba(93,64,55,0.78)',
-                cursor: 'pointer',
-                flex: '0 0 auto'
-              }}
-            >
-              <Info size={11} />
-              <ChevronDown size={11} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.18s ease' }} />
-            </button>
           </div>
           <div style={{ display: 'flex', gap: 'var(--wall-server-tag-gap)', minWidth: 0, flexWrap: 'nowrap', overflow: 'hidden' }}>
             <CompactMetaPill label={categoryPalette.label} color={categoryPalette.accent} background={categoryPalette.background} border={categoryPalette.border} title={`Server category ${categoryPalette.label}`} />
@@ -1898,6 +2212,32 @@ function ServerFleetTableRow({
             {protectionChip.label}
           </span>
         </div>
+
+        <button
+          type="button"
+          onClick={onToggleInfo}
+          aria-expanded={expanded}
+          aria-label={`Toggle details for ${formatServerName(server.name)}`}
+          title={infoMessage ? `Server details. ${infoMessage.source}: ${infoMessage.message}` : `Show more details for ${formatServerName(server.name)}`}
+          style={{
+            position: 'absolute',
+            top: '50%',
+            right: '6px',
+            transform: 'translateY(-50%)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '14px',
+            height: '18px',
+            padding: 0,
+            border: 0,
+            background: 'transparent',
+            color: expanded ? palette.text : 'rgba(93,64,55,0.72)',
+            cursor: 'pointer'
+          }}
+        >
+          <ChevronDown size={12} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.18s ease' }} />
+        </button>
       </div>
 
       {expanded ? <ServerInfoDrawer server={server} /> : null}
@@ -2273,6 +2613,7 @@ function SectionHealthMeta({ health }: { health: SectionHealth }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
       <span
+        className="glass-alert-surface"
         style={{
           ...badgeStyle,
           display: 'inline-flex',
@@ -2310,6 +2651,7 @@ function FilterChip({
 }) {
   return (
     <button
+      className="glass-pill-surface"
       type="button"
       onClick={onClick}
       style={{
@@ -2320,7 +2662,6 @@ function FilterChip({
         padding: '8px 10px',
         borderRadius: '999px',
         border: `1px solid ${active ? `${accent}33` : 'rgba(141,110,99,0.14)'}`,
-        background: active ? `${accent}18` : 'rgba(255,255,255,0.72)',
         color: active ? accent : 'var(--text-secondary)',
         fontSize: '0.68rem',
         fontWeight: 800,
@@ -2876,9 +3217,9 @@ function HsdWorkCard({
   const totalSafe = Math.max(0, total);
   const categories = [
     { key: 'new', label: 'NEW', value: breakdown.new, color: HSD_STATUS_COLORS.new },
-    { key: 'assigned', label: 'ASG', value: breakdown.assigned, color: '#f0b429' },
+    { key: 'assigned', label: 'ASG', value: breakdown.assigned, color: HSD_STATUS_COLORS.assigned },
     { key: 'inProgress', label: 'IP', value: breakdown.inProgress, color: accent },
-    { key: 'pending', label: 'PND', value: breakdown.pending, color: '#7b8794' }
+    { key: 'pending', label: 'PND', value: breakdown.pending, color: HSD_STATUS_COLORS.pending }
   ];
 
   return (
@@ -3005,9 +3346,9 @@ function HsdQueueRail({
   const totalSafe = Math.max(0, total);
   const categories = [
     { key: 'new', short: 'N', value: breakdown.new, color: HSD_STATUS_COLORS.new },
-    { key: 'assigned', short: 'A', value: breakdown.assigned, color: '#f0b429' },
+    { key: 'assigned', short: 'A', value: breakdown.assigned, color: HSD_STATUS_COLORS.assigned },
     { key: 'inProgress', short: 'IP', value: breakdown.inProgress, color: accent },
-    { key: 'pending', short: 'P', value: breakdown.pending, color: '#7b8794' }
+    { key: 'pending', short: 'P', value: breakdown.pending, color: HSD_STATUS_COLORS.pending }
   ];
 
   return (
@@ -3513,38 +3854,60 @@ export default function Dashboard() {
     }] : [])
   ];
   const ticketCards = rawTicketCards.filter((card) => effectiveHsdWorkTypes.includes(card.label));
+  const symphonyMetrics = data.symphony as unknown as Record<string, unknown>;
+  const aboutToMissEntries: AboutToMissEntry[] = [
+    ...readOptionalMetricRefs(symphonyMetrics, 'INC', [
+      'incidentsAboutToMissRefs',
+      'incidentAboutToMissRefs',
+      'incidentsAboutToMissRecords',
+      'incidentAboutToMissRecords',
+      'incidentsAboutToMissIds',
+      'incidentAboutToMissIds'
+    ]).map((ref) => ({ kind: 'INC' as const, ref })),
+    ...readOptionalMetricRefs(symphonyMetrics, 'SR', [
+      'requestsAboutToMissRefs',
+      'serviceRequestsAboutToMissRefs',
+      'requestAboutToMissRefs',
+      'requestsAboutToMissRecords',
+      'serviceRequestsAboutToMissRecords',
+      'requestAboutToMissRecords',
+      'requestsAboutToMissIds',
+      'serviceRequestsAboutToMissIds',
+      'requestAboutToMissIds'
+    ]).map((ref) => ({ kind: 'SR' as const, ref }))
+  ];
   const specialQueues = [
     {
       label: 'P1' as HsdQueueFilter,
       detail: 'Org Affected',
       value: data.symphony.priority1Incidents,
-      accent: '#c62828',
-      background: 'rgba(198,40,40,0.08)',
-      border: 'rgba(198,40,40,0.18)'
+      accent: MUTED_CRITICAL.text,
+      background: MUTED_CRITICAL.bg,
+      border: MUTED_CRITICAL.border
     },
     {
       label: 'P2' as HsdQueueFilter,
       detail: 'Unit Affected',
       value: data.symphony.priority2Incidents,
-      accent: '#ef6c00',
-      background: 'rgba(239,108,0,0.08)',
-      border: 'rgba(239,108,0,0.18)'
+      accent: MUTED_WARNING.text,
+      background: MUTED_WARNING.bg,
+      border: MUTED_WARNING.border
     },
     {
       label: 'ONBOARD' as HsdQueueFilter,
-      detail: 'Onboarding/Offboarding SR',
+      detail: 'Onboarding/\nOffboarding SR',
       value: data.symphony.onboardingRequests,
-      accent: '#1565c0',
-      background: 'rgba(21,101,192,0.08)',
-      border: 'rgba(21,101,192,0.18)'
+      accent: MUTED_INFO.text,
+      background: MUTED_INFO.bg,
+      border: MUTED_INFO.border
     },
     {
       label: 'SECURITY' as HsdQueueFilter,
       detail: 'Security Incidents',
       value: data.symphony.securityIncidents,
-      accent: '#455a64',
-      background: 'rgba(69,90,100,0.08)',
-      border: 'rgba(69,90,100,0.18)'
+      accent: MUTED_OFFLINE.text,
+      background: MUTED_OFFLINE.bg,
+      border: MUTED_OFFLINE.border
     }
   ].filter((queue) => filters.hsdQueueTypes.includes(queue.label));
   const serverStates = filteredServers.map((server) => getServerVisualState(server));
@@ -3674,6 +4037,7 @@ export default function Dashboard() {
         <div className="dashboard-header-controls" style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '0 0 auto' }}>
           {session.role === 'admin' ? (
             <button
+              className="glass-pill-surface"
               type="button"
               onClick={handleOpenAdminSurface}
               title="Open the admin surface in a separate tab"
@@ -3685,7 +4049,6 @@ export default function Dashboard() {
                 padding: '7px 12px',
                 borderRadius: '999px',
                 border: '1px solid rgba(141,110,99,0.14)',
-                background: 'rgba(255,255,255,0.52)',
                 color: 'var(--text-primary)',
                 fontSize: '0.72rem',
                 fontWeight: 800,
@@ -3698,6 +4061,7 @@ export default function Dashboard() {
             </button>
           ) : null}
           <button
+            className="glass-pill-surface"
             type="button"
             onClick={() => setFiltersOpen(true)}
             title="Open dashboard filters"
@@ -3709,7 +4073,7 @@ export default function Dashboard() {
               padding: '7px 12px',
               borderRadius: '999px',
               border: '1px solid rgba(141,110,99,0.14)',
-              background: activeFilterCount > 0 ? 'rgba(21,101,192,0.10)' : 'rgba(255,255,255,0.52)',
+              background: activeFilterCount > 0 ? 'linear-gradient(180deg, rgba(255,255,255,0.94), rgba(21,101,192,0.10))' : undefined,
               color: activeFilterCount > 0 ? '#1565c0' : 'var(--text-primary)',
               fontSize: '0.72rem',
               fontWeight: 800,
@@ -3720,11 +4084,11 @@ export default function Dashboard() {
             <SlidersHorizontal size={15} />
             {`FILTERS${activeFilterCount > 0 ? ` ${activeFilterCount}` : ''}`}
           </button>
-          <div title="Current date and time" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', fontSize: 'var(--wall-header-clock-size)', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
+          <div className="glass-pill-surface" title="Current date and time" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', border: '1px solid rgba(141,110,99,0.12)', fontSize: 'var(--wall-header-clock-size)', fontFamily: 'var(--font-headings)', fontWeight: 700, color: 'var(--text-primary)' }}>
             <Clock size={16} style={{ color: 'var(--primary)' }} />
             <span>{time}</span>
           </div>
-          <div title={`Signed in as ${session.role}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', background: 'rgba(255,255,255,0.46)', border: '1px solid rgba(141,110,99,0.12)', color: 'var(--text-primary)' }}>
+          <div className="glass-pill-surface" title={`Signed in as ${session.role}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '18px', border: '1px solid rgba(141,110,99,0.12)', color: 'var(--text-primary)' }}>
             <span style={{ fontSize: '0.74rem', fontWeight: 800, letterSpacing: '0.06em' }}>{session.role === 'admin' ? 'ADMIN' : 'OPERATOR'}</span>
             <span style={{ fontSize: '0.8rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.displayName || session.email}</span>
             <button type="button" onClick={() => void handleLogout()} title="Sign out" aria-label="Sign out" style={{ border: 0, background: 'transparent', color: 'var(--text-primary)', display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -3751,11 +4115,11 @@ export default function Dashboard() {
             <div className="dashboard-hci-card-grid">
               <div className="dashboard-hci-header">
                 <div
+                  className="glass-metal-icon"
                   style={{
                     width: 'var(--wall-icon-sm)',
                     height: 'var(--wall-icon-sm)',
                     borderRadius: 'var(--wall-icon-radius-sm)',
-                    background: 'rgba(46,125,50,0.10)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -3814,11 +4178,11 @@ export default function Dashboard() {
             <div className="hsd-panel-header">
               <div className="hsd-panel-title">
                 <div
+                  className="glass-metal-icon"
                   style={{
                     width: 'var(--wall-icon-md)',
                     height: 'var(--wall-icon-md)',
                     borderRadius: 'var(--wall-icon-radius-md)',
-                    background: 'rgba(21,101,192,0.10)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -3835,6 +4199,7 @@ export default function Dashboard() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {showHsdSessionImport ? (
                   <button
+                    className="glass-pill-surface"
                     type="button"
                     onClick={handleOpenAdminSurface}
                     style={{
@@ -3844,7 +4209,6 @@ export default function Dashboard() {
                       padding: '8px 11px',
                       borderRadius: '999px',
                       border: '1px solid rgba(21,101,192,0.18)',
-                      background: 'rgba(21,101,192,0.08)',
                       color: '#1565c0',
                       fontSize: '0.72rem',
                       fontWeight: 800,
@@ -3874,20 +4238,31 @@ export default function Dashboard() {
             </div>
 
             <div className="hsd-footer-row">
-              <HsdSlaHeaderCard
-                title="INCIDENT SLA"
-                response={data.symphony.incidentsResponseSla}
-                resolution={data.symphony.incidentsResolutionSla}
-                accent="#c62828"
-              />
-              <HsdSlaHeaderCard
-                title="SERVICE REQUEST SLA"
-                response={data.symphony.requestsResponseSla}
-                resolution={data.symphony.requestsResolutionSla}
-                accent="#1565c0"
-              />
+              <div className="hsd-footer-card-slot hsd-footer-card-slot--sla">
+                <HsdSlaHeaderCard
+                  title="INCIDENT SLA"
+                  response={data.symphony.incidentsResponseSla}
+                  resolution={data.symphony.incidentsResolutionSla}
+                  accent={MUTED_CRITICAL.text}
+                />
+              </div>
+              <div className="hsd-footer-card-slot hsd-footer-card-slot--sla">
+                <HsdSlaHeaderCard
+                  title="SERVICE REQUEST SLA"
+                  response={data.symphony.requestsResponseSla}
+                  resolution={data.symphony.requestsResolutionSla}
+                  accent={MUTED_INFO.text}
+                />
+              </div>
+              <div className="hsd-footer-card-slot hsd-footer-card-slot--atm">
+                <HsdAboutToMissCard entries={aboutToMissEntries} />
+              </div>
               {specialQueues.length > 0
-                ? specialQueues.map((queue) => <SpecialQueueCard key={queue.label} queue={queue} />)
+                ? specialQueues.map((queue) => (
+                  <div key={queue.label} className="hsd-footer-card-slot hsd-footer-card-slot--queue">
+                    <SpecialQueueCard queue={queue} />
+                  </div>
+                ))
                 : <EmptyFilterState label="No special queues match the selected filters." />}
             </div>
           </section>
@@ -3902,7 +4277,7 @@ export default function Dashboard() {
               <section className="glass-panel dashboard-panel dashboard-panel--network" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-grid-gap)', minHeight: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{ width: 'var(--wall-icon-sm)', height: 'var(--wall-icon-sm)', borderRadius: 'var(--wall-icon-radius-sm)', background: 'rgba(141,110,99,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div className="glass-metal-icon" style={{ width: 'var(--wall-icon-sm)', height: 'var(--wall-icon-sm)', borderRadius: 'var(--wall-icon-radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <Activity size={20} style={{ color: 'var(--primary)' }} />
                     </div>
                     <div>
@@ -3920,14 +4295,14 @@ export default function Dashboard() {
 
         {visibleSections.servers ? (
         <section className="glass-panel dashboard-panel dashboard-panel--servers" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-panel-gap)', minHeight: 0 }}>
-          <div className="dashboard-servers-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 0.68fr) minmax(0, 1.46fr) auto', alignItems: 'center', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', minWidth: 0 }}>
+          <div className="dashboard-servers-header" style={{ display: 'grid', gridTemplateColumns: 'minmax(176px, auto) minmax(0, 1fr) auto', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
               <div
+                className="glass-metal-icon"
                 style={{
                   width: 'var(--wall-icon-sm)',
                   height: 'var(--wall-icon-sm)',
                   borderRadius: 'var(--wall-icon-radius-sm)',
-                  background: 'rgba(141,110,99,0.12)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -3936,12 +4311,12 @@ export default function Dashboard() {
                 >
                   <Layers size={20} style={{ color: 'var(--primary)' }} />
               </div>
-              <div style={{ minWidth: 0 }}>
+              <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <h2 style={{ fontSize: 'var(--wall-title-md)' }}>Servers</h2>
                 <div style={{ fontSize: 'calc(var(--wall-subtitle-size) - 0.04rem)', letterSpacing: '0.08em', opacity: 0.62, fontWeight: 700 }}>LIVE MONITORING</div>
               </div>
             </div>
-              <div className="server-fleet-summary-grid">
+              <div className="server-fleet-summary-grid" style={{ alignSelf: 'center' }}>
               {serverSummaryChips.map((chip) => (
                 <FleetSummaryChip
                   key={chip.label}
@@ -3953,7 +4328,9 @@ export default function Dashboard() {
                 />
               ))}
             </div>
-            <SectionHealthMeta health={data.sections.servers} />
+            <div style={{ justifySelf: 'end', alignSelf: 'center' }}>
+              <SectionHealthMeta health={data.sections.servers} />
+            </div>
           </div>
 
           <div
@@ -4154,15 +4531,15 @@ export default function Dashboard() {
         <section className="glass-panel dashboard-mobile-card">
           <MobileSectionHeader icon={<Ticket size={18} style={{ color: '#1565c0' }} />} title="Hindalco Service Desk" subtitle="hsd.adityabirla.com" health={data.sections.symphony} />
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
-            {effectiveHsdWorkTypes.includes('INCIDENTS') ? <HsdWorkCard label="INCIDENTS" total={data.symphony.openIncidents} breakdown={data.symphony.openIncidentsBreakdown} accent="#c62828" /> : null}
-            {effectiveHsdWorkTypes.includes('SERVICE REQUESTS') ? <HsdWorkCard label="SERVICE REQUESTS" total={data.symphony.serviceRequests} breakdown={data.symphony.serviceRequestsBreakdown} accent="#1565c0" /> : null}
-            {effectiveHsdWorkTypes.includes('WORK ORDERS') ? <HsdStatusTile label="WORK ORDERS" count={data.symphony.workOrders} total={ticketBacklogTotal} color="#6d4c41" /> : null}
-            {effectiveHsdWorkTypes.includes('CHANGES') ? <HsdStatusTile label="CHANGES" count={data.symphony.changeRecords} total={ticketBacklogTotal} color="#4f6bed" /> : null}
+            {effectiveHsdWorkTypes.includes('INCIDENTS') ? <HsdWorkCard label="INCIDENTS" total={data.symphony.openIncidents} breakdown={data.symphony.openIncidentsBreakdown} accent={MUTED_CRITICAL.text} /> : null}
+            {effectiveHsdWorkTypes.includes('SERVICE REQUESTS') ? <HsdWorkCard label="SERVICE REQUESTS" total={data.symphony.serviceRequests} breakdown={data.symphony.serviceRequestsBreakdown} accent={MUTED_INFO.text} /> : null}
+            {effectiveHsdWorkTypes.includes('WORK ORDERS') ? <HsdStatusTile label="WORK ORDERS" count={data.symphony.workOrders} total={ticketBacklogTotal} color={MUTED_NEUTRAL.text} /> : null}
+            {effectiveHsdWorkTypes.includes('CHANGES') ? <HsdStatusTile label="CHANGES" count={data.symphony.changeRecords} total={ticketBacklogTotal} color={MUTED_INFO.text} /> : null}
           </div>
           {ticketCards.length === 0 ? <div style={{ marginTop: '12px' }}><EmptyFilterState label="No HSD work cards match the selected filters." /></div> : null}
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
-            <HsdSlaWidget title="INCIDENT SLA" response={data.symphony.incidentsResponseSla} resolution={data.symphony.incidentsResolutionSla} accent="#c62828" />
-            <HsdSlaWidget title="SERVICE REQUEST SLA" response={data.symphony.requestsResponseSla} resolution={data.symphony.requestsResolutionSla} accent="#1565c0" />
+            <HsdSlaWidget title="INCIDENT SLA" response={data.symphony.incidentsResponseSla} resolution={data.symphony.incidentsResolutionSla} accent={MUTED_CRITICAL.text} />
+            <HsdSlaWidget title="SERVICE REQUEST SLA" response={data.symphony.requestsResponseSla} resolution={data.symphony.requestsResolutionSla} accent={MUTED_INFO.text} />
           </div>
           <div className="dashboard-mobile-grid-two" style={{ marginTop: '12px' }}>
             {specialQueues.map((queue) => (
