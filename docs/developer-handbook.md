@@ -48,13 +48,13 @@ npm run build
 Start the full stack with PM2:
 
 ```powershell
-pm2 start ecosystem.config.js
+.\runtime\node\node.exe .\runtime-tools\node_modules\pm2\bin\pm2 start ecosystem.config.js
 ```
 
 Save the PM2 process list after validation:
 
 ```powershell
-pm2 save
+.\runtime\node\node.exe .\runtime-tools\node_modules\pm2\bin\pm2 save
 ```
 
 ## 5. Runtime Design Summary

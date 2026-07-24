@@ -8,12 +8,12 @@ Current installer model:
 - does not package PostgreSQL or any separate database installer
 - writes runtime `.env` values during setup
 - defaults to a SQLite-first deployment with encrypted local collector settings
-- calls the staged deployment support scripts for firewall rules, startup registration, stack bootstrap, and PM2 auto-heal registration
+- calls the staged deployment support scripts for firewall rules, stack bootstrap, Windows-startup recovery registration, and runtime permission repair
 - carries the admin HSD reauthentication flow that stops the HSD collector before opening the server-local login helper
 
 Primary files:
 - `utkal-it-dashboard.iss`
-- supporting PowerShell scripts for firewall, startup, and PM2 restore
+- supporting PowerShell scripts for firewall, startup bootstrap, and runtime recovery
 
 Default deployment shape:
 - single writable root under `C:\ProgramData\UAIL\ITDashboard`

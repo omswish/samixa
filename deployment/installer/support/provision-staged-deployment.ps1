@@ -364,7 +364,7 @@ if (-not $PSBoundParameters.ContainsKey('SkipAutostart')) {
   if ($NonInteractive) {
     $SkipAutostart = $false
   } else {
-    $SkipAutostart = -not (Read-YesNo -Prompt 'Register automatic PM2 restore when this runtime user signs in?' -Default $true)
+    $SkipAutostart = -not (Read-YesNo -Prompt 'Register automatic dashboard restore on Windows startup?' -Default $true)
   }
 }
 

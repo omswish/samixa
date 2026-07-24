@@ -1,7 +1,7 @@
 ; Inno Setup blueprint for the Utkal IT Dashboard deployment package.
 
 #define AppName "Utkal IT Dashboard"
-#define AppVersion "1.0.0"
+#define AppVersion "1.2.0"
 #define AppPublisher "UAIL IT"
 #ifndef StageRoot
 #define StageRoot "..\staging\current"
@@ -29,7 +29,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "firewallrule"; Description: "Create Windows Firewall rules for the operator and admin web ports"; Flags: checkedonce
 Name: "startstack"; Description: "Start dashboard services after install"; Flags: checkedonce
-Name: "autostart"; Description: "Register dashboard services to restore automatically when the runtime user signs in"; Flags: checkedonce
+Name: "autostart"; Description: "Register dashboard services to restore automatically on Windows startup"; Flags: checkedonce
 
 [Files]
 Source: "{#StageRoot}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs

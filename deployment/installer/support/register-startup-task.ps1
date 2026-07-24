@@ -8,7 +8,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$supportScript = Join-Path $InstallRoot 'support\pm2-resurrect.ps1'
+$supportScript = Join-Path $InstallRoot 'support\bootstrap-stack.ps1'
 $permissionRepairScript = @(
   (Join-Path $InstallRoot 'support\repair-runtime-permissions.ps1'),
   (Join-Path $PSScriptRoot 'repair-runtime-permissions.ps1')
@@ -20,7 +20,7 @@ $resolvedRuntimeUser = if ([string]::IsNullOrWhiteSpace($RuntimeUser)) {
 }
 
 if (-not (Test-Path -LiteralPath $supportScript)) {
-  throw "Startup task prerequisite missing: pm2 resurrect script ($supportScript)"
+  throw "Startup task prerequisite missing: bootstrap script ($supportScript)"
 }
 
 if (-not $permissionRepairScript) {
@@ -37,8 +37,8 @@ $bootstrapArgumentList = @(
 ) -join ' '
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $bootstrapArgumentList
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $resolvedRuntimeUser
-$principal = New-ScheduledTaskPrincipal -UserId $resolvedRuntimeUser -RunLevel Highest -LogonType Interactive
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest -LogonType ServiceAccount
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
@@ -52,4 +52,4 @@ if ($LASTEXITCODE -ne 0) {
   throw "Runtime permission repair failed with exit code $LASTEXITCODE"
 }
 
-Write-Output "Registered scheduled task $TaskName for $resolvedRuntimeUser"
+Write-Output "Registered startup task $TaskName to bootstrap the dashboard stack as SYSTEM"
