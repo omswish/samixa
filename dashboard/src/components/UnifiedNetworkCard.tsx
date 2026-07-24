@@ -283,6 +283,15 @@ function getNetworkLinkState(link?: NetworkLink | null) {
   return { label: stateLabel, tone: 'normal' as VisualTone };
 }
 
+function formatLinkStatusTimestamp(link: NetworkLink) {
+  if (!link.lastStatusChange) {
+    return 'No status timestamp';
+  }
+
+  const providerState = getNetworkLinkState(link);
+  return `${providerState.label === 'Down' ? 'Down Since' : 'Up Since'}: ${link.lastStatusChange}`;
+}
+
 function getSpeedLabel(link: NetworkLink) {
   if (link.portSpeed) {
     return link.portSpeed;
@@ -717,7 +726,7 @@ export default function UnifiedNetworkCard({ links, sectionHealth }: UnifiedNetw
 
               <div style={{ display: 'var(--wall-network-footer-display)', justifyContent: 'space-between', alignItems: 'center', gap: '6px', fontSize: 'var(--wall-network-meta-font-size)', opacity: 0.64 }}>
                 <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {link.lastStatusChange ? `Status changed ${link.lastStatusChange}` : 'No status timestamp'}
+                  {formatLinkStatusTimestamp(link)}
                 </div>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' }}>
                   <span style={{ color: TX_ACCENT, fontWeight: 700 }}>

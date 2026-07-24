@@ -23,6 +23,7 @@ import {
 interface ServerNode {
   id: string;
   name: string;
+  description?: string | null;
   location: string;
   status: 'operational' | 'degraded' | 'down';
   cpu: number | null;
@@ -43,6 +44,8 @@ interface ServerNode {
   nutanixStatusText?: string | null;
   solarwindsStatusText?: string | null;
 }
+
+type WakeLockStatus = 'active' | 'retrying' | 'released' | 'unsupported' | 'error';
 
 interface NetworkLink {
   id: string;
@@ -100,7 +103,7 @@ interface TicketBreakdown {
 }
 
 const HSD_STATUS_COLORS = {
-  new: '#8d1f3f',
+  new: '#b71c1c',
   assigned: '#d09538',
   inProgress: '#45935f',
   pending: '#72828f'
@@ -123,11 +126,11 @@ const MUTED_WARNING = {
 } as const;
 
 const MUTED_CRITICAL = {
-  bg: 'rgba(141,31,63,0.17)',
-  border: 'rgba(141,31,63,0.32)',
-  text: '#671730',
-  fill: '#8d1f3f',
-  soft: 'rgba(141,31,63,0.26)'
+  bg: 'rgba(183,28,28,0.14)',
+  border: 'rgba(183,28,28,0.32)',
+  text: '#7f1414',
+  fill: '#b71c1c',
+  soft: 'rgba(183,28,28,0.22)'
 } as const;
 
 const MUTED_OFFLINE = {
@@ -964,6 +967,14 @@ function getNetworkStateFilter(link: NetworkLink): NetworkStateFilter {
   return 'up';
 }
 
+function formatLinkStatusTimestamp(link: NetworkLink) {
+  if (!link.lastStatusChange) {
+    return 'No status timestamp';
+  }
+
+  return `${getNetworkStateFilter(link) === 'down' ? 'Down Since' : 'Up Since'}: ${link.lastStatusChange}`;
+}
+
 function countActiveFilters(filters: DashboardFilters, availableHsdWorkTypes: readonly HsdWorkFilter[] = ALL_HSD_WORK_TYPES) {
   let count = 0;
   const effectiveHsdWorkTypes = filters.hsdWorkTypes.filter((value) => availableHsdWorkTypes.includes(value));
@@ -1609,19 +1620,7 @@ function HsdAboutToMissCard({
               </span>
             ) : null}
           </>
-        ) : (
-          <span
-            style={{
-              fontSize: 'calc(var(--wall-sla-metric-value-size) + 0.02rem)',
-              fontWeight: 800,
-              lineHeight: 1,
-              color: 'var(--text-secondary)',
-              opacity: 0.42
-            }}
-          >
-            -
-          </span>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -1925,6 +1924,15 @@ function FleetSummaryChip({
 }
 
 function ServerTableHeaderCell({ label, align = 'left' }: { label: string; align?: 'left' | 'center' | 'right' }) {
+  const offset =
+    label === 'CPU' ? '-4px'
+      : label === 'RAM' ? '-9px'
+        : label === 'DSK' ? '-13px'
+          : label === 'AVL' ? '-17px'
+            : label === 'CPU TREND' ? '-21px'
+              : label === 'STATE' ? '-24px'
+                : '0';
+
   return (
     <div
       style={{
@@ -1932,7 +1940,8 @@ function ServerTableHeaderCell({ label, align = 'left' }: { label: string; align
         fontWeight: 800,
         letterSpacing: '0.1em',
         opacity: 0.56,
-        textAlign: align
+        textAlign: align,
+        transform: offset === '0' ? undefined : `translateX(${offset})`
       }}
     >
       {label}
@@ -2025,6 +2034,47 @@ function DashboardLegendChip({
   );
 }
 
+function WakeLockStatusBadge({
+  status,
+  detail
+}: {
+  status: WakeLockStatus;
+  detail: string;
+}) {
+  const visual = status === 'active'
+    ? { text: 'SCREEN AWAKE', color: '#2e7d32', background: 'rgba(46,125,50,0.10)', border: 'rgba(46,125,50,0.20)' }
+    : status === 'retrying'
+      ? { text: 'WAKE LOCK RETRY', color: '#1565c0', background: 'rgba(21,101,192,0.10)', border: 'rgba(21,101,192,0.20)' }
+      : status === 'released'
+        ? { text: 'WAKE LOCK IDLE', color: '#ef6c00', background: 'rgba(239,108,0,0.10)', border: 'rgba(239,108,0,0.20)' }
+        : status === 'unsupported'
+          ? { text: 'WAKE LOCK N/A', color: '#6d4c41', background: 'rgba(109,76,65,0.10)', border: 'rgba(109,76,65,0.18)' }
+          : { text: 'WAKE LOCK BLOCKED', color: '#b71c1c', background: 'rgba(183,28,28,0.10)', border: 'rgba(183,28,28,0.18)' };
+
+  return (
+    <span
+      title={detail}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '4px 9px',
+        borderRadius: '999px',
+        border: `1px solid ${visual.border}`,
+        background: visual.background,
+        fontSize: '0.58rem',
+        fontWeight: 800,
+        letterSpacing: '0.08em',
+        color: visual.color,
+        whiteSpace: 'nowrap'
+      }}
+    >
+      <span style={{ width: '7px', height: '7px', borderRadius: '999px', background: visual.color }} />
+      {visual.text}
+    </span>
+  );
+}
+
 function ServerInfoDrawer({ server }: { server: ServerNode }) {
   const visual = getServerVisualState(server);
   const palette = getTonePalette(visual.tone);
@@ -2035,15 +2085,17 @@ function ServerInfoDrawer({ server }: { server: ServerNode }) {
   const liveSourceLabel = primarySource === 'nutanix' ? 'Nutanix' : primarySource === 'solarwinds' ? 'SolarWinds' : 'Unknown';
   const detailRows = [
     { label: 'State', value: visual.label },
-    { label: 'Source Of Truth', value: sourceOfTruthLabel },
-    { label: 'Live Feed', value: liveSourceLabel },
+    { label: 'Server Role', value: server.description || 'NA' },
+    { label: 'IP', value: server.pollingIp || 'NA' },
+    { label: 'Primary Source', value: sourceOfTruthLabel },
+    { label: 'Live Source', value: liveSourceLabel },
     { label: 'Fallback', value: server.usingFallback ? 'Active from SolarWinds' : 'Not active' },
     { label: 'Platform', value: getServerPlatform(server) },
     { label: 'OS', value: getServerOsFamily(server) },
     { label: 'Backup', value: server.backupStatus === 'N/A' ? 'NA' : server.backupStatus.toUpperCase() },
-    { label: 'Availability', value: server.availabilityToday === null || server.availabilityToday === undefined ? 'NA' : `${formatSmallNumber(server.availabilityToday)}%` },
+    { label: 'Avail Today', value: server.availabilityToday === null || server.availabilityToday === undefined ? 'NA' : `${formatSmallNumber(server.availabilityToday)}%` },
     { label: 'Last Boot', value: server.lastBoot || 'NA' },
-    { label: 'Node ID', value: server.solarwindsNodeId ? String(server.solarwindsNodeId) : 'NA' }
+    { label: 'SW Node', value: server.solarwindsNodeId ? String(server.solarwindsNodeId) : 'NA' }
   ];
 
   return (
@@ -2061,7 +2113,7 @@ function ServerInfoDrawer({ server }: { server: ServerNode }) {
         {detailRows.map((item) => (
           <div key={item.label} style={{ minWidth: 0 }}>
             <div style={{ fontSize: '0.46rem', fontWeight: 800, letterSpacing: '0.08em', opacity: 0.56 }}>{item.label}</div>
-            <div style={{ fontSize: '0.66rem', fontWeight: 800, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={`${item.label}: ${item.value}`}>
+            <div style={{ fontSize: '0.66rem', fontWeight: 800, color: 'var(--text-primary)', whiteSpace: item.label === 'Server Role' ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.28 }} title={`${item.label}: ${item.value}`}>
               {item.value}
             </div>
           </div>
@@ -2827,7 +2879,7 @@ function FilterPanel({
         <FilterGroup title="SERVER STATUS">
           <FilterChip label="NORMAL" active={filters.serverStatuses.includes('normal')} onClick={() => onToggleServerStatus('normal')} accent="#2e7d32" />
           <FilterChip label="WARNING" active={filters.serverStatuses.includes('warning')} onClick={() => onToggleServerStatus('warning')} accent="#f57f17" />
-          <FilterChip label="CRITICAL" active={filters.serverStatuses.includes('critical')} onClick={() => onToggleServerStatus('critical')} accent="#c62828" />
+          <FilterChip label="CRITICAL" active={filters.serverStatuses.includes('critical')} onClick={() => onToggleServerStatus('critical')} accent="#b71c1c" />
           <FilterChip label="OFFLINE" active={filters.serverStatuses.includes('offline')} onClick={() => onToggleServerStatus('offline')} accent="#607d8b" />
         </FilterGroup>
 
@@ -3132,7 +3184,7 @@ function MobileNetworkLinkCard({ link }: { link: NetworkLink }) {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', fontSize: '0.58rem', opacity: 0.68 }}>
         <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {link.lastStatusChange ? `Change ${link.lastStatusChange}` : 'No status timestamp'}
+          {formatLinkStatusTimestamp(link)}
         </span>
         <span style={{ whiteSpace: 'nowrap' }}>
           {`TX ${formatPercent(link.dailyTransmitUtilization, 1)} | RX ${formatPercent(link.dailyReceiveUtilization, 1)}`}
@@ -3513,6 +3565,8 @@ export default function Dashboard() {
   const [sessionLoading, setSessionLoading] = useState(true);
   const [wsConnected, setWsConnected] = useState(false);
   const [time, setTime] = useState('');
+  const [wakeLockStatus, setWakeLockStatus] = useState<WakeLockStatus>('retrying');
+  const [wakeLockDetail, setWakeLockDetail] = useState('Checking browser wake lock support.');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<DashboardFilters>(createDefaultFilters);
   const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
@@ -3687,12 +3741,21 @@ export default function Dashboard() {
 
     const requestWakeLock = async () => {
       if (cancelled || document.visibilityState !== 'visible') {
+        if (!cancelled && document.visibilityState !== 'visible') {
+          setWakeLockStatus('released');
+          setWakeLockDetail('Wake lock pauses while the dashboard tab is not visible.');
+        }
         return;
       }
 
       if (!('wakeLock' in navigator) || typeof navigator.wakeLock?.request !== 'function') {
+        setWakeLockStatus('unsupported');
+        setWakeLockDetail('This browser context does not expose the Screen Wake Lock API for the current URL.');
         return;
       }
+
+      setWakeLockStatus('retrying');
+      setWakeLockDetail('Requesting screen wake lock from the browser.');
 
       try {
         const sentinel = await navigator.wakeLock.request('screen');
@@ -3702,12 +3765,25 @@ export default function Dashboard() {
         }
 
         wakeLockRef.current = sentinel;
+        setWakeLockStatus('active');
+        setWakeLockDetail('Screen wake lock is active for this dashboard tab.');
         sentinel.addEventListener('release', () => {
           if (wakeLockRef.current === sentinel) {
             wakeLockRef.current = null;
           }
+          if (!cancelled) {
+            setWakeLockStatus(document.visibilityState === 'visible' ? 'released' : 'released');
+            setWakeLockDetail(
+              document.visibilityState === 'visible'
+                ? 'Browser released the wake lock. The dashboard will try again when focus or visibility returns.'
+                : 'Wake lock released because the dashboard is no longer visible.'
+            );
+          }
         });
       } catch (error) {
+        const message = error instanceof Error ? error.message : 'The browser denied or could not grant wake lock.';
+        setWakeLockStatus('error');
+        setWakeLockDetail(`Wake lock request failed: ${message}`);
         console.warn('Screen wake lock could not be acquired:', error);
       }
     };
@@ -4232,7 +4308,7 @@ export default function Dashboard() {
           ) : null}
 
           {visibleSections.hsd ? (
-          <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--wall-grid-gap)', minHeight: 0, flex: '1.18 1 0' }}>
+          <section className="glass-panel dashboard-panel dashboard-panel--hsd" style={{ display: 'flex', flexDirection: 'column', gap: 'calc(var(--wall-grid-gap) - 2px)', minHeight: 0, flex: '1.05 1 0' }}>
             <div className="hsd-panel-header">
               <div className="hsd-panel-title">
                 <div
@@ -4328,7 +4404,7 @@ export default function Dashboard() {
 
           {visibleSections.network ? (
             filteredNetworks.length > 0 ? (
-              <div className="dashboard-network-slot" style={{ display: 'flex', minHeight: 0, flex: '0.94 1 0', minWidth: 0, width: '100%' }}>
+              <div className="dashboard-network-slot" style={{ display: 'flex', minHeight: 0, flex: '1.07 1 0', minWidth: 0, width: '100%' }}>
                 <UnifiedNetworkCard links={filteredNetworks} sectionHealth={data.sections.networks} />
               </div>
             ) : (
@@ -4396,7 +4472,9 @@ export default function Dashboard() {
               display: 'grid',
               gridTemplateColumns: SERVER_TABLE_COLUMNS,
               gap: '8px',
-              padding: '0 8px',
+              padding: 'var(--wall-server-row-padding)',
+              paddingLeft: '16px',
+              paddingRight: '16px',
               alignItems: 'center'
             }}
           >
@@ -4477,6 +4555,7 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="dashboard-footer-right" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <WakeLockStatusBadge status={wakeLockStatus} detail={wakeLockDetail} />
           <span style={{ fontSize: '0.58rem', fontWeight: 900, letterSpacing: '0.08em', color: 'var(--text-secondary)' }}>
             SYSTEM STATUS: {overallSystemStatus}
           </span>
@@ -4536,6 +4615,7 @@ export default function Dashboard() {
             <Clock size={15} style={{ color: 'var(--primary)' }} />
             <span>{time}</span>
           </div>
+          <WakeLockStatusBadge status={wakeLockStatus} detail={wakeLockDetail} />
         </div>
       </header>
 

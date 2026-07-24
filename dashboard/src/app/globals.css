@@ -43,7 +43,7 @@ html {
   
   --status-ok: #45935f;
   --status-warning: #d09538;
-  --status-critical: #8d1f3f;
+  --status-critical: #b71c1c;
   --status-down: #72828f;
   
   --font-headings: 'Outfit', sans-serif;
@@ -441,7 +441,7 @@ h1, h2, h3, h4, h5, h6 {
 .hsd-footer-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
-  gap: var(--wall-panel-gap);
+  gap: calc(var(--wall-panel-gap) - 2px);
   min-height: 0;
   align-items: stretch;
 }

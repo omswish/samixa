@@ -23,6 +23,7 @@ type ServerPlatform = 'hci-vm' | 'on-prem';
 interface ServerNode {
   id: string;
   name: string;
+  description: string | null;
   location: string;
   status: AssetStatus;
   cpu: number | null;
@@ -185,6 +186,7 @@ interface DefaultServerMetadata {
   sourceOfTruth: ServerSourceOfTruth;
   platform: ServerPlatform;
   solarwindsNodeId: number | null;
+  description: string | null;
 }
 
 const STATE_KEY = 'dashboard_state';
@@ -196,30 +198,31 @@ const SOURCE_SECTION_KEYS: Record<CollectorSource, SectionKey[]> = {
 };
 
 const DEFAULT_SERVER_METADATA: Record<string, DefaultServerMetadata> = {
-  'HIL-HIDDOR-AV01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 651 },
-  'HIL-HIDDOR-BK01.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 1028 },
-  'HIL-HIDDOR-CSCTS1.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 311 },
-  'HIL-HIDDOR-CSCTS2.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 319 },
-  'HILHIDDORDT0320.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 299 },
-  'HIL-HIDDOR-FS01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 216 },
-  'HILHIDDORILMSAP': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1026 },
-  'HILHIDDORILMSDB': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1027 },
-  'HIL-HIDDOR-PIMW.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 221 },
-  'HIL-HIDDOR-PSDM.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 568 },
-  'HIL-HIDDOR-US01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1058 },
-  'HIL-HIDDOR-US02.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 349 },
-  'HIL-HIDDOR-US03.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 347 },
-  'HIL-HIDDOR-US04.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 652 },
-  'HIL-HIDDOR-US05.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1024 },
-  'HIL-HIDDOR-US06.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1025 }
+  'HIL-HIDDOR-AV01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 651, description: 'Server Streaming' },
+  'HIL-HIDDOR-BK01.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 1028, description: 'BACKUP' },
+  'HIL-HIDDOR-CSCTS1.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 311, description: 'CSCTS Server' },
+  'HIL-HIDDOR-CSCTS2.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 319, description: 'CSCTS Redundant Server' },
+  'HILHIDDORDT0320.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 299, description: 'Database' },
+  'HIL-HIDDOR-FS01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 216, description: 'AMS Server' },
+  'HILHIDDORILMSAP': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1026, description: 'ILMS APPLICATION' },
+  'HILHIDDORILMSDB': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1027, description: 'ILMS DATABASE' },
+  'HIL-HIDDOR-PIMW.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 221, description: 'Exaquantum Web Server' },
+  'HIL-HIDDOR-PSDM.abgplanet.abg.com': { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: 568, description: 'PSDM Application' },
+  'HIL-HIDDOR-US01.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1058, description: 'Terminal Server for IT-OT Access' },
+  'HIL-HIDDOR-US02.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 349, description: 'DHCP & AUTODESK' },
+  'HIL-HIDDOR-US03.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 347, description: 'SmartFace Application-Attendance' },
+  'HIL-HIDDOR-US04.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 652, description: 'Web Application' },
+  'HIL-HIDDOR-US05.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1024, description: 'CLMS' },
+  'HIL-HIDDOR-US06.abgplanet.abg.com': { sourceOfTruth: 'nutanix', platform: 'hci-vm', solarwindsNodeId: 1025, description: 'LIMS APPLICATION' }
 };
 
 function createDefaultServer(id: string, name: string): ServerNode {
-  const metadata = DEFAULT_SERVER_METADATA[name] ?? { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: null };
+  const metadata = DEFAULT_SERVER_METADATA[name] ?? { sourceOfTruth: 'solarwinds', platform: 'on-prem', solarwindsNodeId: null, description: null };
 
   return {
     id,
     name,
+    description: metadata.description,
     location: 'Utkal DC',
     status: 'operational',
     cpu: null,
@@ -513,6 +516,7 @@ function mergeServers(incomingServers: any[]): ServerNode[] {
     target.pollingIp = typeof target.pollingIp === 'string' ? target.pollingIp : null;
     target.machineType = typeof target.machineType === 'string' ? target.machineType : null;
     target.hardwareType = typeof target.hardwareType === 'string' ? target.hardwareType : null;
+    target.description = typeof target.description === 'string' ? target.description : target.description ?? null;
     target.lastBoot = typeof target.lastBoot === 'string' ? target.lastBoot : null;
     target.availabilityToday = typeof target.availabilityToday === 'number' ? target.availabilityToday : null;
     target.nutanixStatusText = typeof target.nutanixStatusText === 'string' ? target.nutanixStatusText : null;
