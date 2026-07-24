@@ -148,7 +148,12 @@ The UI uses this data to derive link state and staleness messaging. The dashboar
 - encrypted local secret handling supported through the configured secret-store passphrase
 - installer and bootstrap paths maintain separate credentials for Nutanix, SolarWinds 45, SolarWinds 46, and HSD
 
-### 8.3 Optional Extensions
+### 8.3 Local Audit Trail
+- admin and authentication audit records are stored as append-only JSONL files under `C:\ProgramData\UAIL\ITDashboard\audit`
+- the admin Audit lane and export actions read from this local store
+- this audit path is independent of PostgreSQL and is part of the supported baseline
+
+### 8.4 Optional Extensions
 - PostgreSQL-related source code remains in the repository for future maturity work
 - PostgreSQL is not part of the supported installer or deployment baseline for the current release
 
@@ -180,6 +185,7 @@ flowchart LR
 | Internal gateway port | `4000` loopback |
 | Process manager | PM2 |
 | Runtime store | SQLite |
+| Audit store | Local append-only JSONL files under runtime root |
 
 Bootstrap expectations:
 - installer and staged deployment prompt separately for SolarWinds 45 credentials, SolarWinds 46 credentials, and HSD credentials
@@ -204,6 +210,11 @@ Auto-heal mechanisms:
 - Windows startup recovery via a SYSTEM scheduled task that reruns the bundled PM2 bootstrap
 - runtime permission repair for PM2 state, session files, logs, config, and app data before bootstrap
 - admin-triggered restart actions
+- browser wake-lock request on the operator surface when the browser supports secure-context screen wake lock
+
+Screen-display note:
+- the operator UI attempts to keep the screen awake through the browser when supported
+- Windows lock-screen, screensaver, or group-policy enforcement can still override browser behavior, so dedicated wallboard machines should still be configured appropriately at the OS level
 
 ## 12. Security Boundaries
 - only the two front-door ports should be LAN-exposed

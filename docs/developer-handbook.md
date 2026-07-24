@@ -7,7 +7,7 @@
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
-| Last Updated | 2026-07-19 |
+| Last Updated | 2026-07-24 |
 | Audience | Developers, maintainers, deployment engineers |
 
 ## 1. Purpose
@@ -135,6 +135,7 @@ This writes PDFs to:
 
 ## 11. Deployment-Related Developer Notes
 - deployment is SQLite-first
+- admin and auth audit events are stored in append-only runtime files under `C:\ProgramData\UAIL\ITDashboard\audit`
 - PostgreSQL is not part of the supported installer path for the current release baseline
 - PM2 is the current supervision model
 - offline bundle generation remains important for Windows server deployment

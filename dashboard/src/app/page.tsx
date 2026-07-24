@@ -3517,6 +3517,7 @@ export default function Dashboard() {
   const [filters, setFilters] = useState<DashboardFilters>(createDefaultFilters);
   const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   useEffect(() => {
     const updateTime = () => {
@@ -3673,6 +3674,63 @@ export default function Dashboard() {
       }
       if (wsRef.current) {
         wsRef.current.close();
+      }
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const requestWakeLock = async () => {
+      if (cancelled || document.visibilityState !== 'visible') {
+        return;
+      }
+
+      if (!('wakeLock' in navigator) || typeof navigator.wakeLock?.request !== 'function') {
+        return;
+      }
+
+      try {
+        const sentinel = await navigator.wakeLock.request('screen');
+        if (cancelled) {
+          await sentinel.release().catch(() => undefined);
+          return;
+        }
+
+        wakeLockRef.current = sentinel;
+        sentinel.addEventListener('release', () => {
+          if (wakeLockRef.current === sentinel) {
+            wakeLockRef.current = null;
+          }
+        });
+      } catch (error) {
+        console.warn('Screen wake lock could not be acquired:', error);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && !wakeLockRef.current) {
+        void requestWakeLock();
+      }
+    };
+
+    void requestWakeLock();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+
+      if (wakeLockRef.current) {
+        const activeWakeLock = wakeLockRef.current;
+        wakeLockRef.current = null;
+        void activeWakeLock.release().catch(() => undefined);
       }
     };
   }, [session]);

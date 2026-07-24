@@ -1,7 +1,7 @@
 ; Inno Setup blueprint for the Utkal IT Dashboard deployment package.
 
 #define AppName "Utkal IT Dashboard"
-#define AppVersion "1.2.0"
+#define AppVersion "1.2.1"
 #define AppPublisher "UAIL IT"
 #ifndef StageRoot
 #define StageRoot "..\staging\current"

@@ -1,8 +1,8 @@
-; In-place dashboard hotfix package for auth UI updates, server table refinements,
-; and Nutanix server disk telemetry fallback.
+; In-place dashboard hotfix package for runtime audit-store alignment,
+; dashboard wake-lock support, and related UI/runtime fixes.
 
 #define AppName "Utkal IT Dashboard Hotfix"
-#define AppVersion "1.0.0.2"
+#define AppVersion "1.2.1"
 #define AppPublisher "UAIL IT"
 #ifndef StageRoot
 #define StageRoot "..\staging\current"
@@ -31,6 +31,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "{#StageRoot}\app\dashboard\*"; DestDir: "{app}\app\dashboard"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageRoot}\app\api-gateway\dist\*"; DestDir: "{app}\app\api-gateway\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageRoot}\app\collectors\nutanix\dist\*"; DestDir: "{app}\app\collectors\nutanix\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "support\apply-dashboard-hotfix.ps1"; DestDir: "{app}\support"; Flags: ignoreversion
 

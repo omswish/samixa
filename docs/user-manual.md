@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-UM-001 |
-| Version | 1.2 |
+| Version | 1.2.1 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |
@@ -212,6 +212,7 @@ Use `Audit` to:
 Operational note:
 - the on-screen table is intentionally compact for quick review
 - the export includes deeper fields such as target IDs, source IPs, and serialized request/result summaries
+- the current release stores the audit trail locally under `C:\ProgramData\UAIL\ITDashboard\audit`
 
 ## 15. Help Lane
 
@@ -225,6 +226,11 @@ Use it for:
 - checking system design details
 - opening the user manual
 - opening the developer handbook
+
+## 15.1 Screen Wake Behavior
+- the operator surface requests a browser wake lock when supported so a wallboard tab can stay awake more reliably
+- this helps only when the browser and page context allow screen wake lock
+- Windows lock-screen, screensaver, or policy-based idle controls can still override browser behavior on the host machine
 
 ## 16. Troubleshooting Guide
 

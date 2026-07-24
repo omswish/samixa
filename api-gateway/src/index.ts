@@ -20,10 +20,8 @@ import {
   CollectorRunPayload,
   isPostgresMirrorEnabled,
   isPostgresPrimaryMetricsEnabled,
-  listAppActionAuditFromPostgres,
   listLocalAuthCredentialsFromPostgres,
   mirrorDashboardStateToPostgres,
-  recordAppActionAuditInPostgres,
   recordCollectorRunsToPostgres,
   recordGatewayIngestEventToPostgres,
   replaceCollectorSecretConfigInPostgres,
@@ -50,6 +48,7 @@ import {
 import { ensureCollectorSecretConfigBootstrap, loadRuntimeCollectorSecrets } from './runtimeSecrets';
 import { encryptSecret } from './secretCrypto';
 import { replaceLocalCollectorSecretConfig, upsertLocalCollectorTargetConfig } from './localCollectorStore';
+import { listAppActionAuditFromFiles, recordAppActionAuditToFile } from './fileAuditStore';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -1066,11 +1065,6 @@ app.get('/api/admin/audit', async (req, res) => {
     return;
   }
 
-  if (!isPostgresMirrorEnabled()) {
-    res.status(503).json({ error: 'Postgres audit store is not enabled.' });
-    return;
-  }
-
   const actionType = typeof req.query.actionType === 'string' ? req.query.actionType.trim() : null;
   const actionResult = req.query.actionResult === 'success' || req.query.actionResult === 'failed' || req.query.actionResult === 'denied'
     ? req.query.actionResult
@@ -1085,7 +1079,7 @@ app.get('/api/admin/audit', async (req, res) => {
   }
 
   try {
-    const rows = await listAppActionAuditFromPostgres({
+    const rows = listAppActionAuditFromFiles({
       actionType,
       actionResult,
       actorUsername,
@@ -1100,11 +1094,6 @@ app.get('/api/admin/audit', async (req, res) => {
 
 app.post('/api/internal/audit', async (req, res) => {
   if (!requireLoopback(req, res)) {
-    return;
-  }
-
-  if (!isPostgresMirrorEnabled()) {
-    res.status(503).json({ error: 'Postgres audit store is not enabled.' });
     return;
   }
 
@@ -1136,7 +1125,7 @@ app.post('/api/internal/audit', async (req, res) => {
   }
 
   try {
-    await recordAppActionAuditInPostgres({
+    const record = recordAppActionAuditToFile({
       occurredAt,
       actionType,
       actionResult,
@@ -1155,7 +1144,7 @@ app.post('/api/internal/audit', async (req, res) => {
       correlationId: typeof req.body?.correlationId === 'string' ? req.body.correlationId.trim() || null : null
     });
 
-    res.json({ ok: true });
+    res.json({ ok: true, record });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

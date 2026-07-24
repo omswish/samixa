@@ -1,6 +1,6 @@
 {
   "name": "api-gateway",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Express + WebSockets central API gateway and DB storage for the IT dashboard",
   "main": "dist/index.js",
   "scripts": {
