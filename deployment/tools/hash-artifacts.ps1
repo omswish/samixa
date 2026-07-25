@@ -1,7 +1,9 @@
 param(
   [string]$InstallerOutputDir = (Join-Path $PSScriptRoot '..\installer\output'),
   [string]$ReleaseDir = (Join-Path $PSScriptRoot '..\release'),
-  [string]$OutputPath = (Join-Path $PSScriptRoot '..\release\artifact-hashes-2026-07-17.md')
+  [string]$OutputPath = (Join-Path $PSScriptRoot "..\release\artifact-hashes-$((Get-Date).ToString('yyyy-MM-dd')).md"),
+  [switch]$Recurse,
+  [switch]$AllReleaseArtifacts
 )
 
 Set-StrictMode -Version Latest
@@ -23,7 +25,16 @@ foreach ($artifactRoot in $artifactRoots) {
     continue
   }
 
-  $artifactFiles += Get-ChildItem -Path $artifactRoot.Root -File -Recurse |
+  $searchOptions = @{
+    Path = $artifactRoot.Root
+    File = $true
+  }
+
+  if ($Recurse) {
+    $searchOptions.Recurse = $true
+  }
+
+  $files = Get-ChildItem @searchOptions |
     Where-Object { $_.Extension -in '.exe', '.zip' } |
     ForEach-Object {
       [PSCustomObject]@{
@@ -33,10 +44,28 @@ foreach ($artifactRoot in $artifactRoots) {
         Label = $artifactRoot.Label
       }
     }
+
+  if (-not $Recurse -and -not $AllReleaseArtifacts -and $artifactRoot.Label -eq 'release') {
+    $latestReleaseFile = $files |
+      Sort-Object { [System.IO.File]::GetLastWriteTimeUtc($_.FullName) } -Descending |
+      Select-Object -First 1
+
+    if ($null -ne $latestReleaseFile) {
+      $files = @($latestReleaseFile)
+    } else {
+      $files = @()
+    }
+  }
+
+  $artifactFiles += $files
 }
 
+$artifactFiles = $artifactFiles |
+  Sort-Object Label, FullName -Unique
+
+$dateLabel = [System.IO.Path]::GetFileNameWithoutExtension($resolvedOutputPath) -replace '^artifact-hashes-', ''
 $lines = @(
-  '# Release Artifact Hashes - 2026-07-17',
+  "# Release Artifact Hashes - $dateLabel",
   '',
   '| File | SHA256 | Size |',
   '| --- | --- | --- |'

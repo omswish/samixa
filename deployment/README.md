@@ -48,3 +48,5 @@ Maintained references:
 - [docs/system-design.md](../docs/system-design.md)
 - [docs/user-manual.md](../docs/user-manual.md)
 - [docs/developer-handbook.md](../docs/developer-handbook.md)
+- [deployment/docs/windows-server-rollout-checklist.md](./docs/windows-server-rollout-checklist.md)
+- [deployment/release/artifact-hashes-2026-07-25.md](./release/artifact-hashes-2026-07-25.md)
