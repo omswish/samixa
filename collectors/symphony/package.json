@@ -1,6 +1,6 @@
 {
   "name": "symphony-collector",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Symphony Summit headless portal scraper with AD Auth support",
   "main": "dist/index.js",
   "scripts": {

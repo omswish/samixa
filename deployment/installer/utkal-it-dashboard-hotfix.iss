@@ -2,7 +2,7 @@
 ; dashboard wake-lock support, and related UI/runtime fixes.
 
 #define AppName "Utkal IT Dashboard Hotfix"
-#define AppVersion "1.2.1"
+#define AppVersion "1.2.2"
 #define AppPublisher "UAIL IT"
 #ifndef StageRoot
 #define StageRoot "..\staging\current"
