@@ -58,6 +58,73 @@ type AdminSettingsPayload = {
   };
 };
 
+type SolarWindsServerBinding = {
+  bindingId: number;
+  unitId: string;
+  displayName: string;
+  nodeId: number;
+  nodeObjectId: string;
+  aliases: string[];
+  role: string | null;
+  platform: string | null;
+  criticality: string;
+  enabled: boolean;
+  validationStatus: string;
+  lastValidatedAt: string | null;
+  validationMessage: string | null;
+};
+
+type SolarWindsNetworkBinding = {
+  bindingId: number;
+  unitId: string;
+  displayName: string;
+  provider: string;
+  nodeId: number;
+  nodeObjectId: string;
+  interfaceId: number | null;
+  interfaceObjectId: string | null;
+  kind: string;
+  circuitId: string | null;
+  bandwidthMbps: number | null;
+  criticality: string;
+  enabled: boolean;
+  validationStatus: string;
+  lastValidatedAt: string | null;
+  validationMessage: string | null;
+};
+
+type SolarWindsBindingPayload = {
+  unit: {
+    unitId: string;
+    unitCode: string;
+    displayName: string;
+  };
+  servers: SolarWindsServerBinding[];
+  networks: SolarWindsNetworkBinding[];
+};
+
+type SolarWindsServerBindingDraft = {
+  displayName: string;
+  nodeId: string;
+  aliases: string;
+  role: string;
+  platform: string;
+  criticality: string;
+  enabled: boolean;
+};
+
+type SolarWindsNetworkBindingDraft = {
+  displayName: string;
+  provider: string;
+  nodeId: string;
+  interfaceId: string;
+  kind: string;
+  circuitId: string;
+  bandwidthMbps: string;
+  criticality: string;
+  enabled: boolean;
+};
+
 type AppAuthStatus = {
   mode: 'postgres' | 'runtime' | 'env';
   updatedAt: string | null;
@@ -348,6 +415,32 @@ function createEmptyPasswordDraft(): PasswordDraft {
   };
 }
 
+function createEmptyServerBindingDraft(): SolarWindsServerBindingDraft {
+  return {
+    displayName: '',
+    nodeId: '',
+    aliases: '',
+    role: '',
+    platform: '',
+    criticality: 'standard',
+    enabled: false
+  };
+}
+
+function createEmptyNetworkBindingDraft(): SolarWindsNetworkBindingDraft {
+  return {
+    displayName: '',
+    provider: '',
+    nodeId: '',
+    interfaceId: '',
+    kind: 'carrier',
+    circuitId: '',
+    bandwidthMbps: '',
+    criticality: 'standard',
+    enabled: false
+  };
+}
+
 function createDefaultAuditFilters(): AuditFilterState {
   return {
     actionType: '',
@@ -410,6 +503,13 @@ export default function AdminPage() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditLoadedAt, setAuditLoadedAt] = useState<string | null>(null);
   const [auditFilters, setAuditFilters] = useState<AuditFilterState>(() => createDefaultAuditFilters());
+  const [solarwindsUnitId, setSolarwindsUnitId] = useState('utkal');
+  const [solarwindsBindings, setSolarwindsBindings] = useState<SolarWindsBindingPayload | null>(null);
+  const [solarwindsBindingLoading, setSolarwindsBindingLoading] = useState(false);
+  const [solarwindsBindingSaving, setSolarwindsBindingSaving] = useState<'server' | 'network' | null>(null);
+  const [solarwindsBindingError, setSolarwindsBindingError] = useState<string | null>(null);
+  const [serverBindingDraft, setServerBindingDraft] = useState<SolarWindsServerBindingDraft>(() => createEmptyServerBindingDraft());
+  const [networkBindingDraft, setNetworkBindingDraft] = useState<SolarWindsNetworkBindingDraft>(() => createEmptyNetworkBindingDraft());
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hsdImportRef = useRef<HTMLInputElement | null>(null);
@@ -491,6 +591,37 @@ export default function AdminPage() {
     }
   };
 
+  const loadSolarwindsBindings = async (unitId = solarwindsUnitId) => {
+    const normalizedUnitId = unitId.trim();
+    if (!normalizedUnitId) {
+      setSolarwindsBindingError('Enter a unit ID before loading SolarWinds bindings.');
+      return;
+    }
+
+    setSolarwindsBindingLoading(true);
+    setSolarwindsBindingError(null);
+    try {
+      const response = await fetch(`/api/units/${encodeURIComponent(normalizedUnitId)}/solarwinds/bindings?includeDisabled=true`, {
+        cache: 'no-store'
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to load SolarWinds bindings.');
+      }
+
+      setSolarwindsBindings({
+        unit: payload.unit,
+        servers: Array.isArray(payload.servers) ? payload.servers : [],
+        networks: Array.isArray(payload.networks) ? payload.networks : []
+      });
+    } catch (nextError: any) {
+      setSolarwindsBindings(null);
+      setSolarwindsBindingError(nextError?.message || 'Failed to load SolarWinds bindings.');
+    } finally {
+      setSolarwindsBindingLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -540,6 +671,14 @@ export default function AdminPage() {
     }
 
     void loadAudit(auditFilters);
+  }, [session, activeTab]);
+
+  useEffect(() => {
+    if (!session || session.role !== 'admin' || activeTab !== 'sources') {
+      return;
+    }
+
+    void loadSolarwindsBindings(solarwindsUnitId);
   }, [session, activeTab]);
 
   const handleLogout = async () => {
@@ -604,6 +743,112 @@ export default function AdminPage() {
         }
       }
     } : current);
+  };
+
+  const handleSaveServerBinding = async () => {
+    const unitId = solarwindsUnitId.trim();
+    const displayName = serverBindingDraft.displayName.trim();
+    const nodeId = Number.parseInt(serverBindingDraft.nodeId.trim(), 10);
+    if (!unitId || !displayName || !Number.isInteger(nodeId) || nodeId <= 0) {
+      setSolarwindsBindingError('Server display name and positive SolarWinds node ID are required.');
+      return;
+    }
+
+    setSolarwindsBindingSaving('server');
+    setSolarwindsBindingError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/units/${encodeURIComponent(unitId)}/solarwinds/server-bindings`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          displayName,
+          nodeId,
+          aliases: parseLines(serverBindingDraft.aliases),
+          role: serverBindingDraft.role.trim() || null,
+          platform: serverBindingDraft.platform.trim() || null,
+          criticality: serverBindingDraft.criticality.trim() || 'standard',
+          enabled: serverBindingDraft.enabled,
+          validationStatus: 'pending',
+          validationMessage: 'Created from admin console; verify SolarWinds reachability before relying on this binding.'
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to save server binding.');
+      }
+
+      setServerBindingDraft(createEmptyServerBindingDraft());
+      setMessage('SolarWinds server binding saved.');
+      await loadSolarwindsBindings(unitId);
+    } catch (nextError: any) {
+      setSolarwindsBindingError(nextError?.message || 'Failed to save server binding.');
+    } finally {
+      setSolarwindsBindingSaving(null);
+    }
+  };
+
+  const handleSaveNetworkBinding = async () => {
+    const unitId = solarwindsUnitId.trim();
+    const displayName = networkBindingDraft.displayName.trim();
+    const nodeId = Number.parseInt(networkBindingDraft.nodeId.trim(), 10);
+    const interfaceId = networkBindingDraft.interfaceId.trim()
+      ? Number.parseInt(networkBindingDraft.interfaceId.trim(), 10)
+      : null;
+    const bandwidthMbps = networkBindingDraft.bandwidthMbps.trim()
+      ? Number.parseInt(networkBindingDraft.bandwidthMbps.trim(), 10)
+      : null;
+    if (!unitId || !displayName || !Number.isInteger(nodeId) || nodeId <= 0) {
+      setSolarwindsBindingError('Network display name and positive SolarWinds node ID are required.');
+      return;
+    }
+    if (interfaceId !== null && (!Number.isInteger(interfaceId) || interfaceId <= 0)) {
+      setSolarwindsBindingError('Interface ID must be blank or a positive integer.');
+      return;
+    }
+    if (bandwidthMbps !== null && (!Number.isInteger(bandwidthMbps) || bandwidthMbps <= 0)) {
+      setSolarwindsBindingError('Bandwidth must be blank or a positive integer.');
+      return;
+    }
+
+    setSolarwindsBindingSaving('network');
+    setSolarwindsBindingError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/units/${encodeURIComponent(unitId)}/solarwinds/network-bindings`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          displayName,
+          provider: networkBindingDraft.provider.trim() || displayName,
+          nodeId,
+          interfaceId,
+          kind: networkBindingDraft.kind.trim() || 'carrier',
+          circuitId: networkBindingDraft.circuitId.trim() || null,
+          bandwidthMbps,
+          criticality: networkBindingDraft.criticality.trim() || 'standard',
+          enabled: networkBindingDraft.enabled,
+          validationStatus: 'pending',
+          validationMessage: 'Created from admin console; verify SolarWinds reachability before relying on this binding.'
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to save network binding.');
+      }
+
+      setNetworkBindingDraft(createEmptyNetworkBindingDraft());
+      setMessage('SolarWinds network binding saved.');
+      await loadSolarwindsBindings(unitId);
+    } catch (nextError: any) {
+      setSolarwindsBindingError(nextError?.message || 'Failed to save network binding.');
+    } finally {
+      setSolarwindsBindingSaving(null);
+    }
   };
 
   const handleSave = async () => {
@@ -1312,6 +1557,204 @@ export default function AdminPage() {
     </section>
   );
 
+  const renderSolarwindsBindingSummary = () => {
+    const activeServers = solarwindsBindings?.servers.filter((binding) => binding.enabled).length ?? 0;
+    const activeNetworks = solarwindsBindings?.networks.filter((binding) => binding.enabled).length ?? 0;
+
+    return (
+      <div style={scopeSectionStyle}>
+        <div style={scopeSectionHeaderStyle}>
+          <div>
+            <div style={scopeSectionTitleStyle}>SolarWinds unit bindings</div>
+            <div style={scopeSectionHintStyle}>Unit-owned node mappings that override the legacy hardcoded server and network lists when PostgreSQL central mode is active.</div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <label style={{ ...fieldBlockStyle, minWidth: '180px' }}>
+              Unit ID
+              <input value={solarwindsUnitId} onChange={(event) => setSolarwindsUnitId(event.target.value)} style={fieldStyle} />
+            </label>
+            <button type="button" onClick={() => void loadSolarwindsBindings()} disabled={solarwindsBindingLoading} style={secondaryButtonStyle}>
+              <RefreshCw size={14} className={solarwindsBindingLoading ? 'animate-spin' : undefined} />
+              Load bindings
+            </button>
+          </div>
+        </div>
+
+        {solarwindsBindingError ? (
+          <div style={{ ...messageBarStyle, color: '#b3261e', background: 'rgba(198,40,40,0.10)', borderColor: 'rgba(198,40,40,0.18)' }}>
+            {solarwindsBindingError}
+          </div>
+        ) : null}
+
+        <div style={workflowStatGridStyle}>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Selected unit</div>
+            <div style={workflowStatValueStyle}>{solarwindsBindings?.unit.unitCode || solarwindsUnitId || '-'}</div>
+            <div style={workflowStatDetailStyle}>{solarwindsBindings?.unit.displayName || 'Load bindings to confirm unit registration'}</div>
+          </div>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Server bindings</div>
+            <div style={workflowStatValueStyle}>{activeServers}/{solarwindsBindings?.servers.length ?? 0}</div>
+            <div style={workflowStatDetailStyle}>Enabled / total mapped server nodes</div>
+          </div>
+          <div style={workflowStatCardStyle}>
+            <div style={workflowStatCaptionStyle}>Network bindings</div>
+            <div style={workflowStatValueStyle}>{activeNetworks}/{solarwindsBindings?.networks.length ?? 0}</div>
+            <div style={workflowStatDetailStyle}>Enabled / total mapped network objects</div>
+          </div>
+        </div>
+
+        <div style={sourceGridStyle}>
+          <div style={itemCardStyle}>
+            <div style={compactCardHeaderStyle}>
+              <div>
+                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Add server node</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Maps a unit server to a SolarWinds `N:` node ID.</div>
+              </div>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={serverBindingDraft.enabled}
+                  onChange={(event) => setServerBindingDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                />
+                Enabled
+              </label>
+            </div>
+            <div style={sourceFieldGridStyle}>
+              <label style={fieldBlockStyle}>
+                Display name
+                <input value={serverBindingDraft.displayName} onChange={(event) => setServerBindingDraft((current) => ({ ...current, displayName: event.target.value }))} style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Node ID
+                <input value={serverBindingDraft.nodeId} onChange={(event) => setServerBindingDraft((current) => ({ ...current, nodeId: event.target.value }))} placeholder="4567" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Role
+                <input value={serverBindingDraft.role} onChange={(event) => setServerBindingDraft((current) => ({ ...current, role: event.target.value }))} placeholder="application" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Platform
+                <input value={serverBindingDraft.platform} onChange={(event) => setServerBindingDraft((current) => ({ ...current, platform: event.target.value }))} placeholder="windows" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Criticality
+                <input value={serverBindingDraft.criticality} onChange={(event) => setServerBindingDraft((current) => ({ ...current, criticality: event.target.value }))} style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Aliases
+                <input value={serverBindingDraft.aliases} onChange={(event) => setServerBindingDraft((current) => ({ ...current, aliases: event.target.value }))} placeholder="Comma separated" style={fieldStyle} />
+              </label>
+            </div>
+            <button type="button" onClick={() => void handleSaveServerBinding()} disabled={solarwindsBindingSaving !== null} style={primaryButtonStyle(solarwindsBindingSaving !== null)}>
+              <Save size={14} />
+              {solarwindsBindingSaving === 'server' ? 'Saving...' : 'Save Server Binding'}
+            </button>
+          </div>
+
+          <div style={itemCardStyle}>
+            <div style={compactCardHeaderStyle}>
+              <div>
+                <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Add network object</div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Maps a unit carrier, WAN, or SDWAN object to SolarWinds node/interface IDs.</div>
+              </div>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={networkBindingDraft.enabled}
+                  onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, enabled: event.target.checked }))}
+                />
+                Enabled
+              </label>
+            </div>
+            <div style={sourceFieldGridStyle}>
+              <label style={fieldBlockStyle}>
+                Display name
+                <input value={networkBindingDraft.displayName} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, displayName: event.target.value }))} style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Provider
+                <input value={networkBindingDraft.provider} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, provider: event.target.value }))} placeholder="Defaults to display name" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Node ID
+                <input value={networkBindingDraft.nodeId} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, nodeId: event.target.value }))} placeholder="4567" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Interface ID
+                <input value={networkBindingDraft.interfaceId} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, interfaceId: event.target.value }))} placeholder="Optional" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Kind
+                <input value={networkBindingDraft.kind} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, kind: event.target.value }))} style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Bandwidth Mbps
+                <input value={networkBindingDraft.bandwidthMbps} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, bandwidthMbps: event.target.value }))} placeholder="Optional" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Circuit ID
+                <input value={networkBindingDraft.circuitId} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, circuitId: event.target.value }))} placeholder="Optional" style={fieldStyle} />
+              </label>
+              <label style={fieldBlockStyle}>
+                Criticality
+                <input value={networkBindingDraft.criticality} onChange={(event) => setNetworkBindingDraft((current) => ({ ...current, criticality: event.target.value }))} style={fieldStyle} />
+              </label>
+            </div>
+            <button type="button" onClick={() => void handleSaveNetworkBinding()} disabled={solarwindsBindingSaving !== null} style={primaryButtonStyle(solarwindsBindingSaving !== null)}>
+              <Save size={14} />
+              {solarwindsBindingSaving === 'network' ? 'Saving...' : 'Save Network Binding'}
+            </button>
+          </div>
+        </div>
+
+        <div style={sourceGridStyle}>
+          <div style={itemCardStyle}>
+            <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Configured server nodes</div>
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {(solarwindsBindings?.servers || []).length === 0 ? (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>No server bindings loaded.</div>
+              ) : solarwindsBindings?.servers.map((binding) => (
+                <div key={`server-${binding.bindingId}`} style={sessionTargetRowStyle}>
+                  <div style={{ display: 'grid', gap: '2px' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>{binding.displayName}</strong>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                      {binding.nodeObjectId} | {binding.role || 'role open'} | {binding.platform || 'platform open'}
+                    </span>
+                  </div>
+                  <span style={{ ...statusChipStyle, color: binding.enabled ? '#2e7d32' : '#455a64', background: binding.enabled ? 'rgba(46,125,50,0.10)' : 'rgba(69,90,100,0.10)', borderColor: binding.enabled ? 'rgba(46,125,50,0.20)' : 'rgba(69,90,100,0.18)' }}>
+                    {binding.enabled ? 'ENABLED' : 'DISABLED'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={itemCardStyle}>
+            <div style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Configured network objects</div>
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {(solarwindsBindings?.networks || []).length === 0 ? (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.84rem' }}>No network bindings loaded.</div>
+              ) : solarwindsBindings?.networks.map((binding) => (
+                <div key={`network-${binding.bindingId}`} style={sessionTargetRowStyle}>
+                  <div style={{ display: 'grid', gap: '2px' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>{binding.displayName}</strong>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                      {binding.interfaceObjectId || binding.nodeObjectId} | {binding.provider} | {binding.bandwidthMbps ? `${binding.bandwidthMbps} Mbps` : 'bandwidth open'}
+                    </span>
+                  </div>
+                  <span style={{ ...statusChipStyle, color: binding.enabled ? '#2e7d32' : '#455a64', background: binding.enabled ? 'rgba(46,125,50,0.10)' : 'rgba(69,90,100,0.10)', borderColor: binding.enabled ? 'rgba(46,125,50,0.20)' : 'rgba(69,90,100,0.18)' }}>
+                    {binding.enabled ? 'ENABLED' : 'DISABLED'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSourcesPanel = () => (
     <section className="glass-panel" style={contentPanelStyle}>
       <div style={panelHeaderStyle}>
@@ -1538,6 +1981,8 @@ export default function AdminPage() {
                   )}
                 </div>
               </div>
+
+              {renderSolarwindsBindingSummary()}
             </div>
           </div>
         </div>

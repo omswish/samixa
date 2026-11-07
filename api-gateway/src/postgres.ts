@@ -1,6 +1,15 @@
 import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
+import {
+  BusinessUnit,
+  DEFAULT_BUSINESS_UNIT,
+  DEFAULT_CLUSTER_MEMBERSHIP,
+  DEFAULT_UNIT_ID,
+  DEFAULT_UNIT_CLUSTER,
+  UnitCluster,
+  UnitClusterMembership
+} from './centralRbac';
 
 export interface SectionMirrorRecord {
   sectionKey: string;
@@ -101,6 +110,75 @@ export interface CollectorTargetConfigRecord {
   metadataJson: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SolarWindsServerBindingRecord {
+  bindingId: number;
+  unitId: string;
+  targetName: string;
+  displayName: string;
+  nodeId: number;
+  nodeObjectId: string;
+  aliases: string[];
+  role: string | null;
+  platform: string | null;
+  criticality: string;
+  enabled: boolean;
+  validationStatus: string;
+  lastValidatedAt: string | null;
+  validationMessage: string | null;
+  metadataJson: Record<string, unknown>;
+}
+
+export interface SolarWindsNetworkBindingRecord {
+  bindingId: number;
+  unitId: string;
+  targetName: string;
+  displayName: string;
+  provider: string;
+  nodeId: number;
+  nodeObjectId: string;
+  interfaceId: number | null;
+  interfaceObjectId: string | null;
+  kind: string;
+  circuitId: string | null;
+  bandwidthMbps: number | null;
+  criticality: string;
+  enabled: boolean;
+  validationStatus: string;
+  lastValidatedAt: string | null;
+  validationMessage: string | null;
+  metadataJson: Record<string, unknown>;
+}
+
+export interface SolarWindsServerBindingInput {
+  unitId?: string;
+  displayName: string;
+  nodeId: number;
+  aliases?: string[];
+  role?: string | null;
+  platform?: string | null;
+  criticality?: string | null;
+  enabled?: boolean;
+  validationStatus?: string;
+  validationMessage?: string | null;
+  metadataJson?: Record<string, unknown>;
+}
+
+export interface SolarWindsNetworkBindingInput {
+  unitId?: string;
+  displayName: string;
+  provider?: string;
+  nodeId: number;
+  interfaceId?: number | null;
+  kind?: string;
+  circuitId?: string | null;
+  bandwidthMbps?: number | null;
+  criticality?: string | null;
+  enabled?: boolean;
+  validationStatus?: string;
+  validationMessage?: string | null;
+  metadataJson?: Record<string, unknown>;
 }
 
 export interface CollectorSecretConfigSeed {
@@ -940,6 +1018,263 @@ class PostgresMirror {
     }));
   }
 
+  async listSolarWindsServerBindings(unitId = DEFAULT_UNIT_ID, options?: { includeDisabled?: boolean }): Promise<SolarWindsServerBindingRecord[]> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      binding_id: number;
+      unit_id: string;
+      target_name: string;
+      display_name: string;
+      node_id: number;
+      node_object_id: string;
+      aliases_json: unknown;
+      role: string | null;
+      platform: string | null;
+      criticality: string;
+      enabled: boolean;
+      validation_status: string;
+      last_validated_at: Date | string | null;
+      validation_message: string | null;
+      metadata_json: Record<string, unknown> | null;
+    }>(
+      `
+        SELECT
+          binding_id,
+          unit_id,
+          target_name,
+          display_name,
+          node_id,
+          node_object_id,
+          aliases_json,
+          role,
+          platform,
+          criticality,
+          enabled,
+          validation_status,
+          last_validated_at,
+          validation_message,
+          metadata_json
+        FROM solarwinds_server_binding
+        WHERE unit_id = $1
+          ${options?.includeDisabled ? '' : 'AND enabled = TRUE'}
+        ORDER BY display_name ASC
+      `,
+      [unitId]
+    );
+
+    return result.rows.map((row) => ({
+      bindingId: row.binding_id,
+      unitId: row.unit_id,
+      targetName: row.target_name,
+      displayName: row.display_name,
+      nodeId: row.node_id,
+      nodeObjectId: row.node_object_id,
+      aliases: Array.isArray(row.aliases_json)
+        ? row.aliases_json.filter((entry): entry is string => typeof entry === 'string')
+        : [],
+      role: row.role,
+      platform: row.platform,
+      criticality: row.criticality,
+      enabled: row.enabled,
+      validationStatus: row.validation_status,
+      lastValidatedAt: row.last_validated_at ? new Date(row.last_validated_at).toISOString() : null,
+      validationMessage: row.validation_message,
+      metadataJson: row.metadata_json ?? {}
+    }));
+  }
+
+  async listSolarWindsNetworkBindings(unitId = DEFAULT_UNIT_ID, options?: { includeDisabled?: boolean }): Promise<SolarWindsNetworkBindingRecord[]> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      binding_id: number;
+      unit_id: string;
+      target_name: string;
+      display_name: string;
+      provider: string;
+      node_id: number;
+      node_object_id: string;
+      interface_id: number | null;
+      interface_object_id: string | null;
+      kind: string;
+      circuit_id: string | null;
+      bandwidth_mbps: number | null;
+      criticality: string;
+      enabled: boolean;
+      validation_status: string;
+      last_validated_at: Date | string | null;
+      validation_message: string | null;
+      metadata_json: Record<string, unknown> | null;
+    }>(
+      `
+        SELECT
+          binding_id,
+          unit_id,
+          target_name,
+          display_name,
+          provider,
+          node_id,
+          node_object_id,
+          interface_id,
+          interface_object_id,
+          kind,
+          circuit_id,
+          bandwidth_mbps,
+          criticality,
+          enabled,
+          validation_status,
+          last_validated_at,
+          validation_message,
+          metadata_json
+        FROM solarwinds_network_binding
+        WHERE unit_id = $1
+          ${options?.includeDisabled ? '' : 'AND enabled = TRUE'}
+        ORDER BY display_name ASC
+      `,
+      [unitId]
+    );
+
+    return result.rows.map((row) => ({
+      bindingId: row.binding_id,
+      unitId: row.unit_id,
+      targetName: row.target_name,
+      displayName: row.display_name,
+      provider: row.provider,
+      nodeId: row.node_id,
+      nodeObjectId: row.node_object_id,
+      interfaceId: row.interface_id,
+      interfaceObjectId: row.interface_object_id,
+      kind: row.kind,
+      circuitId: row.circuit_id,
+      bandwidthMbps: row.bandwidth_mbps,
+      criticality: row.criticality,
+      enabled: row.enabled,
+      validationStatus: row.validation_status,
+      lastValidatedAt: row.last_validated_at ? new Date(row.last_validated_at).toISOString() : null,
+      validationMessage: row.validation_message,
+      metadataJson: row.metadata_json ?? {}
+    }));
+  }
+
+  async upsertSolarWindsServerBinding(input: SolarWindsServerBindingInput): Promise<SolarWindsServerBindingRecord> {
+    await this.initPromise;
+    const unitId = input.unitId || DEFAULT_UNIT_ID;
+    const result = await this.pool.query<{ binding_id: number }>(
+      `
+        INSERT INTO solarwinds_server_binding (
+          unit_id,
+          display_name,
+          node_id,
+          aliases_json,
+          role,
+          platform,
+          criticality,
+          enabled,
+          validation_status,
+          validation_message,
+          metadata_json,
+          last_validated_at
+        )
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11::jsonb, CASE WHEN $9 = 'validated' THEN NOW() ELSE NULL END)
+        ON CONFLICT (unit_id, target_name, node_id) DO UPDATE SET
+          display_name = EXCLUDED.display_name,
+          aliases_json = EXCLUDED.aliases_json,
+          role = EXCLUDED.role,
+          platform = EXCLUDED.platform,
+          criticality = EXCLUDED.criticality,
+          enabled = EXCLUDED.enabled,
+          validation_status = EXCLUDED.validation_status,
+          validation_message = EXCLUDED.validation_message,
+          metadata_json = EXCLUDED.metadata_json,
+          last_validated_at = CASE WHEN EXCLUDED.validation_status = 'validated' THEN NOW() ELSE solarwinds_server_binding.last_validated_at END
+        RETURNING binding_id
+      `,
+      [
+        unitId,
+        input.displayName,
+        input.nodeId,
+        JSON.stringify(input.aliases ?? []),
+        input.role ?? null,
+        input.platform ?? null,
+        input.criticality ?? 'standard',
+        input.enabled ?? false,
+        input.validationStatus ?? 'pending',
+        input.validationMessage ?? null,
+        JSON.stringify(input.metadataJson ?? {})
+      ]
+    );
+
+    const rows = await this.listSolarWindsServerBindings(unitId, { includeDisabled: true });
+    const row = rows.find((entry) => entry.bindingId === result.rows[0].binding_id);
+    if (!row) {
+      throw new Error('SolarWinds server binding was saved but could not be reloaded.');
+    }
+
+    return row;
+  }
+
+  async upsertSolarWindsNetworkBinding(input: SolarWindsNetworkBindingInput): Promise<SolarWindsNetworkBindingRecord> {
+    await this.initPromise;
+    const unitId = input.unitId || DEFAULT_UNIT_ID;
+    const provider = input.provider || input.displayName;
+    const result = await this.pool.query<{ binding_id: number }>(
+      `
+        INSERT INTO solarwinds_network_binding (
+          unit_id,
+          display_name,
+          provider,
+          node_id,
+          interface_id,
+          kind,
+          circuit_id,
+          bandwidth_mbps,
+          criticality,
+          enabled,
+          validation_status,
+          validation_message,
+          metadata_json,
+          last_validated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, CASE WHEN $11 = 'validated' THEN NOW() ELSE NULL END)
+        ON CONFLICT (unit_id, target_name, node_id, interface_id) DO UPDATE SET
+          display_name = EXCLUDED.display_name,
+          provider = EXCLUDED.provider,
+          kind = EXCLUDED.kind,
+          circuit_id = EXCLUDED.circuit_id,
+          bandwidth_mbps = EXCLUDED.bandwidth_mbps,
+          criticality = EXCLUDED.criticality,
+          enabled = EXCLUDED.enabled,
+          validation_status = EXCLUDED.validation_status,
+          validation_message = EXCLUDED.validation_message,
+          metadata_json = EXCLUDED.metadata_json,
+          last_validated_at = CASE WHEN EXCLUDED.validation_status = 'validated' THEN NOW() ELSE solarwinds_network_binding.last_validated_at END
+        RETURNING binding_id
+      `,
+      [
+        unitId,
+        input.displayName,
+        provider,
+        input.nodeId,
+        input.interfaceId ?? null,
+        input.kind ?? 'carrier',
+        input.circuitId ?? null,
+        input.bandwidthMbps ?? null,
+        input.criticality ?? 'standard',
+        input.enabled ?? false,
+        input.validationStatus ?? 'pending',
+        input.validationMessage ?? null,
+        JSON.stringify(input.metadataJson ?? {})
+      ]
+    );
+
+    const rows = await this.listSolarWindsNetworkBindings(unitId, { includeDisabled: true });
+    const row = rows.find((entry) => entry.bindingId === result.rows[0].binding_id);
+    if (!row) {
+      throw new Error('SolarWinds network binding was saved but could not be reloaded.');
+    }
+
+    return row;
+  }
+
   async bootstrapCollectorSecretConfig(seeds: CollectorSecretConfigSeed[]) {
     await this.initPromise;
     if (seeds.length === 0) {
@@ -1509,6 +1844,181 @@ class PostgresMirror {
     );
   }
 
+  async listBusinessUnits(): Promise<BusinessUnit[]> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      unit_id: string;
+      unit_code: string;
+      unit_name: string;
+      enabled: boolean;
+      timezone: string;
+      metadata_json: Record<string, unknown>;
+    }>(
+      `
+        SELECT
+          unit_id,
+          unit_code,
+          unit_name,
+          enabled,
+          timezone,
+          metadata_json
+        FROM business_unit
+        ORDER BY unit_name ASC, unit_id ASC
+      `
+    );
+
+    return result.rows.map((row) => ({
+      unitId: row.unit_id,
+      unitCode: row.unit_code,
+      unitName: row.unit_name,
+      enabled: row.enabled,
+      timezone: row.timezone,
+      metadataJson: row.metadata_json ?? {}
+    }));
+  }
+
+  async getBusinessUnit(unitId: string): Promise<BusinessUnit | null> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      unit_id: string;
+      unit_code: string;
+      unit_name: string;
+      enabled: boolean;
+      timezone: string;
+      metadata_json: Record<string, unknown>;
+    }>(
+      `
+        SELECT
+          unit_id,
+          unit_code,
+          unit_name,
+          enabled,
+          timezone,
+          metadata_json
+        FROM business_unit
+        WHERE unit_id = $1
+        LIMIT 1
+      `,
+      [unitId]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return {
+      unitId: row.unit_id,
+      unitCode: row.unit_code,
+      unitName: row.unit_name,
+      enabled: row.enabled,
+      timezone: row.timezone,
+      metadataJson: row.metadata_json ?? {}
+    };
+  }
+
+  async listUnitClusters(): Promise<UnitCluster[]> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      cluster_id: string;
+      cluster_code: string;
+      cluster_name: string;
+      enabled: boolean;
+      sort_order: number;
+      metadata_json: Record<string, unknown>;
+    }>(
+      `
+        SELECT
+          cluster_id,
+          cluster_code,
+          cluster_name,
+          enabled,
+          sort_order,
+          metadata_json
+        FROM unit_cluster
+        ORDER BY sort_order ASC, cluster_name ASC, cluster_id ASC
+      `
+    );
+
+    return result.rows.map((row) => ({
+      clusterId: row.cluster_id,
+      clusterCode: row.cluster_code,
+      clusterName: row.cluster_name,
+      enabled: row.enabled,
+      sortOrder: row.sort_order,
+      metadataJson: row.metadata_json ?? {}
+    }));
+  }
+
+  async getUnitCluster(clusterId: string): Promise<UnitCluster | null> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      cluster_id: string;
+      cluster_code: string;
+      cluster_name: string;
+      enabled: boolean;
+      sort_order: number;
+      metadata_json: Record<string, unknown>;
+    }>(
+      `
+        SELECT
+          cluster_id,
+          cluster_code,
+          cluster_name,
+          enabled,
+          sort_order,
+          metadata_json
+        FROM unit_cluster
+        WHERE cluster_id = $1
+        LIMIT 1
+      `,
+      [clusterId]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    return {
+      clusterId: row.cluster_id,
+      clusterCode: row.cluster_code,
+      clusterName: row.cluster_name,
+      enabled: row.enabled,
+      sortOrder: row.sort_order,
+      metadataJson: row.metadata_json ?? {}
+    };
+  }
+
+  async listUnitClusterMemberships(clusterId?: string): Promise<UnitClusterMembership[]> {
+    await this.initPromise;
+    const result = await this.pool.query<{
+      cluster_id: string;
+      unit_id: string;
+      membership_kind: 'primary' | 'secondary';
+      sort_order: number;
+    }>(
+      `
+        SELECT
+          cluster_id,
+          unit_id,
+          membership_kind,
+          sort_order
+        FROM unit_cluster_member
+        ${clusterId ? 'WHERE cluster_id = $1' : ''}
+        ORDER BY sort_order ASC, unit_id ASC
+      `,
+      clusterId ? [clusterId] : []
+    );
+
+    return result.rows.map((row) => ({
+      clusterId: row.cluster_id,
+      unitId: row.unit_id,
+      membershipKind: row.membership_kind,
+      sortOrder: row.sort_order
+    }));
+  }
+
   async listAppActionAudit(query: AppActionAuditQuery): Promise<AppActionAuditRecord[]> {
     await this.initPromise;
 
@@ -1660,6 +2170,10 @@ export function isPostgresPrimaryMetricsEnabled() {
   return isPostgresMirrorEnabled() && /^(1|true|yes|primary)$/i.test(process.env.POSTGRES_PRIMARY_METRICS || '');
 }
 
+export function isCentralModeEnabled() {
+  return /^(1|true|yes|central)$/i.test(process.env.ITDASH_CENTRAL_MODE || process.env.CENTRAL_MODE || '');
+}
+
 export async function syncDashboardStateToPostgresNow(payload: DashboardStateMirrorPayload) {
   const mirror = getPostgresMirror();
   if (!mirror) {
@@ -1703,6 +2217,42 @@ export async function getCollectorTargetConfigsFromPostgres(sourceName: string) 
   }
 
   return mirror.getCollectorTargetConfigs(sourceName);
+}
+
+export async function listSolarWindsServerBindingsFromPostgres(unitId = DEFAULT_UNIT_ID, options?: { includeDisabled?: boolean }) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return [];
+  }
+
+  return mirror.listSolarWindsServerBindings(unitId, options);
+}
+
+export async function listSolarWindsNetworkBindingsFromPostgres(unitId = DEFAULT_UNIT_ID, options?: { includeDisabled?: boolean }) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return [];
+  }
+
+  return mirror.listSolarWindsNetworkBindings(unitId, options);
+}
+
+export async function upsertSolarWindsServerBindingInPostgres(input: SolarWindsServerBindingInput) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    throw new Error('POSTGRES_URL is not configured. Postgres mirror is disabled.');
+  }
+
+  return mirror.upsertSolarWindsServerBinding(input);
+}
+
+export async function upsertSolarWindsNetworkBindingInPostgres(input: SolarWindsNetworkBindingInput) {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    throw new Error('POSTGRES_URL is not configured. Postgres mirror is disabled.');
+  }
+
+  return mirror.upsertSolarWindsNetworkBinding(input);
 }
 
 export async function bootstrapCollectorSecretConfigNow(seeds: CollectorSecretConfigSeed[]) {
@@ -1834,6 +2384,53 @@ export async function touchLocalAuthCredentialLoginInPostgres(username: 'admin' 
   }
 
   await mirror.touchLocalAuthCredentialLogin(username);
+}
+
+export async function listBusinessUnitsFromPostgres(): Promise<BusinessUnit[]> {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return [DEFAULT_BUSINESS_UNIT];
+  }
+
+  return mirror.listBusinessUnits();
+}
+
+export async function getBusinessUnitFromPostgres(unitId: string): Promise<BusinessUnit | null> {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return unitId === DEFAULT_BUSINESS_UNIT.unitId ? DEFAULT_BUSINESS_UNIT : null;
+  }
+
+  return mirror.getBusinessUnit(unitId);
+}
+
+export async function listUnitClustersFromPostgres(): Promise<UnitCluster[]> {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return [DEFAULT_UNIT_CLUSTER];
+  }
+
+  return mirror.listUnitClusters();
+}
+
+export async function getUnitClusterFromPostgres(clusterId: string): Promise<UnitCluster | null> {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return clusterId === DEFAULT_UNIT_CLUSTER.clusterId ? DEFAULT_UNIT_CLUSTER : null;
+  }
+
+  return mirror.getUnitCluster(clusterId);
+}
+
+export async function listUnitClusterMembershipsFromPostgres(clusterId?: string): Promise<UnitClusterMembership[]> {
+  const mirror = getPostgresMirror();
+  if (!mirror) {
+    return !clusterId || clusterId === DEFAULT_CLUSTER_MEMBERSHIP.clusterId
+      ? [DEFAULT_CLUSTER_MEMBERSHIP]
+      : [];
+  }
+
+  return mirror.listUnitClusterMemberships(clusterId);
 }
 
 export async function listAppActionAuditFromPostgres(query: AppActionAuditQuery) {

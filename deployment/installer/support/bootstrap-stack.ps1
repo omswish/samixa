@@ -59,6 +59,55 @@ function Stop-StalePm2ProcessTree {
   }
 }
 
+function Assert-Pm2AppsOnline {
+  param(
+    [Parameter(Mandatory = $true)][string]$NodeExePath,
+    [Parameter(Mandatory = $true)][string]$Pm2ScriptPath
+  )
+
+  $expectedNames = @(
+    'api-gateway',
+    'nutanix-collector',
+    'solarwinds-collector',
+    'symphony-collector',
+    'dashboard-ui',
+    'dashboard-frontdoor-operator',
+    'dashboard-frontdoor-admin'
+  )
+
+  $rawList = & $NodeExePath $Pm2ScriptPath jlist
+  if ($LASTEXITCODE -ne 0) {
+    throw "PM2 jlist failed with exit code $LASTEXITCODE"
+  }
+
+  $processes = @($rawList | ConvertFrom-Json)
+  $statusByName = @{}
+  foreach ($process in $processes) {
+    $name = [string]$process.name
+    if ([string]::IsNullOrWhiteSpace($name)) {
+      continue
+    }
+
+    $statusByName[$name] = [string]$process.pm2_env.status
+  }
+
+  $notOnline = @()
+  foreach ($expectedName in $expectedNames) {
+    if (-not $statusByName.ContainsKey($expectedName)) {
+      $notOnline += "$expectedName=missing"
+      continue
+    }
+
+    if ($statusByName[$expectedName] -ne 'online') {
+      $notOnline += "$expectedName=$($statusByName[$expectedName])"
+    }
+  }
+
+  if ($notOnline.Count -gt 0) {
+    throw "PM2 bootstrap did not bring all dashboard processes online: $($notOnline -join ', ')"
+  }
+}
+
 Assert-RequiredPath -Path $nodeExe -Description 'bundled Node runtime'
 Assert-RequiredPath -Path $pm2Script -Description 'bundled PM2 runtime'
 Assert-RequiredPath -Path $ecosystemConfig -Description 'ecosystem.config.js'
@@ -107,6 +156,8 @@ try {
   if ($LASTEXITCODE -ne 0) {
     throw "PM2 save failed with exit code $LASTEXITCODE"
   }
+
+  Assert-Pm2AppsOnline -NodeExePath $nodeExe -Pm2ScriptPath $pm2Script
 } finally {
   Pop-Location
 }

@@ -166,6 +166,7 @@ interface InterfaceDetailSnapshot {
 interface ServerInventoryEntry {
   name: string;
   nodeId: number;
+  aliases?: string[];
 }
 
 interface NodeDetailsEnvelope {
@@ -225,6 +226,26 @@ type NetworkTargetConfig = {
   kind: 'carrier' | 'sdwan';
 };
 
+interface ServerBindingConfig {
+  displayName: string;
+  nodeId: number;
+  nodeObjectId?: string;
+  aliases?: string[];
+  role?: string | null;
+  platform?: string | null;
+  criticality?: string | null;
+}
+
+interface NetworkBindingConfig {
+  id?: string;
+  displayName?: string;
+  provider?: string;
+  nodeId: string;
+  nodeNumericId?: number;
+  interfaceId?: number | null;
+  kind?: string;
+}
+
 function parseStringList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -236,11 +257,53 @@ function parseStringList(value: unknown): string[] {
 }
 
 function getConfiguredServerNames(metadata: Record<string, unknown>): string[] {
+  const bindings = parseServerBindings(metadata);
+  if (bindings.length > 0) {
+    return bindings.map((binding) => binding.displayName);
+  }
+
   const configured = parseStringList(metadata.monitoredServers);
   return configured.length > 0 ? configured : DEFAULT_SERVER_NAMES;
 }
 
+function parseServerBindings(metadata: Record<string, unknown>): ServerBindingConfig[] {
+  const rawBindings = Array.isArray(metadata.serverBindings) ? metadata.serverBindings : [];
+  return rawBindings.flatMap((entry): ServerBindingConfig[] => {
+    if (!entry || typeof entry !== 'object') {
+      return [];
+    }
+
+    const candidate = entry as Record<string, unknown>;
+    const displayName = typeof candidate.displayName === 'string' ? candidate.displayName.trim() : '';
+    const nodeId = typeof candidate.nodeId === 'number'
+      ? candidate.nodeId
+      : typeof candidate.nodeId === 'string' && /^\d+$/.test(candidate.nodeId)
+        ? Number.parseInt(candidate.nodeId, 10)
+        : Number.NaN;
+    if (!displayName || !Number.isInteger(nodeId) || nodeId <= 0) {
+      return [];
+    }
+
+    return [{
+      displayName,
+      nodeId,
+      nodeObjectId: typeof candidate.nodeObjectId === 'string' ? candidate.nodeObjectId : `N:${nodeId}`,
+      aliases: Array.isArray(candidate.aliases)
+        ? candidate.aliases.filter((alias): alias is string => typeof alias === 'string' && alias.trim().length > 0)
+        : [],
+      role: typeof candidate.role === 'string' ? candidate.role : null,
+      platform: typeof candidate.platform === 'string' ? candidate.platform : null,
+      criticality: typeof candidate.criticality === 'string' ? candidate.criticality : null
+    }];
+  });
+}
+
 function getConfiguredNetworkTargets(metadata: Record<string, unknown>): NetworkTargetConfig[] {
+  const bindingTargets = parseNetworkBindings(metadata);
+  if (bindingTargets.length > 0) {
+    return bindingTargets;
+  }
+
   const configured = parseStringList(metadata.networkObjectIds);
   if (configured.length === 0) {
     return DEFAULT_NETWORK_NODE_MAP;
@@ -258,6 +321,35 @@ function getConfiguredNetworkTargets(metadata: Record<string, unknown>): Network
       interfaceId: fallback?.interfaceId,
       kind: fallback?.kind ?? (index < 2 ? 'carrier' : 'sdwan')
     };
+  });
+}
+
+function parseNetworkBindings(metadata: Record<string, unknown>): NetworkTargetConfig[] {
+  const rawBindings = Array.isArray(metadata.networkBindings) ? metadata.networkBindings : [];
+  return rawBindings.flatMap((entry, index): NetworkTargetConfig[] => {
+    if (!entry || typeof entry !== 'object') {
+      return [];
+    }
+
+    const candidate = entry as NetworkBindingConfig;
+    const nodeNumericId = typeof candidate.nodeNumericId === 'number'
+      ? candidate.nodeNumericId
+      : typeof candidate.nodeId === 'string'
+        ? Number.parseInt(candidate.nodeId.replace(/\D/g, ''), 10)
+        : Number.NaN;
+    if (!Number.isInteger(nodeNumericId) || nodeNumericId <= 0) {
+      return [];
+    }
+
+    const kind = candidate.kind === 'sdwan' ? 'sdwan' : 'carrier';
+    return [{
+      id: candidate.id || `sw-net-${index + 1}`,
+      provider: candidate.provider || candidate.displayName || `Network ${index + 1}`,
+      nodeId: candidate.nodeId || `N:${nodeNumericId}`,
+      nodeNumericId,
+      interfaceId: typeof candidate.interfaceId === 'number' ? candidate.interfaceId : undefined,
+      kind
+    }];
   });
 }
 
@@ -834,7 +926,7 @@ async function fetchFixedDiskUsage(page: Page, nodeId: number): Promise<number |
   }
 }
 
-async function discoverServerInventory(page: Page, serverNames: string[]): Promise<ServerInventoryEntry[]> {
+async function discoverServerInventory(page: Page, serverNames: string[], serverBindings: ServerBindingConfig[] = []): Promise<ServerInventoryEntry[]> {
   const links = await page.locator('a[href*="NodeDetails.aspx?NetObject=N:"]').evaluateAll((nodes) =>
     nodes.map((node) => ({
       text: (node.textContent || '').replace(/\s+/g, ' ').trim(),
@@ -860,10 +952,21 @@ async function discoverServerInventory(page: Page, serverNames: string[]): Promi
 
   // The SummaryView widget set is not deterministic on every load, so fall back
   // to the verified node inventory when a server link is absent from the page.
+  const bindingsByName = new Map(serverBindings.map((binding) => [binding.displayName, binding]));
+
   return serverNames.map((name) => {
     const discovered = inventory.get(name);
     if (discovered) {
       return discovered;
+    }
+
+    const configuredBinding = bindingsByName.get(name);
+    if (configuredBinding) {
+      return {
+        name: configuredBinding.displayName,
+        nodeId: configuredBinding.nodeId,
+        aliases: configuredBinding.aliases
+      };
     }
 
     return DEFAULT_SERVER_NODE_MAP.find((entry) => entry.name === name) ?? {
@@ -916,8 +1019,8 @@ async function scrapeInterfaceDetailPage(context: BrowserContext, networkHost: s
   }
 }
 
-async function scrapeServers(page: Page, serverNames: string[]): Promise<ServerMetric[]> {
-  const inventory = await discoverServerInventory(page, serverNames);
+async function scrapeServers(page: Page, serverNames: string[], serverBindings: ServerBindingConfig[] = []): Promise<ServerMetric[]> {
+  const inventory = await discoverServerInventory(page, serverNames, serverBindings);
   const servers = await Promise.all(inventory.map((entry) => scrapeServerNode(page, entry)));
   if (servers.length === 0) {
     throw new Error('SolarWinds server scrape did not expose any recognized server rows');
@@ -1055,6 +1158,7 @@ async function collectSolarWindsData() {
   ]);
   const hostConfigs = buildHostConfigs(runtimeConfig);
   const configuredServerNames = getConfiguredServerNames(runtimeConfig.targets.servers.metadata);
+  const configuredServerBindings = parseServerBindings(runtimeConfig.targets.servers.metadata);
   const configuredNetworkTargets = getConfiguredNetworkTargets(runtimeConfig.targets.networks.metadata);
 
   const serverResult: SectionResult<ServerMetric[]> = { attemptedAt: cycleAttemptedAt };
@@ -1090,7 +1194,7 @@ async function collectSolarWindsData() {
         'table.NeedsZebraStripes, table.sw-custom-query-table'
       );
       serverContext = context;
-      serverResult.data = await scrapeServers(page, configuredServerNames);
+      serverResult.data = await scrapeServers(page, configuredServerNames, configuredServerBindings);
       serverResult.reportedAt = new Date().toISOString();
       await context.storageState({ path: hostConfigs.servers.storageStatePath });
     } catch (err: any) {

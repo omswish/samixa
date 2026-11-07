@@ -12,5 +12,10 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "esbuild@0.28.1": true,
+    "sharp@0.34.5": true
   }
 }

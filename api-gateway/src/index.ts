@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
@@ -6,6 +6,7 @@ import { createHash } from 'crypto';
 import path from 'path';
 import dotenv from 'dotenv';
 import {
+  DbSchema,
   getDashboardState,
   getDashboardStateMirrorPayload,
   hydrateStateFromPostgres,
@@ -18,9 +19,17 @@ import {
   getLocalAuthCredentialFromPostgres,
   getAssetTelemetryHistoryFromPostgres,
   CollectorRunPayload,
+  getBusinessUnitFromPostgres,
+  getUnitClusterFromPostgres,
+  isCentralModeEnabled,
   isPostgresMirrorEnabled,
   isPostgresPrimaryMetricsEnabled,
+  listBusinessUnitsFromPostgres,
+  listUnitClusterMembershipsFromPostgres,
+  listUnitClustersFromPostgres,
   listLocalAuthCredentialsFromPostgres,
+  listSolarWindsNetworkBindingsFromPostgres,
+  listSolarWindsServerBindingsFromPostgres,
   mirrorDashboardStateToPostgres,
   recordCollectorRunsToPostgres,
   recordGatewayIngestEventToPostgres,
@@ -28,7 +37,9 @@ import {
   syncDashboardStateToPostgresNow,
   touchLocalAuthCredentialLoginInPostgres,
   upsertLocalAuthCredentialInPostgres,
-  upsertCollectorTargetConfigInPostgres
+  upsertCollectorTargetConfigInPostgres,
+  upsertSolarWindsNetworkBindingInPostgres,
+  upsertSolarWindsServerBindingInPostgres
 } from './postgres';
 import {
   authenticateLegacyLocalAppUser,
@@ -49,6 +60,7 @@ import { ensureCollectorSecretConfigBootstrap, loadRuntimeCollectorSecrets } fro
 import { encryptSecret } from './secretCrypto';
 import { replaceLocalCollectorSecretConfig, upsertLocalCollectorTargetConfig } from './localCollectorStore';
 import { listAppActionAuditFromFiles, recordAppActionAuditToFile } from './fileAuditStore';
+import { DEFAULT_UNIT_ID } from './centralRbac';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -113,11 +125,398 @@ function broadcastUpdate(source: string) {
   }
 }
 
+type ClusterUnitStateStatus = 'available' | 'not-enabled';
+
+interface ClusterUnitStateEntry {
+  unitId: string;
+  stateStatus: ClusterUnitStateStatus;
+  state: DbSchema | null;
+}
+
+type CounterMap = Record<string, number>;
+
+interface CollectorUpdateContext {
+  unitId: string;
+  legacyRoute: boolean;
+}
+
+function countByStatus<T extends { status: string }>(items: T[]) {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    acc[item.status] = (acc[item.status] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function emptyClusterRollup() {
+  return {
+    unitsTotal: 0,
+    unitsWithState: 0,
+    unitsPendingStateMigration: 0,
+    sourceStatuses: {
+      nutanix: {} as CounterMap,
+      solarwinds: {} as CounterMap,
+      symphony: {} as CounterMap
+    },
+    assetCounts: {
+      servers: { total: 0, operational: 0, degraded: 0, down: 0 },
+      networks: { total: 0, operational: 0, degraded: 0, down: 0 },
+      nutanixNodes: { total: 0, normal: 0, warning: 0, critical: 0, offline: 0 }
+    },
+    hsd: {
+      openIncidents: 0,
+      serviceRequests: 0,
+      workOrders: 0,
+      changeRecords: 0,
+      priority1Incidents: 0,
+      priority2Incidents: 0,
+      onboardingRequests: 0,
+      securityIncidents: 0
+    },
+    freshness: {
+      staleSections: 0,
+      errorSections: 0,
+      neverSyncedSections: 0
+    }
+  };
+}
+
+function buildClusterDashboardSummary(unitStatuses: ClusterUnitStateEntry[]) {
+  const summary = emptyClusterRollup();
+  summary.unitsTotal = unitStatuses.length;
+  summary.unitsWithState = unitStatuses.filter((entry) => entry.stateStatus === 'available').length;
+  summary.unitsPendingStateMigration = unitStatuses.filter((entry) => entry.stateStatus !== 'available').length;
+
+  for (const entry of unitStatuses) {
+    const state = entry.state;
+    if (!state) {
+      continue;
+    }
+
+    for (const source of Object.values(state.sources)) {
+      const sourceSummary = summary.sourceStatuses[source.source];
+      sourceSummary[source.status] = (sourceSummary[source.status] ?? 0) + 1;
+    }
+
+    const serverCounts = countByStatus(state.servers);
+    summary.assetCounts.servers.total += state.servers.length;
+    summary.assetCounts.servers.operational += serverCounts.operational ?? 0;
+    summary.assetCounts.servers.degraded += serverCounts.degraded ?? 0;
+    summary.assetCounts.servers.down += serverCounts.down ?? 0;
+
+    const networkCounts = countByStatus(state.networks);
+    summary.assetCounts.networks.total += state.networks.length;
+    summary.assetCounts.networks.operational += networkCounts.operational ?? 0;
+    summary.assetCounts.networks.degraded += networkCounts.degraded ?? 0;
+    summary.assetCounts.networks.down += networkCounts.down ?? 0;
+
+    const nodeCounts = countByStatus(state.nutanix.nodes);
+    summary.assetCounts.nutanixNodes.total += state.nutanix.nodes.length;
+    summary.assetCounts.nutanixNodes.normal += nodeCounts.normal ?? 0;
+    summary.assetCounts.nutanixNodes.warning += nodeCounts.warning ?? 0;
+    summary.assetCounts.nutanixNodes.critical += nodeCounts.critical ?? 0;
+    summary.assetCounts.nutanixNodes.offline += nodeCounts.offline ?? 0;
+
+    summary.hsd.openIncidents += state.symphony.openIncidents;
+    summary.hsd.serviceRequests += state.symphony.serviceRequests;
+    summary.hsd.workOrders += state.symphony.workOrders;
+    summary.hsd.changeRecords += state.symphony.changeRecords;
+    summary.hsd.priority1Incidents += state.symphony.priority1Incidents;
+    summary.hsd.priority2Incidents += state.symphony.priority2Incidents;
+    summary.hsd.onboardingRequests += state.symphony.onboardingRequests;
+    summary.hsd.securityIncidents += state.symphony.securityIncidents;
+
+    for (const section of Object.values(state.sections)) {
+      if (section.status === 'stale') {
+        summary.freshness.staleSections += 1;
+      } else if (section.status === 'error') {
+        summary.freshness.errorSections += 1;
+      } else if (section.status === 'never') {
+        summary.freshness.neverSyncedSections += 1;
+      }
+    }
+  }
+
+  return summary;
+}
+
 // REST Routes
 app.get('/api/status', (req, res) => {
   try {
     const state = getDashboardState();
     res.json(state);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/units', async (req, res) => {
+  try {
+    const units = await listBusinessUnitsFromPostgres();
+    res.json({ units });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/units/:unitId/status', async (req, res) => {
+  const unitId = req.params.unitId.trim();
+
+  try {
+    const unit = await getBusinessUnitFromPostgres(unitId);
+    if (!unit) {
+      res.status(404).json({ error: 'Unknown unit.' });
+      return;
+    }
+
+    if (unit.unitId !== DEFAULT_UNIT_ID) {
+      res.status(501).json({
+        error: 'Unit-scoped dashboard state is not enabled for this unit yet.',
+        unit
+      });
+      return;
+    }
+
+    res.json({
+      unit,
+      state: getDashboardState()
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function parsePositiveNumberField(value: unknown, fieldName: string): number {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number.parseInt(value, 10)
+      : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${fieldName} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalPositiveNumberField(value: unknown, fieldName: string): number | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  return parsePositiveNumberField(value, fieldName);
+}
+
+function parseOptionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => typeof entry === 'string' ? entry.trim() : '').filter(Boolean)
+    : [];
+}
+
+async function requireKnownUnit(unitId: string, res: Response) {
+  const unit = await getBusinessUnitFromPostgres(unitId);
+  if (!unit) {
+    res.status(404).json({ error: 'Unknown unit.' });
+    return null;
+  }
+
+  return unit;
+}
+
+app.get('/api/units/:unitId/solarwinds/bindings', async (req, res) => {
+  if (!isPostgresMirrorEnabled()) {
+    res.status(503).json({ error: 'PostgreSQL is required for SolarWinds binding management.' });
+    return;
+  }
+
+  const unitId = req.params.unitId.trim();
+  try {
+    const unit = await requireKnownUnit(unitId, res);
+    if (!unit) {
+      return;
+    }
+
+    const includeDisabled = /^(1|true|yes)$/i.test(String(req.query.includeDisabled ?? ''));
+    const [servers, networks] = await Promise.all([
+      listSolarWindsServerBindingsFromPostgres(unitId, { includeDisabled }),
+      listSolarWindsNetworkBindingsFromPostgres(unitId, { includeDisabled })
+    ]);
+    res.json({ unit, servers, networks });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/units/:unitId/solarwinds/server-bindings', async (req, res) => {
+  if (!isPostgresMirrorEnabled()) {
+    res.status(503).json({ error: 'PostgreSQL is required for SolarWinds binding management.' });
+    return;
+  }
+
+  const unitId = req.params.unitId.trim();
+  try {
+    const unit = await requireKnownUnit(unitId, res);
+    if (!unit) {
+      return;
+    }
+
+    const displayName = parseOptionalString(req.body?.displayName);
+    if (!displayName) {
+      res.status(400).json({ error: 'displayName is required.' });
+      return;
+    }
+
+    const binding = await upsertSolarWindsServerBindingInPostgres({
+      unitId,
+      displayName,
+      nodeId: parsePositiveNumberField(req.body?.nodeId, 'nodeId'),
+      aliases: parseStringArray(req.body?.aliases),
+      role: parseOptionalString(req.body?.role),
+      platform: parseOptionalString(req.body?.platform),
+      criticality: parseOptionalString(req.body?.criticality) ?? 'standard',
+      enabled: req.body?.enabled === true,
+      validationStatus: parseOptionalString(req.body?.validationStatus) ?? 'pending',
+      validationMessage: parseOptionalString(req.body?.validationMessage),
+      metadataJson: sanitizeMetadata(req.body?.metadata)
+    });
+
+    res.status(201).json({ unit, binding });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/units/:unitId/solarwinds/network-bindings', async (req, res) => {
+  if (!isPostgresMirrorEnabled()) {
+    res.status(503).json({ error: 'PostgreSQL is required for SolarWinds binding management.' });
+    return;
+  }
+
+  const unitId = req.params.unitId.trim();
+  try {
+    const unit = await requireKnownUnit(unitId, res);
+    if (!unit) {
+      return;
+    }
+
+    const displayName = parseOptionalString(req.body?.displayName);
+    if (!displayName) {
+      res.status(400).json({ error: 'displayName is required.' });
+      return;
+    }
+
+    const binding = await upsertSolarWindsNetworkBindingInPostgres({
+      unitId,
+      displayName,
+      provider: parseOptionalString(req.body?.provider) ?? displayName,
+      nodeId: parsePositiveNumberField(req.body?.nodeId, 'nodeId'),
+      interfaceId: parseOptionalPositiveNumberField(req.body?.interfaceId, 'interfaceId'),
+      kind: parseOptionalString(req.body?.kind) ?? 'carrier',
+      circuitId: parseOptionalString(req.body?.circuitId),
+      bandwidthMbps: parseOptionalPositiveNumberField(req.body?.bandwidthMbps, 'bandwidthMbps'),
+      criticality: parseOptionalString(req.body?.criticality) ?? 'standard',
+      enabled: req.body?.enabled === true,
+      validationStatus: parseOptionalString(req.body?.validationStatus) ?? 'pending',
+      validationMessage: parseOptionalString(req.body?.validationMessage),
+      metadataJson: sanitizeMetadata(req.body?.metadata)
+    });
+
+    res.status(201).json({ unit, binding });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/clusters', async (req, res) => {
+  try {
+    const [clusters, memberships, units] = await Promise.all([
+      listUnitClustersFromPostgres(),
+      listUnitClusterMembershipsFromPostgres(),
+      listBusinessUnitsFromPostgres()
+    ]);
+    const unitsById = new Map(units.map((unit) => [unit.unitId, unit]));
+    res.json({
+      clusters: clusters.map((cluster) => ({
+        ...cluster,
+        units: memberships
+          .filter((membership) => membership.clusterId === cluster.clusterId)
+          .map((membership) => ({
+            ...membership,
+            unit: unitsById.get(membership.unitId) ?? null
+          }))
+      }))
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/clusters/:clusterId/units', async (req, res) => {
+  const clusterId = req.params.clusterId.trim();
+
+  try {
+    const cluster = await getUnitClusterFromPostgres(clusterId);
+    if (!cluster) {
+      res.status(404).json({ error: 'Unknown cluster.' });
+      return;
+    }
+
+    const [memberships, units] = await Promise.all([
+      listUnitClusterMembershipsFromPostgres(clusterId),
+      listBusinessUnitsFromPostgres()
+    ]);
+    const unitsById = new Map(units.map((unit) => [unit.unitId, unit]));
+    res.json({
+      cluster,
+      units: memberships.map((membership) => ({
+        ...membership,
+        unit: unitsById.get(membership.unitId) ?? null
+      }))
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/clusters/:clusterId/status', async (req, res) => {
+  const clusterId = req.params.clusterId.trim();
+
+  try {
+    const cluster = await getUnitClusterFromPostgres(clusterId);
+    if (!cluster) {
+      res.status(404).json({ error: 'Unknown cluster.' });
+      return;
+    }
+
+    const [memberships, units] = await Promise.all([
+      listUnitClusterMembershipsFromPostgres(clusterId),
+      listBusinessUnitsFromPostgres()
+    ]);
+    const unitsById = new Map(units.map((unit) => [unit.unitId, unit]));
+    const unitStatuses = memberships.map((membership) => {
+      const unit = unitsById.get(membership.unitId) ?? null;
+      const state = membership.unitId === DEFAULT_UNIT_ID ? getDashboardState() : null;
+      const stateStatus: ClusterUnitStateStatus = membership.unitId === DEFAULT_UNIT_ID ? 'available' : 'not-enabled';
+      return {
+        ...membership,
+        unit,
+        state,
+        stateStatus
+      };
+    });
+
+    res.json({
+      cluster,
+      units: unitStatuses,
+      summary: buildClusterDashboardSummary(unitStatuses.map((entry) => ({
+        unitId: entry.unitId,
+        stateStatus: entry.stateStatus,
+        state: entry.state
+      })))
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -635,7 +1034,7 @@ async function resolveAppUser(username: InternalAuthUsername) {
   };
 }
 
-app.post('/api/update', async (req, res) => {
+async function processCollectorUpdate(req: Request, res: Response, context: CollectorUpdateContext) {
   const { nutanix, solarwinds, symphony } = req.body;
   const payloadDigest = digestPayload(req.body);
   const collectorSource = inferCollectorSource(req.body);
@@ -681,6 +1080,8 @@ app.post('/api/update', async (req, res) => {
       });
       res.json({
         success: true,
+        unitId: context.unitId,
+        route: context.legacyRoute ? 'legacy' : 'unit-scoped',
         message: `Updated data from ${source}`,
         ...(postgresPrimaryWarning ? { warning: postgresPrimaryWarning } : {})
       });
@@ -712,6 +1113,80 @@ app.post('/api/update', async (req, res) => {
     });
     res.status(500).json({ error: err.message });
   }
+}
+
+async function rejectCollectorUpdate(
+  req: Request,
+  res: Response,
+  options: {
+    statusCode: number;
+    errorMessage: string;
+    unitId?: string;
+  }
+) {
+  recordGatewayIngestEventToPostgres({
+    collectorSource: inferCollectorSource(req.body),
+    receivedAt: new Date().toISOString(),
+    httpStatus: options.statusCode,
+    ingestStatus: 'rejected',
+    errorMessage: options.errorMessage,
+    payloadDigest: digestPayload(req.body),
+    sourceHost: req.socket.remoteAddress || null,
+    listenerScope
+  });
+
+  res.status(options.statusCode).json({
+    error: options.errorMessage,
+    ...(options.unitId ? { unitId: options.unitId } : {})
+  });
+}
+
+app.post('/api/units/:unitId/update', async (req, res) => {
+  const unitId = req.params.unitId.trim();
+
+  try {
+    const unit = await getBusinessUnitFromPostgres(unitId);
+    if (!unit) {
+      await rejectCollectorUpdate(req, res, {
+        statusCode: 404,
+        errorMessage: 'Unknown unit.',
+        unitId
+      });
+      return;
+    }
+
+    if (!unit.enabled) {
+      await rejectCollectorUpdate(req, res, {
+        statusCode: 403,
+        errorMessage: 'Unit is disabled.',
+        unitId
+      });
+      return;
+    }
+
+    if (unit.unitId !== DEFAULT_UNIT_ID) {
+      await rejectCollectorUpdate(req, res, {
+        statusCode: 501,
+        errorMessage: 'Unit-scoped collector ingestion is not enabled for this unit yet.',
+        unitId: unit.unitId
+      });
+      return;
+    }
+
+    await processCollectorUpdate(req, res, {
+      unitId: unit.unitId,
+      legacyRoute: false
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/update', async (req, res) => {
+  await processCollectorUpdate(req, res, {
+    unitId: DEFAULT_UNIT_ID,
+    legacyRoute: true
+  });
 });
 
 app.get('/api/runtime-config/:source', async (req, res) => {
@@ -1152,6 +1627,9 @@ app.post('/api/internal/audit', async (req, res) => {
 
 async function bootstrapPostgresRuntime() {
   if (!isPostgresMirrorEnabled()) {
+    if (isCentralModeEnabled()) {
+      throw new Error('Central mode requires POSTGRES_URL. Disable ITDASH_CENTRAL_MODE/CENTRAL_MODE or configure PostgreSQL.');
+    }
     console.log('[postgres] mirror disabled; SQLite remains primary');
     return;
   }

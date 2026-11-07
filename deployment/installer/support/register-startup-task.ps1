@@ -33,13 +33,21 @@ $bootstrapArgumentList = @(
   '-WindowStyle', 'Hidden',
   '-File', ('"' + $supportScript + '"'),
   '-InstallRoot', ('"' + $InstallRoot + '"'),
-  '-RuntimeRoot', ('"' + $RuntimeRoot + '"')
+  '-RuntimeRoot', ('"' + $RuntimeRoot + '"'),
+  '-RuntimeUser', ('"' + $resolvedRuntimeUser + '"')
 ) -join ' '
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $bootstrapArgumentList
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest -LogonType ServiceAccount
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+$settings = New-ScheduledTaskSettingsSet `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable `
+  -RestartCount 3 `
+  -RestartInterval (New-TimeSpan -Minutes 1) `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
+  -MultipleInstances IgnoreNew
 
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null

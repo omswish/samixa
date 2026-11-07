@@ -3,8 +3,11 @@ import {
   CollectorTargetConfigRecord,
   CollectorTargetConfigSeed,
   getCollectorTargetConfigsFromPostgres,
-  isPostgresMirrorEnabled
+  isPostgresMirrorEnabled,
+  listSolarWindsNetworkBindingsFromPostgres,
+  listSolarWindsServerBindingsFromPostgres
 } from './postgres';
+import { DEFAULT_UNIT_ID } from './centralRbac';
 import { LocalCollectorTargetConfigRecord, readLocalCollectorTargetConfigs } from './localCollectorStore';
 
 export type RuntimeConfigSourceName = 'nutanix' | 'solarwinds' | 'symphony';
@@ -352,6 +355,57 @@ export async function loadRuntimeCollectorConfig(sourceName: RuntimeConfigSource
       const postgresTargets = await getCollectorTargetConfigsFromPostgres(sourceName);
       for (const target of postgresTargets) {
         targets.set(target.targetName, toRuntimeTarget(target, 'postgres'));
+      }
+      if (sourceName === 'solarwinds') {
+        const [serverBindings, networkBindings] = await Promise.all([
+          listSolarWindsServerBindingsFromPostgres(DEFAULT_UNIT_ID),
+          listSolarWindsNetworkBindingsFromPostgres(DEFAULT_UNIT_ID)
+        ]);
+        const serverTarget = targets.get('servers');
+        if (serverTarget && serverBindings.length > 0) {
+          targets.set('servers', {
+            ...serverTarget,
+            metadata: {
+              ...serverTarget.metadata,
+              monitoredServers: serverBindings.map((binding) => binding.displayName),
+              serverBindings: serverBindings.map((binding) => ({
+                displayName: binding.displayName,
+                nodeId: binding.nodeId,
+                nodeObjectId: binding.nodeObjectId,
+                aliases: binding.aliases,
+                role: binding.role,
+                platform: binding.platform,
+                criticality: binding.criticality,
+                validationStatus: binding.validationStatus
+              }))
+            }
+          });
+        }
+
+        const networkTarget = targets.get('networks');
+        if (networkTarget && networkBindings.length > 0) {
+          targets.set('networks', {
+            ...networkTarget,
+            metadata: {
+              ...networkTarget.metadata,
+              networkObjectIds: networkBindings.map((binding) => binding.nodeObjectId),
+              networkBindings: networkBindings.map((binding, index) => ({
+                id: `sw-net-${binding.bindingId || index + 1}`,
+                displayName: binding.displayName,
+                provider: binding.provider,
+                nodeId: binding.nodeObjectId,
+                nodeNumericId: binding.nodeId,
+                interfaceId: binding.interfaceId,
+                interfaceObjectId: binding.interfaceObjectId,
+                kind: binding.kind,
+                circuitId: binding.circuitId,
+                bandwidthMbps: binding.bandwidthMbps,
+                criticality: binding.criticality,
+                validationStatus: binding.validationStatus
+              }))
+            }
+          });
+        }
       }
       if (postgresTargets.length > 0) {
         backingStore = 'postgres';
