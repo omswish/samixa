@@ -43,7 +43,7 @@ Current deployment baseline:
 - SQLite-first runtime storage
 - admin action audit trail stored as append-only runtime files under `C:\ProgramData\UAIL\ITDashboard\audit`
 - Windows installer does not prompt for or bundle PostgreSQL
-- PostgreSQL remains repository-level future work only and is not part of the supported `1.2.2` installation path
+- PostgreSQL remains repository-level future work only and is not part of the supported `1.2.3` installation path
 
 ## Basic Operations
 Build the workspaces:

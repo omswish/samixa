@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Document ID | UAIL-ITDASH-UM-001 |
-| Version | 1.2.2 |
+| Version | 1.2.3 |
 | Status | Active baseline |
 | Classification | Internal |
 | Owner | Tech-Unit IT |

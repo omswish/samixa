@@ -13,6 +13,7 @@ $RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
 $appRoot = Join-Path $InstallRoot 'app'
 $nodeExe = Join-Path $InstallRoot 'runtime\node\node.exe'
 $pm2Script = Join-Path $InstallRoot 'runtime-tools\node_modules\pm2\bin\pm2'
+$pm2PathsFile = Join-Path $InstallRoot 'runtime-tools\node_modules\pm2\paths.js'
 $pm2Home = Join-Path $RuntimeRoot 'pm2'
 $pm2PidFile = Join-Path $pm2Home 'pm2.pid'
 $ecosystemConfig = Join-Path $appRoot 'ecosystem.config.js'
@@ -57,6 +58,38 @@ function Stop-StalePm2ProcessTree {
   if (Get-Process -Id $pm2Pid -ErrorAction SilentlyContinue) {
     throw "Unable to stop the existing PM2 daemon process tree (PID $pm2Pid)."
   }
+}
+
+function Set-DashboardPm2PipeNames {
+  param([Parameter(Mandatory = $true)][string]$PathsFile)
+
+  if (-not (Test-Path -LiteralPath $PathsFile)) {
+    throw "PM2 runtime patch prerequisite missing: $PathsFile"
+  }
+
+  $content = Get-Content -LiteralPath $PathsFile -Raw
+  $patched = $content
+  $patched = $patched.Replace(
+    "pm2_file_stucture.DAEMON_RPC_PORT = '\\\\.\\pipe\\rpc.sock';",
+    "pm2_file_stucture.DAEMON_RPC_PORT = '\\\\.\\pipe\\itdash-pm2-rpc.sock';"
+  )
+  $patched = $patched.Replace(
+    "pm2_file_stucture.DAEMON_PUB_PORT = '\\\\.\\pipe\\pub.sock';",
+    "pm2_file_stucture.DAEMON_PUB_PORT = '\\\\.\\pipe\\itdash-pm2-pub.sock';"
+  )
+  $patched = $patched.Replace(
+    "pm2_file_stucture.INTERACTOR_RPC_PORT = '\\\\.\\pipe\\interactor.sock';",
+    "pm2_file_stucture.INTERACTOR_RPC_PORT = '\\\\.\\pipe\\itdash-pm2-interactor.sock';"
+  )
+
+  if ($patched -eq $content) {
+    if ($content -notmatch 'itdash-pm2-rpc\.sock') {
+      throw 'PM2 runtime patch failed: expected Windows pipe constants were not found.'
+    }
+    return
+  }
+
+  Set-Content -LiteralPath $PathsFile -Value $patched -NoNewline
 }
 
 function Assert-Pm2AppsOnline {
@@ -110,6 +143,7 @@ function Assert-Pm2AppsOnline {
 
 Assert-RequiredPath -Path $nodeExe -Description 'bundled Node runtime'
 Assert-RequiredPath -Path $pm2Script -Description 'bundled PM2 runtime'
+Assert-RequiredPath -Path $pm2PathsFile -Description 'bundled PM2 runtime paths'
 Assert-RequiredPath -Path $ecosystemConfig -Description 'ecosystem.config.js'
 Assert-RequiredPath -Path $nextRuntime -Description 'Next.js production runtime'
 Assert-RequiredPath -Path $permissionRepairScript -Description 'runtime permission repair helper'
@@ -130,6 +164,8 @@ if (-not [string]::IsNullOrWhiteSpace($RuntimeUser)) {
 if ($LASTEXITCODE -ne 0) {
   throw "Runtime permission repair failed with exit code $LASTEXITCODE"
 }
+
+Set-DashboardPm2PipeNames -PathsFile $pm2PathsFile
 
 [System.IO.Directory]::CreateDirectory($pm2Home) | Out-Null
 [System.IO.Directory]::CreateDirectory((Join-Path $appRoot 'data')) | Out-Null
